@@ -83,7 +83,7 @@ class PasteConfig:
     # or "wtype" (broken on Plasma 6 as of writing; fine on sway/Hyprland).
     backend: str = "dotool"
     # Key combination to trigger paste in the focused app.
-    paste_combo: str = "ctrl+shift+v"
+    paste_combo: str = "shift+insert"
     # Minimum time (ms) to wait between the stop-hotkey being pressed and
     # the synthetic paste firing, so the user has time to release the
     # modifier keys from that hotkey. If transcription + filtering took
@@ -110,7 +110,9 @@ class PasteConfig:
     # When True, ``wl-copy --sensitive`` is used instead of plain ``wl-copy``.
     # The ``--sensitive`` flag tells clipboard managers (e.g. KDE Klipper) to
     # skip recording this entry.  Text IS still available for a manual Ctrl+V
-    # paste immediately after dictation.
+    # paste immediately after dictation. Hint: We paste into both primary
+    # and clipboard selections, so the text is available for middle-click and
+    # shift+insert paste on most applications.
     skip_clipboard_history: bool = True
     # When True, text is injected directly via ``dotool type`` — the
     # clipboard is never used at all, so clipboard managers cannot record
