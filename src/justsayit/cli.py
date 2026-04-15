@@ -259,7 +259,6 @@ class App:
                     len(seg.samples) / seg.sample_rate,
                 )
 
-        _active = {State.RECORDING, State.MANUAL}
         prev_state: list[State] = [State.IDLE]  # mutable cell for closure
 
         def on_state(state: State) -> None:
@@ -269,9 +268,16 @@ class App:
             if self.overlay is not None:
                 self.overlay.push_state(state)
             if self.sound_player is not None:
-                if state in _active and prev not in _active:
+                if state is State.VALIDATING and prev is State.IDLE:
+                    # VAD heard something — overlay appears; soft chime so
+                    # it doesn't startle while the result is still uncertain.
+                    self.sound_player.play_start(self.cfg.sound.validating_volume_scale)
+                elif state is State.MANUAL and prev is State.IDLE:
+                    # Hotkey-triggered recording — full volume.
                     self.sound_player.play_start()
-                elif state is State.IDLE and prev in _active:
+                elif state is State.IDLE and prev is not State.IDLE:
+                    # Overlay disappears for any reason (recording done,
+                    # validation failed, manual stop).
                     self.sound_player.play_stop()
 
         def on_level(rms: float) -> None:

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-04-15
+
+### Changed
+
+- In VAD auto-listen mode the start chime now plays as soon as the overlay
+  appears (entering `VALIDATING`) at a reduced volume, giving early auditory
+  feedback while the result is still uncertain. The scale is configurable via
+  `sound.validating_volume_scale` (default `0.4`).
+- The stop chime now plays whenever the overlay disappears (any → `IDLE`),
+  including validation failures and manual stops.
+- Hotkey-triggered (manual) recordings still play the start chime at full
+  volume.
+
 ## [0.3.0] - 2026-04-15
 
 ### Added

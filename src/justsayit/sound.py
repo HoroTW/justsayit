@@ -44,16 +44,16 @@ class SoundPlayer:
             except Exception:
                 log.warning("could not load sound %s", path, exc_info=True)
 
-    def play_start(self) -> None:
-        self._play(self._start)
+    def play_start(self, volume_scale: float = 1.0) -> None:
+        self._play(self._start, volume_scale)
 
     def play_stop(self) -> None:
         self._play(self._stop)
 
-    def _play(self, samples: np.ndarray | None) -> None:
+    def _play(self, samples: np.ndarray | None, volume_scale: float = 1.0) -> None:
         if samples is None or self._volume <= 0.0:
             return
-        data = samples * self._volume
+        data = samples * self._volume * volume_scale
         # Spawn a tiny daemon thread so the caller (audio engine callback)
         # is never blocked by sd.play() stream setup.
         threading.Thread(target=_fire, args=(data,), daemon=True).start()

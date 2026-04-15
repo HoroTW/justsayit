@@ -156,6 +156,10 @@ class SoundConfig:
     enabled: bool = True
     # Playback volume for notification sounds (0.0 = silent, 1.0 = full).
     volume: float = 1.0
+    # Volume scale for the soft start chime played when VAD enters the
+    # VALIDATING state (relative to sound.volume). Kept quieter than the
+    # confirmed-recording chime because the result is still uncertain.
+    validating_volume_scale: float = 0.4
 
 
 @dataclass
