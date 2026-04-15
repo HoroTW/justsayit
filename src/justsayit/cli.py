@@ -350,6 +350,11 @@ class App:
                     self.engine.stop_manual()
                 self.engine.set_vad_paused(not self.engine.vad_paused)
                 self._sync_tray_and_icon()
+                if self.sound_player is not None:
+                    if self.engine.vad_paused:
+                        self.sound_player.play_mute()
+                    else:
+                        self.sound_player.play_unmute()
             else:
                 # Auto-listen OFF: hotkey starts / stops a manual recording.
                 if state in (State.IDLE, State.VALIDATING):

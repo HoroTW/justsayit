@@ -33,10 +33,12 @@ class SoundPlayer:
         self._volume = max(0.0, min(1.0, volume))
         self._start: np.ndarray | None = None
         self._stop: np.ndarray | None = None
+        self._mute: np.ndarray | None = None
+        self._unmute: np.ndarray | None = None
         self._load()
 
     def _load(self) -> None:
-        for name, attr in [("start", "_start"), ("stop", "_stop")]:
+        for name, attr in [("start", "_start"), ("stop", "_stop"), ("mute", "_mute"), ("unmute", "_unmute")]:
             path = _SOUNDS_DIR / f"{name}.wav"
             try:
                 setattr(self, attr, _load_wav(path))
@@ -49,6 +51,12 @@ class SoundPlayer:
 
     def play_stop(self) -> None:
         self._play(self._stop)
+
+    def play_mute(self) -> None:
+        self._play(self._mute)
+
+    def play_unmute(self) -> None:
+        self._play(self._unmute)
 
     def _play(self, samples: np.ndarray | None, volume_scale: float = 1.0) -> None:
         if samples is None or self._volume <= 0.0:

@@ -56,6 +56,26 @@ def chime(
     return (signal * 32767).astype(np.int16)
 
 
+def two_tone(
+    freq1: float,
+    freq2: float,
+    note_dur: float,
+    gap_dur: float,
+    *,
+    decay: float,
+) -> np.ndarray:
+    """Return int16 mono samples for two chimes separated by silence.
+
+    Useful for "dub-di" / "dub-do" style double-tap sounds where the
+    direction of the interval (descending vs ascending) carries meaning.
+    """
+    harmonics = [(1.0, 0.78), (2.0, 0.18), (3.0, 0.04)]
+    note1 = chime(freq1, note_dur, decay=decay, harmonics=harmonics)
+    gap = np.zeros(int(gap_dur * SAMPLE_RATE), dtype=np.int16)
+    note2 = chime(freq2, note_dur, decay=decay, harmonics=harmonics)
+    return np.concatenate([note1, gap, note2])
+
+
 def write_wav(path: Path, samples: np.ndarray) -> None:
     with wave.open(str(path), "w") as wf:
         wf.setnchannels(1)
@@ -82,6 +102,18 @@ def main() -> None:
     write_wav(
         OUT_DIR / "stop.wav",
         chime(329.63, 0.53, decay=7.8, harmonics=[(1.0, 0.78), (2.0, 0.18), (3.0, 0.04)]),
+    )
+
+    # "dub-di" — VAD muted: G4 → D4 descending fifth (feels like closing down)
+    write_wav(
+        OUT_DIR / "mute.wav",
+        two_tone(392.0, 293.66, 0.10, 0.04, decay=22.0),
+    )
+
+    # "dub-do" — VAD unmuted: D4 → G4 ascending fifth (feels like opening up)
+    write_wav(
+        OUT_DIR / "unmute.wav",
+        two_tone(293.66, 392.0, 0.10, 0.04, decay=22.0),
     )
 
     print("done.")

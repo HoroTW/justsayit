@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-04-15
+
+### Added
+
+- **Mute / unmute sounds** for VAD auto-listen mode — a descending two-tone
+  "dub-di" (G4 → D4) plays when VAD is paused via the hotkey, and an
+  ascending "dub-do" (D4 → G4) plays when it is resumed.
+
 ## [0.3.1] - 2026-04-15
 
 ### Changed
