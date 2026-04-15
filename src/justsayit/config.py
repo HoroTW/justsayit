@@ -152,6 +152,13 @@ class OverlayConfig:
 
 
 @dataclass
+class SoundConfig:
+    enabled: bool = True
+    # Playback volume for notification sounds (0.0 = silent, 1.0 = full).
+    volume: float = 1.0
+
+
+@dataclass
 class LogConfig:
     # Rotating debug log written to disk. Off by default — turn this on
     # when you need to share a trace of a bug. Console logging is always
@@ -172,6 +179,7 @@ class Config:
     paste: PasteConfig = field(default_factory=PasteConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     overlay: OverlayConfig = field(default_factory=OverlayConfig)
+    sound: SoundConfig = field(default_factory=SoundConfig)
     log: LogConfig = field(default_factory=LogConfig)
     # File path for user regex filters.
     filters_path: Path = field(default_factory=lambda: config_dir() / "filters.json")
@@ -211,6 +219,7 @@ def load_config(path: Path | None = None) -> Config:
     cfg.paste = _coerce_section(PasteConfig, raw.get("paste"))
     cfg.model = _coerce_section(ModelConfig, raw.get("model"))
     cfg.overlay = _coerce_section(OverlayConfig, raw.get("overlay"))
+    cfg.sound = _coerce_section(SoundConfig, raw.get("sound"))
     cfg.log = _coerce_section(LogConfig, raw.get("log"))
 
     if "filters_path" in raw:
@@ -237,7 +246,7 @@ def render_config_toml(cfg: Config | None = None) -> str:
         "# built-in default (the app will not rewrite unchanged sections).",
         "",
     ]
-    for section_name in ("audio", "vad", "shortcut", "paste", "model", "overlay", "log"):
+    for section_name in ("audio", "vad", "shortcut", "paste", "model", "overlay", "sound", "log"):
         section = getattr(cfg, section_name)
         lines.append(f"[{section_name}]")
         for f in fields(section):

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-04-15
+
+### Added
+
+- **Notification sounds** — a short chime plays when recording starts (A4,
+  380 ms) and a lower, longer chime when it stops (E4, 530 ms). Sounds are
+  generated from first-principles using numpy and bundled as WAV files; no
+  external assets required.
+- **`sound.enabled`** — master switch to disable sounds entirely.
+- **`sound.volume`** — playback volume (0.0–1.0, default 1.0).
+- `sounds/generate_sounds.py` — developer script to regenerate the bundled
+  WAV files (not needed by end-users).
+
 ## [0.2.2] - 2026-04-15
 
 ### Added

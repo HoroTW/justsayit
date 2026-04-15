@@ -145,6 +145,7 @@ from justsayit.model import ensure_models
 from justsayit.overlay import OverlayWindow
 from justsayit.paste import PasteError, Paster
 from justsayit.shortcuts import GlobalShortcutClient
+from justsayit.sound import SoundPlayer
 from justsayit.transcribe import Transcriber
 from justsayit.tray import MenuItem, TrayIcon, open_with_xdg
 
@@ -188,6 +189,7 @@ class App:
         self.overlay: OverlayWindow | None = None
         self.shortcut_client: GlobalShortcutClient | None = None
         self.paster: Paster | None = None
+        self.sound_player: SoundPlayer | None = None
         self.tray: TrayIcon | None = None
         self.gtk_app: Gtk.Application | None = None
         self.filters = []
@@ -223,6 +225,13 @@ class App:
         log.info("warming up Parakeet recognizer…")
         self.transcriber.warmup()
 
+    def setup_sound(self) -> None:
+        if not self.cfg.sound.enabled:
+            log.info("sound effects disabled")
+            return
+        self.sound_player = SoundPlayer(volume=self.cfg.sound.volume)
+        log.info("sound player ready (volume=%.2f)", self.cfg.sound.volume)
+
     def setup_audio(self) -> None:
         assert self.transcriber is not None
         assert self.model_paths is not None
@@ -250,10 +259,20 @@ class App:
                     len(seg.samples) / seg.sample_rate,
                 )
 
+        _active = {State.RECORDING, State.MANUAL}
+        prev_state: list[State] = [State.IDLE]  # mutable cell for closure
+
         def on_state(state: State) -> None:
             log.debug("engine state callback: %s", state.value)
+            prev = prev_state[0]
+            prev_state[0] = state
             if self.overlay is not None:
                 self.overlay.push_state(state)
+            if self.sound_player is not None:
+                if state in _active and prev not in _active:
+                    self.sound_player.play_start()
+                elif state is State.IDLE and prev in _active:
+                    self.sound_player.play_stop()
 
         def on_level(rms: float) -> None:
             if self.overlay is not None:
@@ -598,6 +617,7 @@ class App:
                 self.setup_models()
                 self.setup_filters()
                 self.setup_transcriber()
+                self.setup_sound()
                 self.setup_audio()
                 self.setup_transcribe_thread()
                 self.setup_paster()
