@@ -1,0 +1,18 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+.mypy_cache/
+
+# User-local config (do not check in)
+config.toml
+filters.json
+
+# Claude Code user-local settings
+.claude/settings.local.json

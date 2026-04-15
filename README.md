@@ -1,4 +1,4 @@
-# justsayit
+# JustSayIt
 
 Local Parakeet v3 voice dictation for Wayland.
 

@@ -1,0 +1,296 @@
+"""Configuration loading for justsayit.
+
+Reads ``$XDG_CONFIG_HOME/justsayit/config.toml`` (with sensible defaults)
+and resolves the filter-file and cache-dir paths.
+"""
+
+from __future__ import annotations
+
+import tomllib
+from dataclasses import dataclass, field, fields, is_dataclass, MISSING
+from pathlib import Path
+from typing import Any
+
+from platformdirs import user_cache_dir, user_config_dir
+
+APP_NAME = "justsayit"
+
+
+def config_dir() -> Path:
+    return Path(user_config_dir(APP_NAME))
+
+
+def cache_dir() -> Path:
+    return Path(user_cache_dir(APP_NAME))
+
+
+def models_dir() -> Path:
+    return cache_dir() / "models"
+
+
+# --- dataclasses -----------------------------------------------------------
+
+
+@dataclass
+class AudioConfig:
+    sample_rate: int = 16_000
+    channels: int = 1
+    device: str | int | None = None  # None = system default
+    block_ms: int = 30  # audio callback block size in ms
+    # Rolling buffer of the last N ms of audio kept while idle. When a
+    # recording starts (VAD-triggered or hotkey-triggered) the ring is
+    # prepended to the segment so we don't clip the first phoneme while
+    # Silero is still deciding "is this speech?" or while the user's
+    # finger is still on the hotkey.
+    lookback_ms: int = 300
+
+
+@dataclass
+class VadConfig:
+    # Master switch. When False, recording is purely hotkey-driven:
+    # toggle starts, toggle stops, transcribe the buffer. No Silero, no
+    # auto-open, no 3s validation. This is the simple path and the
+    # default while we stabilise the app.
+    enabled: bool = False
+    # RMS energy in [0, 1] that opens a candidate recording window.
+    # Silero then confirms speech from there.
+    open_rms: float = 0.015
+    # Silero VAD thresholds
+    silero_threshold: float = 0.5
+    min_silence_seconds: float = 0.8
+    min_speech_seconds: float = 0.25
+    # How long (s) we transcribe after opening to validate "real speech";
+    # if no words come out, we discard and return to waiting.
+    validation_seconds: float = 3.0
+    # Hard ceiling on a single recording segment.
+    max_segment_seconds: float = 60.0
+
+
+@dataclass
+class ShortcutConfig:
+    # Unique ID used when registering with the portal.
+    id: str = "toggle-dictation"
+    description: str = "Toggle justsayit dictation"
+    # Preferred accelerator in XDG format, e.g. "SUPER+backslash".
+    # The user can always rebind in their desktop settings.
+    preferred: str = "SUPER+backslash"
+
+
+@dataclass
+class PasteConfig:
+    enabled: bool = True
+    # Which keystroke-injection tool to use: "dotool" (recommended on KDE)
+    # or "wtype" (broken on Plasma 6 as of writing; fine on sway/Hyprland).
+    backend: str = "dotool"
+    # Key combination to trigger paste in the focused app.
+    paste_combo: str = "ctrl+shift+v"
+    # Minimum time (ms) to wait between the stop-hotkey being pressed and
+    # the synthetic paste firing, so the user has time to release the
+    # modifier keys from that hotkey. If transcription + filtering took
+    # longer than this, no extra wait happens.
+    release_delay_ms: int = 250
+    # Brief pause (ms) between wl-copy and the synthetic keystroke to let
+    # the clipboard settle; some apps (Electron) race without this.
+    settle_ms: int = 40
+    # Hard timeout (s) for each subprocess call. Keeps a broken setup
+    # from blocking the transcription worker forever.
+    subprocess_timeout: float = 5.0
+
+
+@dataclass
+class ModelConfig:
+    # sherpa-onnx publishes packaged model bundles as tar.bz2 release assets.
+    # Default: Parakeet TDT v3 multilingual INT8.
+    parakeet_archive_url: str = (
+        "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/"
+        "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2"
+    )
+    # Name of the top-level directory inside the archive.
+    parakeet_archive_dir: str = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8"
+    # Filenames inside the unpacked directory.
+    parakeet_encoder: str = "encoder.int8.onnx"
+    parakeet_decoder: str = "decoder.int8.onnx"
+    parakeet_joiner: str = "joiner.int8.onnx"
+    parakeet_tokens: str = "tokens.txt"
+    # Silero VAD ONNX (tiny file, downloaded directly).
+    vad_url: str = (
+        "https://github.com/snakers4/silero-vad/raw/master/"
+        "src/silero_vad/data/silero_vad.onnx"
+    )
+    # Inference threads (0 = library default)
+    num_threads: int = 2
+
+
+@dataclass
+class OverlayConfig:
+    enabled: bool = True
+    # "bottom" or "top" edge of the output.
+    anchor: str = "bottom"
+    margin: int = 24
+    width: int = 260
+    height: int = 56
+
+
+@dataclass
+class LogConfig:
+    # Rotating debug log written to disk. Off by default — turn this on
+    # when you need to share a trace of a bug. Console logging is always
+    # on and controlled independently by --log-level.
+    file_enabled: bool = False
+    # Empty string = default to <cache_dir>/justsayit.log.
+    file_path: str = ""
+    file_level: str = "DEBUG"
+    file_max_bytes: int = 5_000_000
+    file_backup_count: int = 3
+
+
+@dataclass
+class Config:
+    audio: AudioConfig = field(default_factory=AudioConfig)
+    vad: VadConfig = field(default_factory=VadConfig)
+    shortcut: ShortcutConfig = field(default_factory=ShortcutConfig)
+    paste: PasteConfig = field(default_factory=PasteConfig)
+    model: ModelConfig = field(default_factory=ModelConfig)
+    overlay: OverlayConfig = field(default_factory=OverlayConfig)
+    log: LogConfig = field(default_factory=LogConfig)
+    # File path for user regex filters.
+    filters_path: Path = field(default_factory=lambda: config_dir() / "filters.json")
+
+
+# --- loading ---------------------------------------------------------------
+
+
+def _coerce_section(section_cls, data: dict[str, Any] | None):
+    """Create a dataclass instance from a TOML table, ignoring unknown keys."""
+    if data is None:
+        return section_cls()
+    if not is_dataclass(section_cls):  # pragma: no cover
+        raise TypeError(f"{section_cls} is not a dataclass")
+    kwargs: dict[str, Any] = {}
+    for f in fields(section_cls):
+        if f.name in data:
+            kwargs[f.name] = data[f.name]
+    return section_cls(**kwargs)
+
+
+def load_config(path: Path | None = None) -> Config:
+    """Load config from ``path`` (defaults to ``$XDG_CONFIG_HOME/justsayit/config.toml``)."""
+    if path is None:
+        path = config_dir() / "config.toml"
+
+    cfg = Config()
+    if not path.exists():
+        return cfg
+
+    with path.open("rb") as f:
+        raw = tomllib.load(f)
+
+    cfg.audio = _coerce_section(AudioConfig, raw.get("audio"))
+    cfg.vad = _coerce_section(VadConfig, raw.get("vad"))
+    cfg.shortcut = _coerce_section(ShortcutConfig, raw.get("shortcut"))
+    cfg.paste = _coerce_section(PasteConfig, raw.get("paste"))
+    cfg.model = _coerce_section(ModelConfig, raw.get("model"))
+    cfg.overlay = _coerce_section(OverlayConfig, raw.get("overlay"))
+    cfg.log = _coerce_section(LogConfig, raw.get("log"))
+
+    if "filters_path" in raw:
+        cfg.filters_path = Path(raw["filters_path"]).expanduser()
+    return cfg
+
+
+def ensure_dirs(cfg: Config | None = None) -> None:
+    """Create config and cache directories if they don't exist."""
+    config_dir().mkdir(parents=True, exist_ok=True)
+    cache_dir().mkdir(parents=True, exist_ok=True)
+    models_dir().mkdir(parents=True, exist_ok=True)
+
+
+def render_config_toml(cfg: Config | None = None) -> str:
+    """Render ``cfg`` (or the dataclass defaults) as a commented TOML
+    document with every setting present — good for explorability and for
+    round-tripping a runtime-modified config back to disk."""
+    if cfg is None:
+        cfg = Config()
+    lines = [
+        "# justsayit configuration. Every setting is listed with its",
+        "# current value. Delete or comment a line to fall back to the",
+        "# built-in default (the app will not rewrite unchanged sections).",
+        "",
+    ]
+    for section_name in ("audio", "vad", "shortcut", "paste", "model", "overlay", "log"):
+        section = getattr(cfg, section_name)
+        lines.append(f"[{section_name}]")
+        for f in fields(section):
+            val = getattr(section, f.name)
+            if val is None:
+                lines.append(f'# {f.name} = ""')
+                continue
+            if isinstance(val, bool):
+                rendered = "true" if val else "false"
+            elif isinstance(val, str):
+                rendered = f'"{val}"'
+            else:
+                rendered = repr(val)
+            lines.append(f"{f.name} = {rendered}")
+        lines.append("")
+    lines.append(f'filters_path = "{cfg.filters_path}"')
+    return "\n".join(lines) + "\n"
+
+
+def default_config_toml() -> str:
+    """Back-compat wrapper — same as ``render_config_toml(Config())``."""
+    return render_config_toml(None)
+
+
+def save_config(cfg: Config, path: Path | None = None) -> None:
+    """Persist ``cfg`` to TOML, preserving any edits the user made to the
+    file in the meantime.
+
+    Strategy: re-load the on-disk file so any fields the user tweaked
+    (e.g. via the "Open config" tray item while the app was running) are
+    the baseline, then overlay the runtime-mutable fields from ``cfg``
+    on top. Currently only ``vad.enabled`` is considered runtime-mutable
+    — other fields pass through from disk untouched.
+    """
+    if path is None:
+        path = config_dir() / "config.toml"
+    if path.exists():
+        merged = load_config(path)
+    else:
+        merged = Config()
+    merged.vad.enabled = cfg.vad.enabled
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(render_config_toml(merged), encoding="utf-8")
+
+
+def ensure_config_file(path: Path | None = None) -> Path:
+    """Write the fully-populated default ``config.toml`` if it doesn't
+    exist yet, so the file is always available for inspection / editing.
+    Returns the resolved path."""
+    if path is None:
+        path = config_dir() / "config.toml"
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(render_config_toml(None), encoding="utf-8")
+    return path
+
+
+def ensure_filters_file(path: Path | None = None) -> Path:
+    """Write an example ``filters.json`` if it doesn't exist. Returns the
+    resolved path."""
+    import json
+
+    if path is None:
+        path = config_dir() / "filters.json"
+    if not path.exists():
+        default = [
+            {"name": "trim whitespace", "pattern": r"^\s+|\s+$", "replacement": ""},
+            {"name": "collapse whitespace", "pattern": r"\s{2,}", "replacement": " "},
+        ]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(default, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+# silence "unused" warning on MISSING import
+_ = MISSING

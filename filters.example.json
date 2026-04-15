@@ -1,0 +1,30 @@
+[
+  {
+    "name": "trim surrounding whitespace",
+    "pattern": "^\\s+|\\s+$",
+    "replacement": ""
+  },
+  {
+    "name": "collapse internal whitespace",
+    "pattern": "\\s{2,}",
+    "replacement": " "
+  },
+  {
+    "name": "spoken email address",
+    "pattern": "(\\w+)\\s+at\\s+(\\w+)\\s+dot\\s+(\\w+)",
+    "replacement": "\\1@\\2.\\3",
+    "flags": ["IGNORECASE"]
+  },
+  {
+    "name": "new line keyword",
+    "pattern": "\\bnew line\\b",
+    "replacement": "\n",
+    "flags": ["IGNORECASE"]
+  },
+  {
+    "name": "strip umms",
+    "pattern": "\\b(?:um|uh|erm)\\b\\s*",
+    "replacement": "",
+    "flags": ["IGNORECASE"]
+  }
+]
