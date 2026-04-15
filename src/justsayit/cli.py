@@ -284,8 +284,11 @@ class App:
             if self.overlay is not None:
                 self.overlay.push_level(rms)
 
-        # Skip loading VAD entirely when disabled.
-        vad_path = self.model_paths.vad if self.cfg.vad.enabled else None
+        # Always load the VAD model — it is always downloaded, and the
+        # tray toggle needs it present to switch auto-listen on without
+        # requiring a restart. Whether VAD actually auto-triggers is
+        # controlled at runtime by vad_active (cfg.vad.enabled + not paused).
+        vad_path = self.model_paths.vad
         self.engine = AudioEngine(
             self.cfg,
             vad_path,

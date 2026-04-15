@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-04-15
+
+### Fixed
+
+- Auto-listen tray toggle now works immediately after the first reload.
+  Previously, starting with `vad.enabled = false` meant the VAD model was
+  never loaded (`vad_loaded = false`), so `vad_enabled` stayed `false`
+  regardless of tray clicks — the checkbox appeared stuck and only a second
+  reload (which picked up the silently-saved `vad.enabled = true`) fixed it.
+  The VAD model is now always loaded on startup since it is always downloaded.
+
 ## [0.3.2] - 2026-04-15
 
 ### Added
