@@ -138,15 +138,26 @@ from justsayit.config import (
     ensure_dirs,
     ensure_filters_file,
     load_config,
+    render_config_toml,
     save_config,
 )
 from justsayit.filters import apply_filters, load_filters
-from justsayit.model import ensure_models
+from justsayit.model import ensure_models, ensure_vad
+from justsayit.postprocess import (
+    KNOWN_LLM_MODELS,
+    LLMPostprocessor,
+    download_llm_model,
+    ensure_default_profile,
+    find_hf_q4_filename,
+    load_profile,
+    profiles_dir,
+    update_profile_model,
+)
 from justsayit.overlay import OverlayWindow
 from justsayit.paste import PasteError, Paster
 from justsayit.shortcuts import GlobalShortcutClient
 from justsayit.sound import SoundPlayer
-from justsayit.transcribe import Transcriber
+from justsayit.transcribe import TranscriberBase, make_transcriber
 from justsayit.tray import MenuItem, TrayIcon, open_with_xdg
 
 ICON_ACTIVE = "audio-input-microphone"
@@ -158,8 +169,13 @@ MID_SEP_1 = 2
 MID_CONFIGURE_SHORTCUT = 3
 MID_OPEN_CONFIG = 4
 MID_RELOAD_CONFIG = 7
+MID_LLM_SUBMENU = 8       # "LLM: <profile>" parent item
+MID_LLM_OFF = 9           # "Off" radio item inside the LLM submenu
+MID_LLM_SEP_INNER = 10    # separator before the "Off" item
 MID_SEP_2 = 5
 MID_QUIT = 6
+# LLM profile radio items occupy IDs 100, 101, 102 … (one per profile file)
+MID_LLM_PROFILE_BASE = 100
 
 log = logging.getLogger("justsayit")
 
@@ -183,13 +199,15 @@ class App:
         self.no_overlay = no_overlay
         self.no_paste = no_paste
 
-        self.model_paths = None  # set in setup_models
-        self.transcriber: Transcriber | None = None
+        self.model_paths = None  # set in setup_models (Parakeet only)
+        self.vad_path = None    # set in setup_models (all backends)
+        self.transcriber: TranscriberBase | None = None
         self.engine: AudioEngine | None = None
         self.overlay: OverlayWindow | None = None
         self.shortcut_client: GlobalShortcutClient | None = None
         self.paster: Paster | None = None
         self.sound_player: SoundPlayer | None = None
+        self.postprocessor: LLMPostprocessor | None = None
         self.tray: TrayIcon | None = None
         self.gtk_app: Gtk.Application | None = None
         self.filters = []
@@ -209,7 +227,13 @@ class App:
     def setup_models(self) -> None:
         # Always fetch the VAD model so the tray's auto-listen toggle
         # works regardless of whether it was enabled at startup.
-        self.model_paths = ensure_models(self.cfg, want_vad=True)
+        if self.cfg.model.backend == "whisper":
+            self.vad_path = ensure_vad(self.cfg)
+            self.model_paths = None
+            log.info("whisper backend: VAD ready, Whisper model loads on first use")
+        else:
+            self.model_paths = ensure_models(self.cfg, want_vad=True)
+            self.vad_path = self.model_paths.vad
 
     def setup_filters(self) -> None:
         self.filters = load_filters(self.cfg.filters_path)
@@ -220,10 +244,26 @@ class App:
         )
 
     def setup_transcriber(self) -> None:
-        assert self.model_paths is not None
-        self.transcriber = Transcriber(self.cfg, self.model_paths)
-        log.info("warming up Parakeet recognizer…")
+        self.transcriber = make_transcriber(self.cfg, self.model_paths)
+        log.info("warming up %s recognizer…", self.cfg.model.backend)
         self.transcriber.warmup()
+
+    def setup_postprocessor(self) -> None:
+        if not self.cfg.postprocess.enabled:
+            log.info("LLM postprocessor disabled")
+            return
+        try:
+            profile = load_profile(self.cfg.postprocess.profile)
+            self.postprocessor = LLMPostprocessor(profile)
+            log.info(
+                "warming up LLM postprocessor (profile=%s)…",
+                self.cfg.postprocess.profile,
+            )
+            self.postprocessor.warmup()
+            log.info("LLM postprocessor ready")
+        except Exception:
+            log.exception("LLM postprocessor failed to load; postprocessing disabled")
+            self.postprocessor = None
 
     def setup_sound(self) -> None:
         if not self.cfg.sound.enabled:
@@ -234,7 +274,7 @@ class App:
 
     def setup_audio(self) -> None:
         assert self.transcriber is not None
-        assert self.model_paths is not None
+        assert self.vad_path is not None
 
         def validate(samples, sr):
             # Called from the audio thread. Parakeet on a 3s clip is fast.
@@ -288,10 +328,9 @@ class App:
         # tray toggle needs it present to switch auto-listen on without
         # requiring a restart. Whether VAD actually auto-triggers is
         # controlled at runtime by vad_active (cfg.vad.enabled + not paused).
-        vad_path = self.model_paths.vad
         self.engine = AudioEngine(
             self.cfg,
-            vad_path,
+            self.vad_path,
             validate_words=validate,
             on_segment=on_segment,
             on_state=on_state,
@@ -464,8 +503,91 @@ class App:
             if self.gtk_app is not None:
                 self.gtk_app.quit()
 
+        # --- LLM profile submenu -------------------------------------------
+
+        def _llm_label() -> str:
+            if self.cfg.postprocess.enabled:
+                return f"LLM: {self.cfg.postprocess.profile}"
+            return "LLM: off"
+
+        # Discover profiles whose model file is actually on disk.
+        pd = profiles_dir()
+        profile_names: list[str] = []
+        if pd.exists():
+            for p in sorted(pd.glob("*.toml")):
+                try:
+                    prof = load_profile(str(p))
+                    if Path(prof.model_path).expanduser().exists():
+                        profile_names.append(p.stem)
+                except Exception:
+                    log.debug("skipping profile %s in tray setup", p.name)
+
+        # Build radio items for each profile + an "Off" item.
+        llm_profile_items: dict[str, MenuItem] = {}
+        llm_submenu_item: MenuItem | None = None
+
+        if profile_names:
+            active = self.cfg.postprocess.profile if self.cfg.postprocess.enabled else None
+
+            def _on_llm_profile(key: str | None) -> None:
+                if key is None:
+                    self.cfg.postprocess.enabled = False
+                else:
+                    self.cfg.postprocess.enabled = True
+                    self.cfg.postprocess.profile = key
+                try:
+                    save_config(self.cfg)
+                except Exception:
+                    log.exception("failed to save config after LLM profile switch")
+                # Swap the postprocessor (lazy — no warmup; loads on first use).
+                self.postprocessor = None
+                if self.cfg.postprocess.enabled:
+                    try:
+                        prof = load_profile(self.cfg.postprocess.profile)
+                        self.postprocessor = LLMPostprocessor(prof)
+                        log.info("LLM profile switched to: %s", self.cfg.postprocess.profile)
+                    except Exception:
+                        log.exception("failed to load LLM profile %s", self.cfg.postprocess.profile)
+                # Update radio states in place then emit one LayoutUpdated.
+                cur = self.cfg.postprocess.profile if self.cfg.postprocess.enabled else None
+                for k, item in llm_profile_items.items():
+                    item.toggle_state = 1 if k == cur else 0
+                llm_off_item.toggle_state = 1 if cur is None else 0
+                llm_submenu_item.label = _llm_label()  # type: ignore[union-attr]
+                if self.tray is not None:
+                    self.tray.notify_layout_changed()
+
+            children: list[MenuItem] = []
+            for i, name in enumerate(profile_names):
+                item = MenuItem(
+                    id=MID_LLM_PROFILE_BASE + i,
+                    label=name,
+                    toggle_type="radio",
+                    toggle_state=1 if name == active else 0,
+                    on_activate=lambda n=name: _on_llm_profile(n),
+                )
+                llm_profile_items[name] = item
+                children.append(item)
+
+            llm_off_item = MenuItem(
+                id=MID_LLM_OFF,
+                label="Off",
+                toggle_type="radio",
+                toggle_state=1 if active is None else 0,
+                on_activate=lambda: _on_llm_profile(None),
+            )
+            children += [MenuItem(id=MID_LLM_SEP_INNER, is_separator=True), llm_off_item]
+
+            llm_submenu_item = MenuItem(
+                id=MID_LLM_SUBMENU,
+                label=_llm_label(),
+                children=children,
+            )
+
+        # --- assemble main menu --------------------------------------------
+
         assert self.engine is not None
-        items = [
+        items: list[MenuItem] = [
             MenuItem(
                 id=MID_AUTO_LISTEN,
                 label="Auto-listen",
@@ -489,6 +611,10 @@ class App:
                 label="Reload config",
                 on_activate=on_reload_config,
             ),
+        ]
+        if llm_submenu_item is not None:
+            items.append(llm_submenu_item)
+        items += [
             MenuItem(id=MID_SEP_2, is_separator=True),
             MenuItem(id=MID_QUIT, label="Quit", on_activate=on_quit),
         ]
@@ -545,6 +671,16 @@ class App:
         final = apply_filters(raw, self.filters)
         if final != raw:
             log.info("filters changed output: %r -> %r", raw, final)
+
+        pp = self.postprocessor  # snapshot — avoids TOCTOU with tray thread
+        if pp is not None:
+            try:
+                cleaned = pp.process(final)
+                if cleaned != final:
+                    log.info("LLM cleaned: %r -> %r", final, cleaned)
+                final = cleaned
+            except Exception:
+                log.exception("LLM postprocessor failed; using unprocessed text")
 
         # Space prefix / suffix
         auto_space_ms = self.cfg.paste.auto_space_timeout_ms
@@ -631,6 +767,7 @@ class App:
                 self.setup_models()
                 self.setup_filters()
                 self.setup_transcriber()
+                self.setup_postprocessor()
                 self.setup_sound()
                 self.setup_audio()
                 self.setup_transcribe_thread()
@@ -675,7 +812,7 @@ class App:
 # --- argparse --------------------------------------------------------------
 
 
-def _write_default_config(force: bool = False) -> None:
+def _write_default_config(force: bool = False, backend: str | None = None) -> None:
     ensure_dirs()
     cfg_path = config_dir() / "config.toml"
     filters_path = config_dir() / "filters.json"
@@ -683,8 +820,14 @@ def _write_default_config(force: bool = False) -> None:
     if cfg_path.exists() and not force:
         print(f"config already exists: {cfg_path}", file=sys.stderr)
     else:
-        cfg_path.write_text(default_config_toml(), encoding="utf-8")
+        cfg = Config()
+        if backend is not None:
+            cfg.model.backend = backend
+        cfg_path.write_text(render_config_toml(cfg), encoding="utf-8")
         print(f"wrote {cfg_path}")
+
+    profile_path = ensure_default_profile()
+    print(f"postprocess profile: {profile_path}")
 
     if filters_path.exists() and not force:
         print(f"filters already exist: {filters_path}", file=sys.stderr)
@@ -700,8 +843,24 @@ def _write_default_config(force: bool = False) -> None:
 def _download_models_only() -> int:
     ensure_dirs()
     cfg = load_config()
-    p = ensure_models(cfg, force=False)
-    print(f"models ready:\n  encoder: {p.encoder}\n  vad:     {p.vad}")
+    if cfg.model.backend == "whisper":
+        vad = ensure_vad(cfg, force=False)
+        print(f"whisper backend — VAD model ready: {vad}")
+        print("  (Whisper model downloads automatically on first transcription)")
+    else:
+        p = ensure_models(cfg, force=False)
+        print(f"models ready:\n  encoder: {p.encoder}\n  vad:     {p.vad}")
+
+    if cfg.postprocess.enabled:
+        try:
+            profile = load_profile(cfg.postprocess.profile)
+            if profile.hf_repo and profile.hf_filename:
+                from justsayit.postprocess import LLMPostprocessor
+                pp = LLMPostprocessor(profile)
+                model_path = pp._resolved_model_path()
+                print(f"LLM model ready: {model_path}")
+        except Exception as exc:
+            print(f"postprocess download skipped: {exc}", file=sys.stderr)
     return 0
 
 
@@ -759,6 +918,178 @@ def _setup_file_logging(cfg: Config, console_level: int) -> None:
     )
 
 
+def _ensure_llama_cpp(vulkan: bool = True) -> bool:
+    """Ensure llama-cpp-python is importable, compiling it if needed.
+
+    Returns True when llama_cpp is ready, False on unrecoverable error.
+    Prints human-readable progress and error messages.
+    """
+    import shutil
+    import subprocess
+
+    # Quick check: already installed?
+    if subprocess.run(
+        [sys.executable, "-c", "import llama_cpp"],
+        capture_output=True,
+    ).returncode == 0:
+        return True
+
+    print("\nllama-cpp-python is not installed — installing now.")
+
+    if vulkan:
+        if shutil.which("cmake") is None:
+            print(
+                "error: cmake is required to compile llama-cpp-python.\n"
+                "  Install: pacman -S cmake  (or the equivalent for your distro)",
+                file=sys.stderr,
+            )
+            return False
+        vulkan_ok = subprocess.run(
+            ["pkg-config", "--exists", "vulkan"], capture_output=True
+        ).returncode == 0
+        if not vulkan_ok:
+            print(
+                "warning: Vulkan headers not found — falling back to CPU-only build.\n"
+                "  For GPU acceleration later: pacman -S vulkan-headers vulkan-icd-loader\n",
+                file=sys.stderr,
+            )
+            vulkan = False
+
+    if vulkan:
+        print(
+            "Compiling with Vulkan GPU support"
+            " (CMAKE_ARGS=-DGGML_VULKAN=1) — this may take several minutes…\n"
+        )
+        env = {**_os.environ, "CMAKE_ARGS": "-DGGML_VULKAN=1"}
+    else:
+        print("Installing llama-cpp-python (CPU-only build)…\n")
+        env = {k: v for k, v in _os.environ.items() if k != "CMAKE_ARGS"}
+
+    result = subprocess.run(
+        [sys.executable, "-m", "pip", "install", "llama-cpp-python>=0.3"],
+        env=env,
+    )
+    if result.returncode != 0:
+        print("error: llama-cpp-python installation failed.", file=sys.stderr)
+        return False
+    print("\nllama-cpp-python installed successfully.")
+    return True
+
+
+def _parse_selection(raw: str, max_n: int) -> list[int] | None:
+    """Parse a selection string into sorted 1-based indices.
+
+    Accepts a single number ("2"), comma-separated ("1,3"), ranges ("1-3"),
+    mixed ("1,3-5"), or the keyword "all".  Returns None if invalid.
+    """
+    s = raw.strip().lower()
+    if s in ("all", "a"):
+        return list(range(1, max_n + 1))
+    indices: set[int] = set()
+    for part in s.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            sides = part.split("-", 1)
+            try:
+                lo, hi = int(sides[0].strip()), int(sides[1].strip())
+            except ValueError:
+                return None
+            if not (1 <= lo <= hi <= max_n):
+                return None
+            indices.update(range(lo, hi + 1))
+        else:
+            try:
+                n = int(part)
+            except ValueError:
+                return None
+            if not (1 <= n <= max_n):
+                return None
+            indices.add(n)
+    return sorted(indices) if indices else None
+
+
+def _run_setup_llm(model_key: str | None = None, cpu: bool = False) -> int:
+    """Interactively select, download, and configure one or more GGUF LLM models."""
+    ensure_dirs()
+
+    if not _ensure_llama_cpp(vulkan=not cpu):
+        return 1
+
+    keys = list(KNOWN_LLM_MODELS.keys())
+
+    if model_key is not None:
+        selected_keys = [model_key]
+    else:
+        print("\nAvailable LLM models for transcription cleanup:\n")
+        for i, key in enumerate(keys, 1):
+            print(f"  {i}. {KNOWN_LLM_MODELS[key]['display']}")
+        print()
+        hint = f"1-{len(keys)}" if len(keys) > 2 else "1,2"
+        while True:
+            try:
+                raw = input(
+                    f"Select model(s) [number, range, or comma-separated, e.g. 1 or {hint}]"
+                    " (Ctrl-C to skip): "
+                ).strip()
+            except (KeyboardInterrupt, EOFError):
+                print("\nSkipped.")
+                return 0
+            indices = _parse_selection(raw, len(keys))
+            if indices is not None:
+                selected_keys = [keys[i - 1] for i in indices]
+                break
+            print(
+                f"  Enter a number (1-{len(keys)}), a range (1-{len(keys)}),"
+                " or comma-separated values."
+            )
+
+    downloaded: list[tuple[str, Path, Path]] = []
+    failed: list[str] = []
+
+    for key in selected_keys:
+        info = KNOWN_LLM_MODELS[key]
+        hf_repo = info["hf_repo"]
+        print(f"\n{info['display']}")
+        print("  Querying HuggingFace for Q4_K_M filename…", end="", flush=True)
+        try:
+            hf_filename = find_hf_q4_filename(hf_repo)
+        except RuntimeError as exc:
+            print(f"\n  error: {exc}", file=sys.stderr)
+            failed.append(key)
+            continue
+        print(f" {hf_filename}")
+
+        try:
+            model_path = download_llm_model(hf_repo, hf_filename)
+        except Exception as exc:
+            print(f"  error: download failed: {exc}", file=sys.stderr)
+            failed.append(key)
+            continue
+
+        profile_path = profiles_dir() / f"{key}.toml"
+        ensure_default_profile(profile_path)
+        update_profile_model(profile_path, model_path, hf_repo, hf_filename)
+        downloaded.append((key, model_path, profile_path))
+        print(f"  Model:   {model_path}")
+        print(f"  Profile: {profile_path}")
+
+    if not downloaded:
+        return 1 if failed else 0
+
+    print(f"\n{'─' * 54}")
+    if len(downloaded) == 1:
+        print("\nTo activate, set in config.toml:")
+    else:
+        print(f"\n{len(downloaded)} model(s) ready. To activate one, set in config.toml:")
+    print("  [postprocess]")
+    print("  enabled = true")
+    for key, _, _ in downloaded:
+        print(f'  profile = "{key}"')
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="justsayit")
     ap.add_argument("--version", action="version", version=f"justsayit {__version__}")
@@ -788,8 +1119,30 @@ def _build_parser() -> argparse.ArgumentParser:
         "--config", type=Path, help="override path to config.toml"
     )
     sub = ap.add_subparsers(dest="subcommand")
-    sub.add_parser("init", help="write default config + example filters")
-    sub.add_parser("download-models", help="pre-download Parakeet + VAD models")
+    init_sub = sub.add_parser("init", help="write default config + example filters")
+    init_sub.add_argument(
+        "--backend",
+        choices=["parakeet", "whisper"],
+        default=None,
+        help="transcription backend to set in config (default: parakeet)",
+    )
+    sub.add_parser("download-models", help="pre-download models (Parakeet + VAD, or VAD only for whisper backend)")
+    setup_llm_sub = sub.add_parser(
+        "setup-llm",
+        help="interactively select and download a GGUF LLM for postprocessing",
+    )
+    setup_llm_sub.add_argument(
+        "--model",
+        choices=list(KNOWN_LLM_MODELS.keys()),
+        default=None,
+        help="model key to download without interactive prompt",
+    )
+    setup_llm_sub.add_argument(
+        "--cpu",
+        action="store_true",
+        default=False,
+        help="install CPU-only llama-cpp-python (skip Vulkan GPU compilation)",
+    )
     return ap
 
 
@@ -803,10 +1156,12 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     if args.subcommand == "init":
-        _write_default_config(force=False)
+        _write_default_config(force=False, backend=getattr(args, "backend", None))
         return 0
     if args.subcommand == "download-models":
         return _download_models_only()
+    if args.subcommand == "setup-llm":
+        return _run_setup_llm(getattr(args, "model", None), cpu=getattr(args, "cpu", False))
 
     ensure_dirs()
     # Seed defaults on first run so `Open config file…` in the tray always

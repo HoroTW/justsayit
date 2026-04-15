@@ -1,6 +1,6 @@
 [project]
 name = "justsayit"
-version = "0.3.3"
+version = "0.5.0"
 description = "Local Parakeet-powered voice dictation with a Wayland layer-shell overlay"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -18,6 +18,15 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
+]
+whisper = [
+    "faster-whisper>=1.0",
+]
+# NOTE: llama-cpp-python must be compiled with Vulkan support for GPU use.
+# install.sh --postprocess handles this automatically.
+# For manual install: CMAKE_ARGS="-DGGML_VULKAN=1" pip install llama-cpp-python
+llm = [
+    "llama-cpp-python>=0.3",
 ]
 
 [project.scripts]

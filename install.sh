@@ -30,19 +30,28 @@ LEGACY_AUTOSTART_FILE="$AUTOSTART_DIR/$LEGACY_APP_ID.desktop"
 UNINSTALL=0
 AUTOSTART=0
 SKIP_MODELS=0
+MODEL=""        # "" = parakeet (default), "whisper" = faster-whisper
+POSTPROCESS=0   # 1 = install llama-cpp-python with Vulkan for LLM cleanup
 
 usage() {
     cat <<'EOF'
 Usage: install.sh [--uninstall] [--autostart] [--skip-models]
+                  [--model parakeet|whisper] [--postprocess]
 
-  (default)       Create/update .venv, install deps, install .desktop file,
-                  download models.
-  --uninstall     Remove the .desktop file (and autostart entry if present).
-                  The .venv and ~/.cache/justsayit are left in place — delete
-                  them yourself if you want a clean wipe.
-  --autostart     Also install a user-autostart .desktop so justsayit runs
-                  on login.
-  --skip-models   Don't pre-download models (they'll be fetched on first run).
+  (default)              Create/update .venv, install deps, install .desktop
+                         file, download models (Parakeet + VAD).
+  --uninstall            Remove the .desktop file (and autostart entry if
+                         present). The .venv and ~/.cache/justsayit are left
+                         in place — delete them yourself for a clean wipe.
+  --autostart            Also install a user-autostart .desktop so justsayit
+                         runs on login.
+  --skip-models          Don't pre-download models (fetched on first run).
+  --model parakeet       Use the bundled Parakeet TDT v3 backend (default).
+  --model whisper        Use faster-whisper / distil-whisper (installs the
+                         [whisper] extra; model downloads on first use).
+  --postprocess          Skip the postprocessing prompt and always set up
+                         LLM cleanup (Vulkan GPU, interactive model select).
+                         Useful for non-interactive / scripted installs.
 EOF
 }
 
@@ -51,6 +60,14 @@ while [ $# -gt 0 ]; do
         --uninstall) UNINSTALL=1 ;;
         --autostart) AUTOSTART=1 ;;
         --skip-models) SKIP_MODELS=1 ;;
+        --postprocess) POSTPROCESS=1 ;;
+        --model)
+            shift
+            case "$1" in
+                parakeet|whisper) MODEL="$1" ;;
+                *) echo "unknown model: $1 (choose parakeet or whisper)" >&2; usage; exit 2 ;;
+            esac
+            ;;
         -h|--help) usage; exit 0 ;;
         *) echo "unknown flag: $1" >&2; usage; exit 2 ;;
     esac
@@ -86,8 +103,11 @@ if ! pkg-config --exists gtk4 2>/dev/null; then
     echo "         but if build fails install 'gtk4' and headers for your distro." >&2
 fi
 if ! pkg-config --exists gtk4-layer-shell-0 2>/dev/null; then
-    echo "warning: gtk4-layer-shell pkg-config not found. Install 'gtk4-layer-shell'" >&2
-    echo "         (Arch: pacman -S gtk4-layer-shell)." >&2
+    echo "error: gtk4-layer-shell not found." >&2
+    echo "  The Wayland layer-shell overlay requires this library." >&2
+    echo "  Install: pacman -S gtk4-layer-shell  (Arch / Manjaro)" >&2
+    echo "           or equivalent for your distro, then re-run install.sh." >&2
+    exit 1
 fi
 
 # --- venv ------------------------------------------------------------------
@@ -96,9 +116,10 @@ echo "==> creating venv at $VENV_DIR (using --system-site-packages for gi bindin
 uv venv --system-site-packages "$VENV_DIR" >/dev/null
 
 echo "==> installing project into venv"
-# shellcheck disable=SC2046
+EXTRAS="dev"
+[ "$MODEL" = "whisper" ] && EXTRAS="dev,whisper"
 UV_PROJECT_ENVIRONMENT="$VENV_DIR" uv pip install --python "$VENV_DIR/bin/python" \
-    -e "$PROJECT_DIR[dev]"
+    -e "$PROJECT_DIR[$EXTRAS]"
 
 BIN="$VENV_DIR/bin/justsayit"
 if [ ! -x "$BIN" ]; then
@@ -110,13 +131,20 @@ fi
 
 if [ ! -f "${XDG_CONFIG_HOME:-$HOME/.config}/$APP_ID/config.toml" ]; then
     echo "==> writing default config and example filters"
-    "$BIN" init || true
+    INIT_ARGS=""
+    [ -n "$MODEL" ] && INIT_ARGS="--backend $MODEL"
+    # shellcheck disable=SC2086
+    "$BIN" init $INIT_ARGS || true
 fi
 
 # --- models ---------------------------------------------------------------
 
 if [ "$SKIP_MODELS" -eq 0 ]; then
-    echo "==> downloading Parakeet + VAD models (first run only)"
+    if [ "$MODEL" = "whisper" ]; then
+        echo "==> downloading VAD model (Whisper model downloads on first use)"
+    else
+        echo "==> downloading Parakeet + VAD models (first run only)"
+    fi
     "$BIN" download-models
 else
     echo "skipping model download (--skip-models)"
@@ -162,13 +190,29 @@ if [ -f "$LEGACY_AUTOSTART_FILE" ]; then
     rm -v "$LEGACY_AUTOSTART_FILE"
 fi
 
+# --- LLM postprocessing (optional) ----------------------------------------
+
+if [ "$POSTPROCESS" -eq 0 ] && [ -t 0 ]; then
+    printf "\nSet up LLM postprocessing (fixes grammar/filler words after dictation)? [y/N] "
+    read -r _REPLY
+    case "$_REPLY" in
+        [Yy]*) POSTPROCESS=1 ;;
+    esac
+fi
+
+if [ "$POSTPROCESS" -eq 1 ]; then
+    echo ""
+    echo "==> setting up LLM postprocessing"
+    "$BIN" setup-llm || true
+fi
+
 cat <<EOF
 
 Done.
 
 Next steps:
   * Make sure you're in the 'input' group so dotool can send keystrokes:
-      sudo usermod -aG input "$USER" && sudo systemctl start dotoold
+      sudo usermod -aG input "$USER"
     (log out / log in for group membership to take effect)
   * Launch from your app launcher, or run: $BIN
   * Accept the KDE permission dialog the first time justsayit asks for

@@ -1,0 +1,238 @@
+"""Tests for LLM postprocessing — profile loading, config integration, and
+the LLMPostprocessor's process() method (using a mock llama_cpp.Llama)."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from justsayit.config import Config, load_config, render_config_toml
+from justsayit.postprocess import (
+    KNOWN_LLM_MODELS,
+    LLMPostprocessor,
+    PostprocessProfile,
+    ensure_default_profile,
+    find_hf_q4_filename,
+    load_profile,
+    profiles_dir,
+)
+
+
+# ---------------------------------------------------------------------------
+# Profile loading
+# ---------------------------------------------------------------------------
+
+
+def test_load_profile_by_name(tmp_path, monkeypatch):
+    monkeypatch.setattr("justsayit.postprocess.config_dir", lambda: tmp_path)
+    profile_dir = tmp_path / "postprocess"
+    profile_dir.mkdir()
+    (profile_dir / "mymodel.toml").write_text(
+        '[model]\nmodel_path = "/fake/model.gguf"\ntemperature = 0.05\n',
+        encoding="utf-8",
+    )
+    # TOML has no [model] section — fields are at top level
+    (profile_dir / "mymodel.toml").write_text(
+        'model_path = "/fake/model.gguf"\ntemperature = 0.05\n',
+        encoding="utf-8",
+    )
+    profile = load_profile("mymodel")
+    assert profile.model_path == "/fake/model.gguf"
+    assert profile.temperature == pytest.approx(0.05)
+
+
+def test_load_profile_by_path(tmp_path):
+    p = tmp_path / "custom.toml"
+    p.write_text(
+        'model_path = "/tmp/model.gguf"\nn_gpu_layers = 0\n',
+        encoding="utf-8",
+    )
+    profile = load_profile(str(p))
+    assert profile.model_path == "/tmp/model.gguf"
+    assert profile.n_gpu_layers == 0
+
+
+def test_load_profile_unknown_keys_ignored(tmp_path):
+    p = tmp_path / "extra.toml"
+    p.write_text(
+        'model_path = "/x.gguf"\nfuture_option = 99\n',
+        encoding="utf-8",
+    )
+    profile = load_profile(str(p))  # must not raise
+    assert profile.model_path == "/x.gguf"
+
+
+def test_load_profile_missing_file_raises(tmp_path, monkeypatch):
+    monkeypatch.setattr("justsayit.postprocess.config_dir", lambda: tmp_path)
+    with pytest.raises(FileNotFoundError):
+        load_profile("nonexistent")
+
+
+def test_load_profile_defaults_are_applied(tmp_path):
+    p = tmp_path / "minimal.toml"
+    p.write_text('model_path = "/x.gguf"\n', encoding="utf-8")
+    profile = load_profile(str(p))
+    assert profile.temperature == pytest.approx(0.08)
+    assert profile.n_gpu_layers == -1
+    assert profile.max_tokens == 512
+    assert "{text}" in profile.user_template
+
+
+def test_ensure_default_profile_creates_file(tmp_path, monkeypatch):
+    monkeypatch.setattr("justsayit.postprocess.config_dir", lambda: tmp_path)
+    path = ensure_default_profile()
+    assert path.exists()
+    assert path.name == "gemma-cleanup.toml"
+    content = path.read_text(encoding="utf-8")
+    assert "system_prompt" in content
+    assert "temperature" in content
+
+
+def test_ensure_default_profile_idempotent(tmp_path, monkeypatch):
+    monkeypatch.setattr("justsayit.postprocess.config_dir", lambda: tmp_path)
+    p1 = ensure_default_profile()
+    original = p1.read_text(encoding="utf-8")
+    p2 = ensure_default_profile()
+    assert p1 == p2
+    assert p2.read_text(encoding="utf-8") == original  # not overwritten
+
+
+# ---------------------------------------------------------------------------
+# LLMPostprocessor (mock llama_cpp)
+# ---------------------------------------------------------------------------
+
+
+def _make_mock_llama(response_text: str):
+    """Return a mock Llama instance that returns *response_text*."""
+    llm = MagicMock()
+    llm.create_chat_completion.return_value = {
+        "choices": [{"message": {"content": response_text}}]
+    }
+    return llm
+
+
+def test_process_returns_cleaned_text():
+    profile = PostprocessProfile(model_path="/fake/model.gguf")
+    pp = LLMPostprocessor(profile)
+    pp._llm = _make_mock_llama("Cleaned text.")
+    result = pp.process("ähm cleaned text")
+    assert result == "Cleaned text."
+
+
+def test_process_falls_back_on_empty_response():
+    profile = PostprocessProfile(model_path="/fake/model.gguf")
+    pp = LLMPostprocessor(profile)
+    pp._llm = _make_mock_llama("")  # empty model output
+    result = pp.process("original text")
+    assert result == "original text"
+
+
+def test_process_uses_system_prompt():
+    profile = PostprocessProfile(
+        model_path="/fake/model.gguf",
+        system_prompt="My custom prompt.",
+    )
+    pp = LLMPostprocessor(profile)
+    pp._llm = _make_mock_llama("ok")
+    pp.process("some text")
+    call_kwargs = pp._llm.create_chat_completion.call_args
+    messages = call_kwargs[1]["messages"] if call_kwargs[1] else call_kwargs[0][0]
+    system_msg = next(m for m in messages if m["role"] == "system")
+    assert system_msg["content"] == "My custom prompt."
+
+
+def test_process_uses_temperature_and_max_tokens():
+    profile = PostprocessProfile(
+        model_path="/fake/model.gguf",
+        temperature=0.03,
+        max_tokens=128,
+    )
+    pp = LLMPostprocessor(profile)
+    pp._llm = _make_mock_llama("out")
+    pp.process("in")
+    call_kwargs = pp._llm.create_chat_completion.call_args[1]
+    assert call_kwargs["temperature"] == pytest.approx(0.03)
+    assert call_kwargs["max_tokens"] == 128
+
+
+def test_process_substitutes_text_in_user_template():
+    profile = PostprocessProfile(
+        model_path="/fake/model.gguf",
+        user_template="Bitte korrigiere: {text}",
+    )
+    pp = LLMPostprocessor(profile)
+    pp._llm = _make_mock_llama("korrigiert")
+    pp.process("roher text")
+    messages = pp._llm.create_chat_completion.call_args[1]["messages"]
+    user_msg = next(m for m in messages if m["role"] == "user")
+    assert user_msg["content"] == "Bitte korrigiere: roher text"
+
+
+def test_warmup_loads_model(tmp_path):
+    """warmup() should call _build() and cache the result in _llm."""
+    profile = PostprocessProfile(model_path=str(tmp_path / "model.gguf"))
+    (tmp_path / "model.gguf").write_bytes(b"fake")
+    pp = LLMPostprocessor(profile)
+    mock_llm = MagicMock()
+    with patch("justsayit.postprocess.LLMPostprocessor._build", return_value=mock_llm):
+        pp.warmup()
+    assert pp._llm is mock_llm
+
+
+def test_build_raises_without_llama_cpp():
+    profile = PostprocessProfile(model_path="/nonexistent/model.gguf")
+    pp = LLMPostprocessor(profile)
+    with patch.dict("sys.modules", {"llama_cpp": None}):
+        with pytest.raises(RuntimeError, match="llama-cpp-python"):
+            pp._build()
+
+
+# ---------------------------------------------------------------------------
+# Config round-trip
+# ---------------------------------------------------------------------------
+
+
+def test_postprocess_config_defaults():
+    cfg = Config()
+    assert cfg.postprocess.enabled is False
+    assert cfg.postprocess.profile == "gemma-cleanup"
+
+
+def test_render_includes_postprocess_section():
+    import tomllib
+    raw = tomllib.loads(render_config_toml())
+    assert "postprocess" in raw
+    assert raw["postprocess"]["enabled"] is False
+    assert raw["postprocess"]["profile"] == "gemma-cleanup"
+
+
+def test_load_config_postprocess_settings(tmp_path):
+    p = tmp_path / "config.toml"
+    p.write_text(
+        "[postprocess]\nenabled = true\nprofile = \"my-model\"\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(p)
+    assert cfg.postprocess.enabled is True
+    assert cfg.postprocess.profile == "my-model"
+
+
+# ---------------------------------------------------------------------------
+# Network: verify each built-in model repo exposes a Q4_K_M GGUF
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.network
+@pytest.mark.parametrize("model_key", list(KNOWN_LLM_MODELS.keys()))
+def test_hf_model_has_q4_k_m_gguf(network, model_key):
+    """Each entry in KNOWN_LLM_MODELS must have a Q4_K_M .gguf on HuggingFace."""
+    hf_repo = KNOWN_LLM_MODELS[model_key]["hf_repo"]
+    filename = find_hf_q4_filename(hf_repo)
+    assert filename.endswith(".gguf"), (
+        f"{model_key} ({hf_repo}): expected .gguf, got {filename!r}"
+    )
+    assert "Q4_K_M" in filename, (
+        f"{model_key} ({hf_repo}): expected Q4_K_M in filename, got {filename!r}"
+    )

@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable
 
 from gi.repository import Gio, GLib
@@ -131,16 +131,21 @@ DBUSMENU_XML = """<node>
 
 @dataclass
 class MenuItem:
-    """One entry in the tray menu. ``id`` must be > 0 and unique."""
+    """One entry in the tray menu. ``id`` must be > 0 and unique.
+
+    Set ``children`` to a non-empty list to create a submenu — the item
+    becomes a parent that opens a flyout when hovered.
+    """
 
     id: int
     label: str = ""
     is_separator: bool = False
-    toggle_type: str | None = None  # "checkmark" or None
+    toggle_type: str | None = None  # "checkmark" | "radio" | None
     toggle_state: int = -1  # 0 off, 1 on, -1 indeterminate
     enabled: bool = True
     visible: bool = True
     on_activate: Callable[[], None] | None = None
+    children: list[MenuItem] = field(default_factory=list)
 
     def to_props(self) -> dict[str, GLib.Variant]:
         if self.is_separator:
@@ -155,6 +160,8 @@ class MenuItem:
         if self.toggle_type:
             props["toggle-type"] = GLib.Variant("s", self.toggle_type)
             props["toggle-state"] = GLib.Variant("i", self.toggle_state)
+        if self.children:
+            props["children-display"] = GLib.Variant("s", "submenu")
         return props
 
 
@@ -180,7 +187,7 @@ class TrayIcon:
         self.item_id = item_id
         self.tooltip = tooltip
         self.items = items or []
-        self._item_by_id: dict[int, MenuItem] = {it.id: it for it in self.items}
+        self._item_by_id: dict[int, MenuItem] = TrayIcon._collect_items(self.items)
 
         self._conn: Gio.DBusConnection | None = None
         self._sni_reg_id = 0
@@ -235,6 +242,25 @@ class TrayIcon:
             Gio.bus_unown_name(self._own_name_id)
             self._own_name_id = 0
 
+    # --- helpers -----------------------------------------------------------
+
+    @staticmethod
+    def _collect_items(items: list[MenuItem]) -> dict[int, MenuItem]:
+        """Recursively index all menu items (including submenu children) by id."""
+        result: dict[int, MenuItem] = {}
+        for it in items:
+            result[it.id] = it
+            if it.children:
+                result.update(TrayIcon._collect_items(it.children))
+        return result
+
+    def _build_node(self, item: MenuItem) -> GLib.Variant:
+        """Recursively build a ``(ia{sv}av)`` variant for *item* and its children."""
+        child_variants: list[GLib.Variant] = [
+            self._build_node(c) for c in item.children
+        ]
+        return GLib.Variant("(ia{sv}av)", (item.id, item.to_props(), child_variants))
+
     # --- public surface ----------------------------------------------------
 
     def set_icon(self, icon_name: str) -> None:
@@ -255,15 +281,8 @@ class TrayIcon:
                 None, SNI_ITEM_PATH, SNI_IFACE, "NewToolTip", None
             )
 
-    def update_item(self, item_id: int, **fields) -> None:
-        """Mutate a menu item's fields (``label``, ``toggle_state`` …) and
-        tell the client to re-query the layout."""
-        it = self._item_by_id.get(item_id)
-        if it is None:
-            log.warning("tray: update_item for unknown id %d", item_id)
-            return
-        for k, v in fields.items():
-            setattr(it, k, v)
+    def notify_layout_changed(self) -> None:
+        """Bump the menu revision and tell the client to re-query the layout."""
         if self._conn is not None:
             self._menu_revision += 1
             self._conn.emit_signal(
@@ -273,6 +292,23 @@ class TrayIcon:
                 "LayoutUpdated",
                 GLib.Variant("(ui)", (self._menu_revision, 0)),
             )
+
+    def update_item(self, item_id: int, **fields) -> None:
+        """Mutate a menu item's fields (``label``, ``toggle_state`` …) and
+        tell the client to re-query the layout."""
+        it = self._item_by_id.get(item_id)
+        if it is None:
+            log.warning("tray: update_item for unknown id %d", item_id)
+            return
+        for k, v in fields.items():
+            setattr(it, k, v)
+        self.notify_layout_changed()
+
+    def set_items(self, items: list[MenuItem]) -> None:
+        """Replace the entire menu and notify the client."""
+        self.items = items
+        self._item_by_id = TrayIcon._collect_items(items)
+        self.notify_layout_changed()
 
     # --- name lifecycle ----------------------------------------------------
 
@@ -485,18 +521,16 @@ class TrayIcon:
             )
 
     def _build_layout(self, parent_id: int) -> tuple:
-        """Return ``(id, props_dict, children_av)`` — a{sv}-style."""
+        """Return ``(id, props_dict, children_av)`` for GetLayout responses."""
         if parent_id == 0:
             root_props = {"children-display": GLib.Variant("s", "submenu")}
-            children: list[GLib.Variant] = [
-                GLib.Variant("(ia{sv}av)", (it.id, it.to_props(), []))
-                for it in self.items
-            ]
+            children: list[GLib.Variant] = [self._build_node(it) for it in self.items]
             return (0, root_props, children)
         it = self._item_by_id.get(parent_id)
         if it is None:
             return (parent_id, {}, [])
-        return (parent_id, it.to_props(), [])
+        children = [self._build_node(c) for c in it.children]
+        return (it.id, it.to_props(), children)
 
     def _fire_activate(self, item_id: int) -> None:
         it = self._item_by_id.get(item_id)

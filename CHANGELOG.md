@@ -7,6 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-04-15
+
+### Added
+
+- **LLM postprocessor** — optional cleanup step that runs after ASR and
+  regex filters. Uses a local GGUF model via `llama-cpp-python` to
+  remove filler words, fix grammar/spelling, and correct misheard words
+  while preserving meaning and style.
+- **`[postprocess]` config section** — `enabled` (default `false`) and
+  `profile` (name of the profile file to load, default `"gemma-cleanup"`).
+- **Per-model profile files** — each LLM is configured in its own TOML
+  file at `~/.config/justsayit/postprocess/<name>.toml`. Settings:
+  `model_path`, `hf_repo` + `hf_filename` (for auto-download),
+  `n_gpu_layers` (`-1` = all on GPU), `n_ctx`, `temperature`,
+  `max_tokens`, `system_prompt`, `user_template`.
+- **Default profile `gemma-cleanup.toml`** written by `justsayit init`
+  with a German system prompt and `temperature = 0.08` (deterministic).
+- **Auto-download** — if `hf_repo` + `hf_filename` are set in the
+  profile and `model_path` doesn't exist, `justsayit download-models`
+  fetches the GGUF from HuggingFace.
+- **`[llm]` install extra** — `pip install 'justsayit[llm]'` for CPU.
+  For Vulkan GPU (AMD/Intel): `CMAKE_ARGS="-DGGML_VULKAN=1" pip install
+  llama-cpp-python`.
+- **`install.sh --postprocess`** — compiles and installs
+  `llama-cpp-python` with `GGML_VULKAN=1`; validates that cmake and
+  Vulkan headers are present before starting; then launches the
+  interactive `setup-llm` wizard.
+- **`justsayit setup-llm`** — interactive wizard that lists the built-in
+  model catalogue (gemma4, qwen3-4b, qwen3-0.8b), queries the
+  HuggingFace API for the Q4_K_M GGUF filename, downloads it to the
+  local cache, and patches the profile to point at the downloaded file.
+  Pass `--model KEY` to skip the interactive prompt.
+
+## [0.4.0] - 2026-04-15
+
+### Added
+
+- **Multi-backend transcription** — `model.backend` can now be set to
+  `"parakeet"` (default, sherpa-onnx, bundled dep) or `"whisper"`
+  (faster-whisper / distil-whisper, optional dep).
+- **`model.whisper_model`** — HuggingFace model ID or local path for the
+  Whisper backend (default: `"Systran/faster-distil-whisper-large-v3"`).
+- **`model.whisper_device`** — inference device for Whisper (`"cpu"` or
+  `"cuda"`, default `"cpu"`).
+- **`model.whisper_compute_type`** — CTranslate2 quantisation for Whisper
+  (`"int8"`, `"float16"`, `"float32"`, default `"int8"`).
+- **`[whisper]` install extra** — `uv pip install 'justsayit[whisper]'`
+  (or `install.sh --model whisper`) pulls in `faster-whisper`.
+- **`install.sh --model parakeet|whisper`** — select backend at install
+  time; writes `model.backend` into config.toml and installs required extras.
+- **`justsayit init --backend parakeet|whisper`** — set backend in the
+  generated config.toml without editing it by hand.
+- Whisper model downloads lazily from HuggingFace on first transcription
+  into `<cache>/justsayit/models/whisper/`; no extra download step needed.
+
+### Changed
+
+- `install.sh`: `gtk4-layer-shell` is now a **hard install blocker** (was
+  a warning). The Wayland layer-shell overlay cannot work without it, so
+  aborting early gives a clearer error message.
+- `justsayit download-models` now prints a tailored message for the Whisper
+  backend (only downloads the tiny VAD ONNX; Whisper model is deferred).
+
 ## [0.3.3] - 2026-04-15
 
 ### Fixed

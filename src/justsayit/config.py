@@ -111,6 +111,12 @@ class PasteConfig:
 
 @dataclass
 class ModelConfig:
+    # Transcription backend. "parakeet" uses sherpa-onnx (bundled dep,
+    # default). "whisper" uses faster-whisper (optional dep — install with
+    # the [whisper] extra or run: uv pip install faster-whisper).
+    backend: str = "parakeet"
+
+    # --- Parakeet (sherpa-onnx) -------------------------------------------
     # sherpa-onnx publishes packaged model bundles as tar.bz2 release assets.
     # Default: Parakeet TDT v3 multilingual INT8.
     parakeet_archive_url: str = (
@@ -124,12 +130,27 @@ class ModelConfig:
     parakeet_decoder: str = "decoder.int8.onnx"
     parakeet_joiner: str = "joiner.int8.onnx"
     parakeet_tokens: str = "tokens.txt"
+
+    # --- faster-whisper / distil-whisper ------------------------------------
+    # HuggingFace model ID or a local directory path. Good options:
+    #   "Systran/faster-distil-whisper-large-v3"  (multilingual, default)
+    #   "Systran/faster-whisper-large-v3"          (full large-v3)
+    #   "Systran/faster-whisper-large-v3-turbo"    (faster, slightly lower quality)
+    #   "Systran/faster-distil-whisper-medium.en"  (English-only, small)
+    whisper_model: str = "Systran/faster-distil-whisper-large-v3"
+    # Inference device: "cpu" or "cuda". Auto to "cpu" on systems without GPU.
+    whisper_device: str = "cpu"
+    # CTranslate2 quantisation. "int8" is fastest on CPU with little quality
+    # loss. Use "float16" on CUDA, "float32" for maximum accuracy.
+    whisper_compute_type: str = "int8"
+
+    # --- Shared ---------------------------------------------------------------
     # Silero VAD ONNX (tiny file, downloaded directly).
     vad_url: str = (
         "https://github.com/snakers4/silero-vad/raw/master/"
         "src/silero_vad/data/silero_vad.onnx"
     )
-    # Inference threads (0 = library default)
+    # Inference threads (0 = library default). Applies to both backends.
     num_threads: int = 2
 
 
@@ -163,6 +184,15 @@ class SoundConfig:
 
 
 @dataclass
+class PostprocessConfig:
+    # Master switch. When False the LLM step is skipped entirely.
+    enabled: bool = False
+    # Profile name (resolved to config_dir()/postprocess/<profile>.toml)
+    # or a direct path to a .toml file.
+    profile: str = "gemma-cleanup"
+
+
+@dataclass
 class LogConfig:
     # Rotating debug log written to disk. Off by default — turn this on
     # when you need to share a trace of a bug. Console logging is always
@@ -185,6 +215,7 @@ class Config:
     overlay: OverlayConfig = field(default_factory=OverlayConfig)
     sound: SoundConfig = field(default_factory=SoundConfig)
     log: LogConfig = field(default_factory=LogConfig)
+    postprocess: PostprocessConfig = field(default_factory=PostprocessConfig)
     # File path for user regex filters.
     filters_path: Path = field(default_factory=lambda: config_dir() / "filters.json")
 
@@ -225,6 +256,7 @@ def load_config(path: Path | None = None) -> Config:
     cfg.overlay = _coerce_section(OverlayConfig, raw.get("overlay"))
     cfg.sound = _coerce_section(SoundConfig, raw.get("sound"))
     cfg.log = _coerce_section(LogConfig, raw.get("log"))
+    cfg.postprocess = _coerce_section(PostprocessConfig, raw.get("postprocess"))
 
     if "filters_path" in raw:
         cfg.filters_path = Path(raw["filters_path"]).expanduser()
@@ -250,7 +282,7 @@ def render_config_toml(cfg: Config | None = None) -> str:
         "# built-in default (the app will not rewrite unchanged sections).",
         "",
     ]
-    for section_name in ("audio", "vad", "shortcut", "paste", "model", "overlay", "sound", "log"):
+    for section_name in ("audio", "vad", "shortcut", "paste", "model", "overlay", "sound", "log", "postprocess"):
         section = getattr(cfg, section_name)
         lines.append(f"[{section_name}]")
         for f in fields(section):
