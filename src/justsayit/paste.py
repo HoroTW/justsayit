@@ -45,14 +45,24 @@ def _require(tool: str) -> str:
     return path
 
 
-def copy_to_clipboard(text: str, *, timeout: float = 5.0) -> None:
-    """Put ``text`` on the Wayland clipboard via wl-copy."""
+def copy_to_clipboard(
+    text: str, *, timeout: float = 5.0, sensitive: bool = False
+) -> None:
+    """Put ``text`` on the Wayland clipboard via wl-copy.
+
+    When ``sensitive`` is True, ``--sensitive`` is passed to wl-copy so that
+    clipboard managers (e.g. KDE Klipper) skip recording this entry.  The text
+    is still available for a manual Ctrl+V paste.
+    """
     if not text:
         return
     wl_copy = _require("wl-copy")
+    cmd = [wl_copy]
+    if sensitive:
+        cmd.append("--sensitive")
     try:
         proc = subprocess.run(
-            [wl_copy],
+            cmd,
             input=text.encode("utf-8"),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -127,12 +137,13 @@ def paste_text(
     backend: str = "dotool",
     settle_ms: int = 40,
     timeout: float = 5.0,
+    sensitive: bool = False,
 ) -> None:
     """One-shot copy + paste. Prefer :class:`Paster` if you paste repeatedly —
     it keeps ``dotool`` warm and saves hundreds of ms per paste."""
     if not text:
         return
-    copy_to_clipboard(text, timeout=timeout)
+    copy_to_clipboard(text, timeout=timeout, sensitive=sensitive)
     if settle_ms > 0:
         time.sleep(settle_ms / 1000)
     send_paste_shortcut(combo, backend=backend, timeout=timeout)
@@ -167,15 +178,18 @@ class Paster:
         combo: str = "ctrl+shift+v",
         settle_ms: int = 40,
         timeout: float = 5.0,
-        skip_clipboard: bool = False,
+        skip_clipboard_history: bool = False,
+        type_directly: bool = False,
     ) -> None:
         self.backend = backend
         self.combo = combo
         self.settle_ms = settle_ms
         self.timeout = timeout
-        # When True, use ``dotool type TEXT`` to inject text directly instead
-        # of the clipboard+keystroke path.  Only supported with backend="dotool".
-        self._skip_clipboard = skip_clipboard and backend == "dotool"
+        # type_directly takes precedence: inject via ``dotool type``, no clipboard.
+        # skip_clipboard_history: use wl-copy --sensitive so text lands in the
+        # clipboard (available for Ctrl+V) but clipboard managers skip recording.
+        self._type_directly = type_directly and backend == "dotool"
+        self._sensitive = skip_clipboard_history and not self._type_directly
         self._dotool: subprocess.Popen | None = None
         self._lock = threading.Lock()
 
@@ -214,8 +228,8 @@ class Paster:
         if not text:
             return
         t0 = time.monotonic()
-        if self._skip_clipboard:
-            # Type directly via dotool — never touches the clipboard.
+        if self._type_directly:
+            # Inject via dotool type — clipboard never touched.
             self._send_dotool_type(text)
             t_key = time.monotonic()
             log.info(
@@ -223,7 +237,7 @@ class Paster:
                 (t_key - t0) * 1000,
             )
         else:
-            copy_to_clipboard(text, timeout=self.timeout)
+            copy_to_clipboard(text, timeout=self.timeout, sensitive=self._sensitive)
             t_copy = time.monotonic()
             if self.settle_ms > 0:
                 time.sleep(self.settle_ms / 1000)

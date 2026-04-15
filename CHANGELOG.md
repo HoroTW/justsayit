@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-04-15
+
+### Added
+
+- **`paste.skip_clipboard_history`** (default `true`) — pass `--sensitive`
+  to `wl-copy` so clipboard managers (e.g. KDE Klipper) skip recording the
+  dictated text.  The text IS still available for a manual Ctrl+V paste
+  immediately after dictation.
+- **`paste.type_directly`** — inject text via `dotool type` directly (no
+  clipboard involved at all; text is NOT available for re-paste).  Requires
+  `backend = "dotool"`.  Takes precedence over `skip_clipboard_history` when
+  both are set.
+
 ## [0.5.1] - 2026-04-15
 
 ### Added

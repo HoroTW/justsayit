@@ -360,14 +360,17 @@ class App:
         if self.no_paste or not self.cfg.paste.enabled:
             log.info("paste disabled; not starting paster")
             return
-        if self.cfg.paste.skip_clipboard_history:
-            log.info("clipboard-history skipping enabled — using dotool type (no clipboard)")
+        if self.cfg.paste.type_directly:
+            log.info("type_directly enabled — text injected via dotool, no clipboard")
+        elif self.cfg.paste.skip_clipboard_history:
+            log.info("skip_clipboard_history enabled — using wl-copy --sensitive")
         self.paster = Paster(
             backend=self.cfg.paste.backend,
             combo=self.cfg.paste.paste_combo,
             settle_ms=self.cfg.paste.settle_ms,
             timeout=self.cfg.paste.subprocess_timeout,
-            skip_clipboard=self.cfg.paste.skip_clipboard_history,
+            skip_clipboard_history=self.cfg.paste.skip_clipboard_history,
+            type_directly=self.cfg.paste.type_directly,
         )
         try:
             self.paster.start()
