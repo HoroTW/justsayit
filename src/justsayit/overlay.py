@@ -33,7 +33,7 @@ window.justsayit-overlay {
     background: transparent;
 }
 .justsayit-overlay-box {
-    background-color: rgba(20, 20, 30, 0.78);
+    background-color: rgb(20, 20, 30);
     border-radius: 14px;
     padding: 8px 14px;
 }
@@ -111,6 +111,7 @@ class OverlayWindow(Gtk.ApplicationWindow):
         box.add_css_class("justsayit-overlay-box")
         box.set_hexpand(True)
         box.set_vexpand(True)
+        box.set_opacity(max(0.0, min(1.0, cfg.overlay.opacity)))
 
         # Status dot — left side, vertically centered
         self._dot = Gtk.DrawingArea()

@@ -146,6 +146,9 @@ class OverlayConfig:
     # records quietly and the bar barely moves; decrease below 1.0 if
     # the bar clips on every word.
     visualizer_sensitivity: float = 1.0
+    # Background opacity of the overlay pill (0.0 = fully transparent,
+    # 1.0 = fully opaque).
+    opacity: float = 0.78
 
 
 @dataclass
