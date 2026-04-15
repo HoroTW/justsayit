@@ -95,6 +95,18 @@ class PasteConfig:
     # Hard timeout (s) for each subprocess call. Keeps a broken setup
     # from blocking the transcription worker forever.
     subprocess_timeout: float = 5.0
+    # If non-zero: prepend a space before the transcription when the
+    # previous successful transcription finished within this many
+    # milliseconds. Lets you dictate continuously without manually
+    # inserting spaces between phrases. Ignored when
+    # append_trailing_space is True (the trailing space already serves
+    # as the separator).
+    auto_space_timeout_ms: int = 0
+    # Always append a trailing space after every transcription so the
+    # cursor is ready for the next word. When enabled together with
+    # auto_space_timeout_ms, this takes precedence (a warning
+    # notification is shown and the prefix behaviour is suppressed).
+    append_trailing_space: bool = False
 
 
 @dataclass
@@ -129,6 +141,11 @@ class OverlayConfig:
     margin: int = 24
     width: int = 260
     height: int = 56
+    # Multiplier applied to the raw microphone level before it is
+    # displayed in the visualizer bar. Increase above 1.0 if your mic
+    # records quietly and the bar barely moves; decrease below 1.0 if
+    # the bar clips on every word.
+    visualizer_sensitivity: float = 1.0
 
 
 @dataclass

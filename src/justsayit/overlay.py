@@ -1,9 +1,9 @@
 """Transparent wlr-layer-shell recording overlay.
 
 A small bottom-anchored bar with:
-  * a colored status dot (idle / validating / recording / manual),
-  * a mic-level meter driven by the RMS callback from audio.py,
-  * a state label.
+  * a colored status dot on the left (idle / validating / recording / manual),
+  * a state label above the mic-level meter,
+  * a center-outward mic-level meter driven by the RMS callback from audio.py.
 
 All updates from non-UI threads must go through ``GLib.idle_add`` —
 helpers ``push_state`` / ``push_level`` handle that for you.
@@ -106,11 +106,13 @@ class OverlayWindow(Gtk.ApplicationWindow):
         # Don't reserve any workarea space; we want to float over content.
         Gtk4LayerShell.set_exclusive_zone(self, 0)
 
-        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        # Outer horizontal box: [dot] [label / meter stack]
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         box.add_css_class("justsayit-overlay-box")
         box.set_hexpand(True)
         box.set_vexpand(True)
 
+        # Status dot — left side, vertically centered
         self._dot = Gtk.DrawingArea()
         self._dot.set_content_width(16)
         self._dot.set_content_height(16)
@@ -118,19 +120,25 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._dot.set_draw_func(self._draw_dot, None)
         box.append(self._dot)
 
+        # Right side: label above, meter below
+        right_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        right_box.set_hexpand(True)
+        right_box.set_vexpand(True)
+
+        self._label = Gtk.Label(label=_STATE_STYLE[State.IDLE][0])
+        self._label.add_css_class("justsayit-overlay-label")
+        self._label.set_xalign(0.0)
+        self._label.set_hexpand(True)
+        right_box.append(self._label)
+
         self._meter = Gtk.DrawingArea()
         self._meter.set_content_height(10)
         self._meter.set_hexpand(True)
         self._meter.set_valign(Gtk.Align.CENTER)
         self._meter.set_draw_func(self._draw_meter, None)
-        box.append(self._meter)
+        right_box.append(self._meter)
 
-        self._label = Gtk.Label(label=_STATE_STYLE[State.IDLE][0])
-        self._label.add_css_class("justsayit-overlay-label")
-        self._label.set_width_chars(16)
-        self._label.set_xalign(1.0)
-        box.append(self._label)
-
+        box.append(right_box)
         self.set_child(box)
 
         _install_css_once()
@@ -164,8 +172,10 @@ class OverlayWindow(Gtk.ApplicationWindow):
         return False  # one-shot
 
     def _tick(self) -> bool:
-        # Scale raw RMS (~0..0.3 for normal speech) to [0, 1] with soft cap.
-        target = min(1.0, self._level * 8.0)
+        # Scale raw RMS (~0..0.3 for normal speech) to [0, 1] with soft cap,
+        # then apply user sensitivity multiplier.
+        sensitivity = self._cfg.overlay.visualizer_sensitivity
+        target = min(1.0, self._level * 8.0 * sensitivity)
         self._level_smoothed += (target - self._level_smoothed) * 0.25
         if self._state in (State.RECORDING, State.MANUAL, State.VALIDATING):
             self._pulse = (self._pulse + 0.08) % (2 * math.pi)
@@ -189,11 +199,11 @@ class OverlayWindow(Gtk.ApplicationWindow):
         cr.fill()
 
     def _draw_meter(self, _area, cr, w, h, _user_data):
-        # background track
+        # background track (full width)
         cr.set_source_rgba(1.0, 1.0, 1.0, 0.10)
         self._round_rect(cr, 0, 0, w, h, h / 2)
         cr.fill()
-        # filled level
+        # filled level — grows symmetrically from the center outward
         fill = max(0.0, min(1.0, self._level_smoothed))
         if fill <= 0.0:
             return
@@ -201,7 +211,9 @@ class OverlayWindow(Gtk.ApplicationWindow):
         g = 0.85 - 0.45 * fill
         r = 0.35 + 0.50 * fill
         cr.set_source_rgba(r, g, 0.35, 0.92)
-        self._round_rect(cr, 0, 0, w * fill, h, h / 2)
+        bar_w = w * fill
+        bar_x = (w - bar_w) / 2
+        self._round_rect(cr, bar_x, 0, bar_w, h, h / 2)
         cr.fill()
 
     @staticmethod

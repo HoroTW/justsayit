@@ -196,6 +196,9 @@ class App:
         self._seg_q: queue.Queue[Segment | None] = queue.Queue(maxsize=8)
         self._stop = threading.Event()
         self._transcribe_thread: threading.Thread | None = None
+        # Monotonic timestamp of the last successful transcription output,
+        # used by the auto_space_timeout_ms feature.
+        self._last_transcription_time: float | None = None
 
     # --- setup -------------------------------------------------------------
 
@@ -365,6 +368,28 @@ class App:
         except Exception:
             log.exception("could not send shortcut-unbound notification")
 
+    def _notify_space_config_conflict(self) -> None:
+        """Warn the user when both auto_space_timeout_ms and
+        append_trailing_space are enabled — only the trailing-space
+        behaviour will be active."""
+        if self.gtk_app is None:
+            return
+        title = "justsayit: conflicting space settings"
+        body = (
+            "Both paste.auto_space_timeout_ms and paste.append_trailing_space "
+            "are enabled. These settings conflict: the trailing space already "
+            "acts as a separator, so the auto-prefix space has been disabled. "
+            "Set auto_space_timeout_ms = 0 to suppress this warning."
+        )
+        try:
+            note = Gio.Notification.new(title)
+            note.set_body(body)
+            note.set_priority(Gio.NotificationPriority.NORMAL)
+            self.gtk_app.send_notification("justsayit-space-conflict", note)
+            log.warning("space config conflict: auto_space_timeout_ms ignored")
+        except Exception:
+            log.exception("could not send space-conflict notification")
+
     def setup_tray(self) -> None:
         def on_toggle_auto_listen() -> None:
             if self.engine is None:
@@ -474,6 +499,30 @@ class App:
         final = apply_filters(raw, self.filters)
         if final != raw:
             log.info("filters changed output: %r -> %r", raw, final)
+
+        # Space prefix / suffix
+        auto_space_ms = self.cfg.paste.auto_space_timeout_ms
+        trailing_space = self.cfg.paste.append_trailing_space
+        now = time.monotonic()
+
+        if auto_space_ms > 0 and not trailing_space:
+            if self._last_transcription_time is not None:
+                seg_duration = len(seg.samples) / seg.sample_rate
+                recording_started_at = now - seg_duration
+                elapsed_ms = (recording_started_at - self._last_transcription_time) * 1000.0
+                if elapsed_ms <= auto_space_ms:
+                    log.debug(
+                        "auto-space: elapsed=%.0fms ≤ timeout=%dms — prepending space",
+                        elapsed_ms,
+                        auto_space_ms,
+                    )
+                    final = " " + final
+
+        if trailing_space:
+            final = final + " "
+
+        self._last_transcription_time = now
+
         print(final, flush=True)
         if self.no_paste or not self.cfg.paste.enabled:
             log.info("paste disabled — text only printed")
@@ -545,6 +594,11 @@ class App:
                 assert self.shortcut_client is not None
                 self.shortcut_client.start()
                 self.setup_tray()
+                if (
+                    self.cfg.paste.auto_space_timeout_ms > 0
+                    and self.cfg.paste.append_trailing_space
+                ):
+                    self._notify_space_config_conflict()
                 log.info("justsayit ready")
             except Exception:
                 log.exception("startup failed")
