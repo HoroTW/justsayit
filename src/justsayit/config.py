@@ -107,6 +107,13 @@ class PasteConfig:
     # auto_space_timeout_ms, this takes precedence (a warning
     # notification is shown and the prefix behaviour is suppressed).
     append_trailing_space: bool = False
+    # When True, text is injected directly via ``dotool type`` instead of
+    # going through the clipboard.  This completely bypasses clipboard
+    # managers (Klipper, GPaste, …) — the text never enters the clipboard
+    # at all, so it cannot appear in clipboard history.
+    # Note: the text will NOT be available for manual re-paste (Ctrl+V)
+    # after dictation.  Requires backend = "dotool".
+    skip_clipboard_history: bool = False
 
 
 @dataclass

@@ -8,7 +8,9 @@ Supports two keystroke-injection backends, selectable via config:
 * ``wtype`` — virtual-keyboard protocol. Fine on sway/Hyprland; broken
   on Plasma 6 at time of writing.
 
-``wl-copy`` is always used for the clipboard itself.
+``wl-copy`` is always used for the clipboard itself unless
+``skip_clipboard_history`` is True, in which case :class:`Paster` uses
+``dotool type`` to inject keystrokes directly — no clipboard involved.
 
 Important: ``wl-copy`` forks a background daemon to hold the selection.
 That daemon inherits the subprocess pipes, so we *must* redirect
@@ -136,6 +138,23 @@ def paste_text(
     send_paste_shortcut(combo, backend=backend, timeout=timeout)
 
 
+def _build_type_payload(text: str) -> bytes:
+    """Build the dotool stdin payload to type *text* directly.
+
+    ``dotool type STRING`` types everything up to the newline.  Multi-line
+    text is handled by interleaving ``key Return`` commands.
+    """
+    lines = text.split("\n")
+    parts: list[bytes] = []
+    for i, line in enumerate(lines):
+        if line:
+            # Escape backslashes so dotool doesn't misinterpret them.
+            parts.append(f"type {line}\n".encode("utf-8"))
+        if i < len(lines) - 1:
+            parts.append(b"key Return\n")
+    return b"".join(parts)
+
+
 class Paster:
     """Long-lived paster. Keeps a persistent ``dotool`` process warm so
     each paste skips the uinput cold-start cost. Thread-safe: ``paste``
@@ -148,11 +167,15 @@ class Paster:
         combo: str = "ctrl+shift+v",
         settle_ms: int = 40,
         timeout: float = 5.0,
+        skip_clipboard: bool = False,
     ) -> None:
         self.backend = backend
         self.combo = combo
         self.settle_ms = settle_ms
         self.timeout = timeout
+        # When True, use ``dotool type TEXT`` to inject text directly instead
+        # of the clipboard+keystroke path.  Only supported with backend="dotool".
+        self._skip_clipboard = skip_clipboard and backend == "dotool"
         self._dotool: subprocess.Popen | None = None
         self._lock = threading.Lock()
 
@@ -187,24 +210,33 @@ class Paster:
     # --- main API ---------------------------------------------------------
 
     def paste(self, text: str) -> None:
-        """Clipboard + synthetic keystroke, with per-step timing logs."""
+        """Inject text, with per-step timing logs."""
         if not text:
             return
         t0 = time.monotonic()
-        copy_to_clipboard(text, timeout=self.timeout)
-        t_copy = time.monotonic()
-        if self.settle_ms > 0:
-            time.sleep(self.settle_ms / 1000)
-        t_settle = time.monotonic()
-        self._send_key(self.combo)
-        t_key = time.monotonic()
-        log.info(
-            "paste timings: copy=%.0fms settle=%.0fms key=%.0fms total=%.0fms",
-            (t_copy - t0) * 1000,
-            (t_settle - t_copy) * 1000,
-            (t_key - t_settle) * 1000,
-            (t_key - t0) * 1000,
-        )
+        if self._skip_clipboard:
+            # Type directly via dotool — never touches the clipboard.
+            self._send_dotool_type(text)
+            t_key = time.monotonic()
+            log.info(
+                "paste (type-direct) timings: total=%.0fms",
+                (t_key - t0) * 1000,
+            )
+        else:
+            copy_to_clipboard(text, timeout=self.timeout)
+            t_copy = time.monotonic()
+            if self.settle_ms > 0:
+                time.sleep(self.settle_ms / 1000)
+            t_settle = time.monotonic()
+            self._send_key(self.combo)
+            t_key = time.monotonic()
+            log.info(
+                "paste timings: copy=%.0fms settle=%.0fms key=%.0fms total=%.0fms",
+                (t_copy - t0) * 1000,
+                (t_settle - t_copy) * 1000,
+                (t_key - t_settle) * 1000,
+                (t_key - t0) * 1000,
+            )
 
     # --- internals --------------------------------------------------------
 
@@ -230,6 +262,15 @@ class Paster:
 
     def _send_dotool(self, combo: str) -> None:
         payload = f"key {combo}\n".encode("utf-8")
+        self._write_dotool(payload)
+
+    def _send_dotool_type(self, text: str) -> None:
+        payload = _build_type_payload(text)
+        if not payload:
+            return
+        self._write_dotool(payload)
+
+    def _write_dotool(self, payload: bytes) -> None:
         with self._lock:
             if self._dotool is None or self._dotool.poll() is not None:
                 log.warning("dotool process not running; respawning")
