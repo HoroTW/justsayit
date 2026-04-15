@@ -100,10 +100,13 @@ def read_clipboard(*, timeout: float = 2.0) -> str | None:
     return proc.stdout.decode("utf-8", errors="replace")
 
 
-def restore_clipboard(text: str, *, timeout: float = 2.0) -> None:
+def restore_clipboard(text: str, *, timeout: float = 2.0, sensitive: bool = False) -> None:
     """Restore the regular clipboard only (not primary) — used after paste."""
     wl_copy = _require("wl-copy")
-    _run_wl_copy([wl_copy], text, timeout)
+    cmd = [wl_copy]
+    if sensitive:
+        cmd.append("--sensitive")
+    _run_wl_copy(cmd, text, timeout)
 
 
 def _dotool_input(combo: str) -> bytes:
@@ -297,7 +300,7 @@ class Paster:
             if old_clip is not None:
                 time.sleep(0.15)
                 try:
-                    restore_clipboard(old_clip, timeout=self.timeout)
+                    restore_clipboard(old_clip, timeout=self.timeout, sensitive=self._sensitive)
                 except PasteError as e:
                     log.warning("clipboard restore failed: %s", e)
 
