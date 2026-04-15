@@ -60,6 +60,13 @@ def copy_to_clipboard(
     cmd = [wl_copy]
     if sensitive:
         cmd.append("--sensitive")
+
+    execute_clipboard_cmd(text, timeout, cmd)
+    
+    cmd_primary = cmd + ["--primary"]
+    execute_clipboard_cmd(text, timeout, cmd_primary)
+
+def execute_clipboard_cmd(text, timeout, cmd):
     try:
         proc = subprocess.run(
             cmd,
