@@ -90,8 +90,18 @@ def paths(cfg: Config) -> ModelPaths:
     )
 
 
+def ensure_vad(cfg: Config, *, force: bool = False) -> Path:
+    """Download the Silero VAD model if missing. Returns its path."""
+    p = _vad_path(cfg)
+    if force or not p.exists():
+        _download(cfg.model.vad_url, p)
+    if not p.exists():
+        raise RuntimeError(f"VAD model still missing after download: {p}")
+    return p
+
+
 def ensure_models(cfg: Config, *, force: bool = False, want_vad: bool = True) -> ModelPaths:
-    """Download any missing model files. Returns resolved ModelPaths.
+    """Download any missing Parakeet model files. Returns resolved ModelPaths.
 
     ``want_vad=False`` skips the tiny Silero download when VAD is
     disabled; the ``vad`` path in the result still points at the
@@ -127,8 +137,8 @@ def ensure_models(cfg: Config, *, force: bool = False, want_vad: bool = True) ->
                 shutil.rmtree(base)
             shutil.move(str(src_dir), str(base))
 
-    if want_vad and (force or not p.vad.exists()):
-        _download(cfg.model.vad_url, p.vad)
+    if want_vad:
+        ensure_vad(cfg, force=force)
 
     required = [p.encoder, p.decoder, p.joiner, p.tokens]
     if want_vad:
