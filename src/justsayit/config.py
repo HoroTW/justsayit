@@ -139,7 +139,7 @@ class OverlayConfig:
     # "bottom" or "top" edge of the output.
     anchor: str = "bottom"
     margin: int = 24
-    width: int = 260
+    width: int = 174
     height: int = 56
     # Multiplier applied to the raw microphone level before it is
     # displayed in the visualizer bar. Increase above 1.0 if your mic
