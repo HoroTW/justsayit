@@ -45,28 +45,7 @@ def _require(tool: str) -> str:
     return path
 
 
-def copy_to_clipboard(
-    text: str, *, timeout: float = 5.0, sensitive: bool = False
-) -> None:
-    """Put ``text`` on the Wayland clipboard via wl-copy.
-
-    When ``sensitive`` is True, ``--sensitive`` is passed to wl-copy so that
-    clipboard managers (e.g. KDE Klipper) skip recording this entry.  The text
-    is still available for a manual Ctrl+V paste.
-    """
-    if not text:
-        return
-    wl_copy = _require("wl-copy")
-    cmd = [wl_copy]
-    if sensitive:
-        cmd.append("--sensitive")
-
-    execute_clipboard_cmd(text, timeout, cmd)
-    
-    cmd_primary = cmd + ["--primary"]
-    execute_clipboard_cmd(text, timeout, cmd_primary)
-
-def execute_clipboard_cmd(text, timeout, cmd):
+def _run_wl_copy(cmd: list[str], text: str, timeout: float) -> None:
     try:
         proc = subprocess.run(
             cmd,
@@ -80,6 +59,51 @@ def execute_clipboard_cmd(text, timeout, cmd):
         raise PasteError(f"wl-copy timed out after {timeout}s") from e
     if proc.returncode != 0:
         raise PasteError(f"wl-copy exited {proc.returncode}")
+
+
+def copy_to_clipboard(
+    text: str, *, timeout: float = 5.0, sensitive: bool = False
+) -> None:
+    """Put ``text`` on both the regular and primary Wayland clipboards via wl-copy.
+
+    When ``sensitive`` is True, ``--sensitive`` is passed to wl-copy so that
+    clipboard managers (e.g. KDE Klipper) skip recording this entry.  The text
+    is still available for a manual Ctrl+V / Shift+Insert / middle-click paste.
+    """
+    if not text:
+        return
+    wl_copy = _require("wl-copy")
+    base_cmd = [wl_copy]
+    if sensitive:
+        base_cmd.append("--sensitive")
+    _run_wl_copy(base_cmd, text, timeout)
+    _run_wl_copy(base_cmd + ["--primary"], text, timeout)
+
+
+def read_clipboard(*, timeout: float = 2.0) -> str | None:
+    """Return the current regular (Ctrl+V) clipboard text, or None if empty/unavailable."""
+    wl_paste = shutil.which("wl-paste")
+    if not wl_paste:
+        return None
+    try:
+        proc = subprocess.run(
+            [wl_paste, "--no-newline"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.decode("utf-8", errors="replace")
+
+
+def restore_clipboard(text: str, *, timeout: float = 2.0) -> None:
+    """Restore the regular clipboard only (not primary) — used after paste."""
+    wl_copy = _require("wl-copy")
+    _run_wl_copy([wl_copy], text, timeout)
 
 
 def _dotool_input(combo: str) -> bytes:
@@ -187,6 +211,7 @@ class Paster:
         timeout: float = 5.0,
         skip_clipboard_history: bool = False,
         type_directly: bool = False,
+        restore_clipboard: bool = True,
     ) -> None:
         self.backend = backend
         self.combo = combo
@@ -197,6 +222,9 @@ class Paster:
         # clipboard (available for Ctrl+V) but clipboard managers skip recording.
         self._type_directly = type_directly and backend == "dotool"
         self._sensitive = skip_clipboard_history and not self._type_directly
+        # Restore the previous regular clipboard content after paste so dictation
+        # doesn't clobber whatever the user had copied before.
+        self._restore_clipboard = restore_clipboard and not self._type_directly
         self._dotool: subprocess.Popen | None = None
         self._lock = threading.Lock()
 
@@ -244,6 +272,11 @@ class Paster:
                 (t_key - t0) * 1000,
             )
         else:
+            # Snapshot the current clipboard before overwriting it.
+            old_clip: str | None = None
+            if self._restore_clipboard:
+                old_clip = read_clipboard(timeout=self.timeout)
+
             copy_to_clipboard(text, timeout=self.timeout, sensitive=self._sensitive)
             t_copy = time.monotonic()
             if self.settle_ms > 0:
@@ -258,6 +291,15 @@ class Paster:
                 (t_key - t_settle) * 1000,
                 (t_key - t0) * 1000,
             )
+
+            # Restore the previous clipboard after a brief pause so the target
+            # app has time to read it before we overwrite it.
+            if old_clip is not None:
+                time.sleep(0.15)
+                try:
+                    restore_clipboard(old_clip, timeout=self.timeout)
+                except PasteError as e:
+                    log.warning("clipboard restore failed: %s", e)
 
     # --- internals --------------------------------------------------------
 

@@ -371,6 +371,7 @@ class App:
             timeout=self.cfg.paste.subprocess_timeout,
             skip_clipboard_history=self.cfg.paste.skip_clipboard_history,
             type_directly=self.cfg.paste.type_directly,
+            restore_clipboard=self.cfg.paste.restore_clipboard,
         )
         try:
             self.paster.start()

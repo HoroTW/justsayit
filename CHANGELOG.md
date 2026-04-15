@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-04-16
+
+### Added
+
+- **`paste.restore_clipboard`** (default `true`) — the regular (Ctrl+V)
+  clipboard is restored to its previous content after the synthetic paste
+  keystroke, so dictation no longer clobbers whatever the user had copied.
+  Primary/selection clipboard is not restored.  No-op when `type_directly`
+  is enabled.
+
 ## [0.5.2] - 2026-04-15
 
 ### Added

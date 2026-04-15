@@ -120,6 +120,11 @@ class PasteConfig:
     # dictation.  Requires backend = "dotool".
     # Takes precedence over skip_clipboard_history if both are True.
     type_directly: bool = False
+    # When True (default), the regular clipboard is restored to its previous
+    # content after the synthetic paste keystroke fires, so the user's own
+    # copied content is not clobbered by dictation.  Primary/selection
+    # clipboard is not restored.  No-op when type_directly is True.
+    restore_clipboard: bool = True
 
 
 @dataclass
