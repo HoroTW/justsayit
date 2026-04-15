@@ -314,8 +314,8 @@ def save_config(cfg: Config, path: Path | None = None) -> None:
     Strategy: re-load the on-disk file so any fields the user tweaked
     (e.g. via the "Open config" tray item while the app was running) are
     the baseline, then overlay the runtime-mutable fields from ``cfg``
-    on top. Currently only ``vad.enabled`` is considered runtime-mutable
-    — other fields pass through from disk untouched.
+    on top.  Runtime-mutable fields: ``vad.enabled``,
+    ``postprocess.enabled``, ``postprocess.profile``.
     """
     if path is None:
         path = config_dir() / "config.toml"
@@ -324,6 +324,8 @@ def save_config(cfg: Config, path: Path | None = None) -> None:
     else:
         merged = Config()
     merged.vad.enabled = cfg.vad.enabled
+    merged.postprocess.enabled = cfg.postprocess.enabled
+    merged.postprocess.profile = cfg.postprocess.profile
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(render_config_toml(merged), encoding="utf-8")
 

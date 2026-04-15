@@ -282,7 +282,13 @@ class TrayIcon:
             )
 
     def notify_layout_changed(self) -> None:
-        """Bump the menu revision and tell the client to re-query the layout."""
+        """Bump the menu revision and tell the client to re-query the layout.
+
+        Use for structural changes (items added/removed/reordered).
+        For property-only changes (toggle-state, label) prefer
+        :meth:`notify_properties_updated` — it bypasses the client's
+        local merge logic and avoids the double-selection bug with radios.
+        """
         if self._conn is not None:
             self._menu_revision += 1
             self._conn.emit_signal(
@@ -292,6 +298,25 @@ class TrayIcon:
                 "LayoutUpdated",
                 GLib.Variant("(ui)", (self._menu_revision, 0)),
             )
+
+    def notify_properties_updated(
+        self, updates: list[tuple[int, dict[str, GLib.Variant]]]
+    ) -> None:
+        """Emit ItemsPropertiesUpdated for targeted property changes.
+
+        ``updates`` is a list of ``(item_id, {prop_name: GLib.Variant})``.
+        Use this for toggle-state / label changes so the client applies
+        the new values directly without merging with its cached state.
+        """
+        if self._conn is None or not updates:
+            return
+        self._conn.emit_signal(
+            None,
+            DBUSMENU_PATH,
+            DBUSMENU_IFACE,
+            "ItemsPropertiesUpdated",
+            GLib.Variant("(a(ia{sv})a(ias))", (updates, [])),
+        )
 
     def update_item(self, item_id: int, **fields) -> None:
         """Mutate a menu item's fields (``label``, ``toggle_state`` …) and

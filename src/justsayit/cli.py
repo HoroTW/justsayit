@@ -548,14 +548,27 @@ class App:
                         log.info("LLM profile switched to: %s", self.cfg.postprocess.profile)
                     except Exception:
                         log.exception("failed to load LLM profile %s", self.cfg.postprocess.profile)
-                # Update radio states in place then emit one LayoutUpdated.
+                # Update radio states and parent label via ItemsPropertiesUpdated
+                # (not LayoutUpdated) so the client replaces its cached values
+                # directly — LayoutUpdated goes through a merge path that leaves
+                # the previously-selected radio still checked.
                 cur = self.cfg.postprocess.profile if self.cfg.postprocess.enabled else None
+                prop_updates: list[tuple[int, dict]] = []
                 for k, item in llm_profile_items.items():
                     item.toggle_state = 1 if k == cur else 0
+                    prop_updates.append(
+                        (item.id, {"toggle-state": GLib.Variant("i", item.toggle_state)})
+                    )
                 llm_off_item.toggle_state = 1 if cur is None else 0
+                prop_updates.append(
+                    (llm_off_item.id, {"toggle-state": GLib.Variant("i", llm_off_item.toggle_state)})
+                )
                 llm_submenu_item.label = _llm_label()  # type: ignore[union-attr]
+                prop_updates.append(
+                    (llm_submenu_item.id, {"label": GLib.Variant("s", llm_submenu_item.label)})  # type: ignore[union-attr]
+                )
                 if self.tray is not None:
-                    self.tray.notify_layout_changed()
+                    self.tray.notify_properties_updated(prop_updates)
 
             children: list[MenuItem] = []
             for i, name in enumerate(profile_names):
