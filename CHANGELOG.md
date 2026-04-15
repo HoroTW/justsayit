@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-04-15
+
+### Added
+
+- **Overlay result linger** — after a successful transcription the overlay
+  now stays visible showing the detected (regex-filtered) text.  If LLM
+  postprocessing is enabled the text is updated live as the model finishes.
+  After the text is pasted the overlay lingers for a configurable duration
+  (default 10 s, `overlay.result_linger_ms` in config.toml).  A green dot
+  indicates the result phase; setting `result_linger_ms = 0` restores the
+  old hide-immediately behaviour.
+
+### Changed
+
+- Overlay transitions through "processing…" between recording stop and first
+  text — replaces the instant hide so the user always sees what the engine is
+  doing.
+
 ## [0.5.0] - 2026-04-15
 
 ### Added

@@ -6,7 +6,8 @@ A small bottom-anchored bar with:
   * a center-outward mic-level meter driven by the RMS callback from audio.py.
 
 All updates from non-UI threads must go through ``GLib.idle_add`` —
-helpers ``push_state`` / ``push_level`` handle that for you.
+helpers ``push_state`` / ``push_level`` / ``push_text`` / ``push_linger_start``
+/ ``push_hide`` handle that for you.
 """
 
 from __future__ import annotations
@@ -60,6 +61,16 @@ _STATE_STYLE = {
     State.MANUAL: ("recording (manual)", _DotColor(0.40, 0.72, 1.00)),
 }
 
+# Green dot shown during the result / linger phase.
+_DOT_RESULT = _DotColor(0.35, 0.85, 0.45)
+
+# Safety timeout (ms): hide overlay if transcription thread never delivers
+# text (e.g. a crash or very long silence segment).
+_SAFETY_MS = 30_000
+
+# Max chars shown in the overlay pill; longer text is truncated with "…".
+_MAX_DISPLAY_CHARS = 120
+
 
 def _install_css_once() -> None:
     display = Gdk.Display.get_default()
@@ -85,13 +96,22 @@ class OverlayWindow(Gtk.ApplicationWindow):
         super().__init__(application=application)
         self._cfg = cfg
         self._state = State.IDLE
+
+        # Level / pulse animation
         self._level = 0.0
         self._level_smoothed = 0.0
         self._pulse = 0.0
 
+        # Result / linger phase state
+        self._dot_color_override: _DotColor | None = None
+        self._linger_source: int | None = None   # GLib timeout id
+        self._safety_source: int | None = None   # safety-hide timeout id
+
         self.add_css_class("justsayit-overlay")
         self.set_decorated(False)
-        self.set_resizable(False)
+        # Allow the window to grow vertically when showing wrapped text, but
+        # fix a minimum size equal to the configured pill dimensions.
+        self.set_size_request(cfg.overlay.width, cfg.overlay.height)
         self.set_default_size(cfg.overlay.width, cfg.overlay.height)
 
         Gtk4LayerShell.init_for_window(self)
@@ -130,6 +150,8 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._label.add_css_class("justsayit-overlay-label")
         self._label.set_xalign(0.0)
         self._label.set_hexpand(True)
+        self._label.set_wrap(True)
+        self._label.set_max_width_chars(22)
         right_box.append(self._label)
 
         self._meter = Gtk.DrawingArea()
@@ -156,21 +178,108 @@ class OverlayWindow(Gtk.ApplicationWindow):
         # Don't bounce a GLib.idle per chunk; just store and let the tick use it.
         self._level = rms
 
+    def push_text(self, text: str) -> None:
+        """Show transcribed / LLM-cleaned text in the overlay.  Thread-safe."""
+        GLib.idle_add(self._apply_text, text, priority=GLib.PRIORITY_DEFAULT)
+
+    def push_linger_start(self) -> None:
+        """Start the post-paste linger timer.  Call after paste completes.  Thread-safe."""
+        GLib.idle_add(self._start_linger, priority=GLib.PRIORITY_DEFAULT)
+
+    def push_hide(self) -> None:
+        """Immediately hide the overlay (e.g. empty transcription).  Thread-safe."""
+        GLib.idle_add(self._force_hide, priority=GLib.PRIORITY_DEFAULT)
+
     # --- UI thread ---------------------------------------------------------
 
     def _apply_state(self, state: State) -> bool:
+        prev = self._state
         self._state = state
-        label, _ = _STATE_STYLE[state]
-        self._label.set_label(label)
-        self._dot.queue_draw()
-        # Only visible while recording / listening.
+
         if state is State.IDLE:
-            self.set_visible(False)
+            if prev in (State.RECORDING, State.MANUAL):
+                # Transcription is imminent — show "processing…" and arm the
+                # safety timer so a stuck transcription doesn't freeze the overlay.
+                self._cancel_linger()
+                self._dot_color_override = None
+                self._label.set_label("processing…")
+                self._dot.queue_draw()
+                self._schedule_safety_hide()
+                if not self.get_visible():
+                    self.set_visible(True)
+            else:
+                # Validation failed or already idle — hide immediately.
+                self._force_hide()
         else:
+            # Active recording/listening state — cancel any pending timers
+            # and show the standard state label.
+            self._cancel_linger()
+            self._cancel_safety()
+            self._dot_color_override = None
+            label, _ = _STATE_STYLE[state]
+            self._label.set_label(label)
+            self._dot.queue_draw()
             if not self.get_visible():
                 self.set_visible(True)
             self.present()
         return False  # one-shot
+
+    def _apply_text(self, text: str) -> bool:
+        """Display result text with a green dot.  Cancels the safety timer."""
+        self._cancel_safety()
+        self._dot_color_override = _DOT_RESULT
+        # Truncate very long transcriptions so the overlay pill stays sane.
+        display = text if len(text) <= _MAX_DISPLAY_CHARS else text[:_MAX_DISPLAY_CHARS - 1] + "…"
+        self._label.set_label(display)
+        self._dot.queue_draw()
+        if not self.get_visible():
+            self.set_visible(True)
+        self.present()
+        return False
+
+    def _start_linger(self) -> bool:
+        """Arm the linger timer; called after paste (or when paste is disabled)."""
+        self._cancel_linger()
+        ms = self._cfg.overlay.result_linger_ms
+        if ms > 0:
+            self._linger_source = GLib.timeout_add(ms, self._finish_linger)
+        else:
+            self._force_hide()
+        return False
+
+    def _finish_linger(self) -> bool:
+        """Called when the linger timer fires."""
+        self._linger_source = None
+        self._force_hide()
+        return False  # don't repeat
+
+    def _force_hide(self) -> bool:
+        """Immediately hide the overlay and cancel all pending timers."""
+        self._cancel_linger()
+        self._cancel_safety()
+        self._dot_color_override = None
+        self.set_visible(False)
+        return False
+
+    def _schedule_safety_hide(self) -> None:
+        self._cancel_safety()
+        self._safety_source = GLib.timeout_add(_SAFETY_MS, self._safety_hide)
+
+    def _safety_hide(self) -> bool:
+        self._safety_source = None
+        log.warning("overlay safety-hide fired (transcription took > %ds)", _SAFETY_MS // 1000)
+        self._force_hide()
+        return False
+
+    def _cancel_linger(self) -> None:
+        if self._linger_source is not None:
+            GLib.source_remove(self._linger_source)
+            self._linger_source = None
+
+    def _cancel_safety(self) -> None:
+        if self._safety_source is not None:
+            GLib.source_remove(self._safety_source)
+            self._safety_source = None
 
     def _tick(self) -> bool:
         # Scale raw RMS (~0..0.3 for normal speech) to [0, 1] with soft cap,
@@ -178,7 +287,7 @@ class OverlayWindow(Gtk.ApplicationWindow):
         sensitivity = self._cfg.overlay.visualizer_sensitivity
         target = min(1.0, self._level * 8.0 * sensitivity)
         self._level_smoothed += (target - self._level_smoothed) * 0.25
-        if self._state in (State.RECORDING, State.MANUAL, State.VALIDATING):
+        if self._state in (State.RECORDING, State.MANUAL, State.VALIDATING) or self._dot_color_override is not None:
             self._pulse = (self._pulse + 0.08) % (2 * math.pi)
         else:
             self._pulse *= 0.9
@@ -187,10 +296,14 @@ class OverlayWindow(Gtk.ApplicationWindow):
         return True
 
     def _draw_dot(self, _area, cr, w, h, _user_data):
-        _, color = _STATE_STYLE[self._state]
+        color = self._dot_color_override if self._dot_color_override is not None else _STATE_STYLE[self._state][1]
         radius = min(w, h) / 2.0 - 1.5
-        # Subtle halo when active.
-        if self._state in (State.RECORDING, State.MANUAL, State.VALIDATING):
+        # Show animated halo when active or in result/linger phase.
+        show_halo = (
+            self._state in (State.RECORDING, State.MANUAL, State.VALIDATING)
+            or self._dot_color_override is not None
+        )
+        if show_halo:
             halo = 0.35 + 0.25 * (math.sin(self._pulse) + 1) / 2
             cr.set_source_rgba(color.r, color.g, color.b, halo * 0.5)
             cr.arc(w / 2, h / 2, radius + 3, 0, 2 * math.pi)

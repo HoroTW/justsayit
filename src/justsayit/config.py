@@ -170,6 +170,10 @@ class OverlayConfig:
     # Background opacity of the overlay pill (0.0 = fully transparent,
     # 1.0 = fully opaque).
     opacity: float = 0.78
+    # How long (ms) the overlay stays visible after a successful paste so
+    # the user can read the transcribed / LLM-cleaned text.
+    # 0 = hide immediately after paste (original behaviour).
+    result_linger_ms: int = 10_000
 
 
 @dataclass

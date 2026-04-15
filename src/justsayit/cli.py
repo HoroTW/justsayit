@@ -680,10 +680,17 @@ class App:
         log.info("transcription done in %.2fs: raw=%r", dt, raw)
         if not raw:
             log.info("empty transcription; nothing to paste")
+            if self.overlay is not None:
+                self.overlay.push_hide()
             return
         final = apply_filters(raw, self.filters)
         if final != raw:
             log.info("filters changed output: %r -> %r", raw, final)
+
+        # Show the filtered text immediately so the user can read it while
+        # any LLM postprocessing (which may take a few seconds) is running.
+        if self.overlay is not None:
+            self.overlay.push_text(final)
 
         pp = self.postprocessor  # snapshot — avoids TOCTOU with tray thread
         if pp is not None:
@@ -691,11 +698,14 @@ class App:
                 cleaned = pp.process(final)
                 if cleaned != final:
                     log.info("LLM cleaned: %r -> %r", final, cleaned)
-                final = cleaned
+                    final = cleaned
+                    # Update the overlay with the LLM-cleaned result.
+                    if self.overlay is not None:
+                        self.overlay.push_text(final)
             except Exception:
                 log.exception("LLM postprocessor failed; using unprocessed text")
 
-        # Space prefix / suffix
+        # Space prefix / suffix (applied to paste content only; not shown in overlay)
         auto_space_ms = self.cfg.paste.auto_space_timeout_ms
         trailing_space = self.cfg.paste.append_trailing_space
         now = time.monotonic()
@@ -721,6 +731,8 @@ class App:
         print(final, flush=True)
         if self.no_paste or not self.cfg.paste.enabled:
             log.info("paste disabled — text only printed")
+            if self.overlay is not None:
+                self.overlay.push_linger_start()
             return
 
         # Give the user a moment to let go of the stop-hotkey modifiers
@@ -749,6 +761,8 @@ class App:
 
         if self.paster is None:
             log.warning("paster not ready; skipping paste")
+            if self.overlay is not None:
+                self.overlay.push_linger_start()
             return
         try:
             log.info(
@@ -760,6 +774,11 @@ class App:
             self.paster.paste(final)
         except PasteError as e:
             log.error("paste failed: %s", e)
+        finally:
+            # Linger so the user can read the transcribed text regardless of
+            # whether paste succeeded or failed.
+            if self.overlay is not None:
+                self.overlay.push_linger_start()
 
     # --- GTK lifecycle -----------------------------------------------------
 
