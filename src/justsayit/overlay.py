@@ -1,13 +1,24 @@
 """Transparent wlr-layer-shell recording overlay.
 
-A small bottom-anchored bar with:
-  * a colored status dot on the left (idle / validating / recording / manual),
-  * a state label above the mic-level meter,
-  * a center-outward mic-level meter driven by the RMS callback from audio.py.
+Layout has two modes:
+
+  Compact (recording / listening / processing):
+    ┌──────────────────────────────────┐
+    │  recording                       │  ← state label
+    │  ● ▓▓▓▓──────────────────▓▓▓▓   │  ← dot + meter
+    └──────────────────────────────────┘
+
+  Expanded result view (after transcription):
+    ┌──────────────────────────────────────────────────────┐
+    │  This is the regex-filtered detected text.           │  ← top field
+    │  ──────────────────────────────────────────────────  │
+    │  This is the LLM-cleaned result.                     │  ← bottom field
+    │  ──────────────────────────────────────────────────  │
+    │  ● ▓▓──────────────────────────────────────────▓▓   │  ← dot + flat meter
+    └──────────────────────────────────────────────────────┘
 
 All updates from non-UI threads must go through ``GLib.idle_add`` —
-helpers ``push_state`` / ``push_level`` / ``push_text`` / ``push_linger_start``
-/ ``push_hide`` handle that for you.
+the ``push_*`` helpers handle that.
 """
 
 from __future__ import annotations
@@ -44,6 +55,19 @@ window.justsayit-overlay {
     font-size: 11px;
     font-weight: 500;
 }
+.justsayit-detected-label {
+    color: rgba(255, 255, 255, 0.92);
+    font-family: "Inter", "Cantarell", "Noto Sans", sans-serif;
+    font-size: 11px;
+    font-weight: 400;
+}
+.justsayit-llm-label {
+    color: rgba(180, 255, 200, 0.90);
+    font-family: "Inter", "Cantarell", "Noto Sans", sans-serif;
+    font-size: 11px;
+    font-weight: 400;
+    font-style: italic;
+}
 """
 
 
@@ -61,15 +85,11 @@ _STATE_STYLE = {
     State.MANUAL: ("recording (manual)", _DotColor(0.40, 0.72, 1.00)),
 }
 
-# Green dot shown during the result / linger phase.
-_DOT_RESULT = _DotColor(0.35, 0.85, 0.45)
+_DOT_RESULT = _DotColor(0.35, 0.85, 0.45)   # green during result / linger
 
-# Safety timeout (ms): hide overlay if transcription thread never delivers
-# text (e.g. a crash or very long silence segment).
 _SAFETY_MS = 30_000
-
-# Max chars shown in the overlay pill; longer text is truncated with "…".
-_MAX_DISPLAY_CHARS = 120
+_LLM_WAITING = "Wait for LLM processing…"
+_CHAR_WIDTH_PX = 6.5   # approximate for Inter 11px
 
 
 def _install_css_once() -> None:
@@ -97,20 +117,16 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._cfg = cfg
         self._state = State.IDLE
 
-        # Level / pulse animation
         self._level = 0.0
         self._level_smoothed = 0.0
         self._pulse = 0.0
 
-        # Result / linger phase state
         self._dot_color_override: _DotColor | None = None
-        self._linger_source: int | None = None   # GLib timeout id
-        self._safety_source: int | None = None   # safety-hide timeout id
+        self._linger_source: int | None = None
+        self._safety_source: int | None = None
 
         self.add_css_class("justsayit-overlay")
         self.set_decorated(False)
-        # Allow the window to grow vertically when showing wrapped text, but
-        # fix a minimum size equal to the configured pill dimensions.
         self.set_size_request(cfg.overlay.width, cfg.overlay.height)
         self.set_default_size(cfg.overlay.width, cfg.overlay.height)
 
@@ -123,74 +139,113 @@ class OverlayWindow(Gtk.ApplicationWindow):
         )
         Gtk4LayerShell.set_anchor(self, edge, True)
         Gtk4LayerShell.set_margin(self, edge, cfg.overlay.margin)
-        # Don't reserve any workarea space; we want to float over content.
         Gtk4LayerShell.set_exclusive_zone(self, 0)
 
-        # Outer horizontal box: [dot] [label / meter stack]
-        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        box.add_css_class("justsayit-overlay-box")
-        box.set_hexpand(True)
-        box.set_vexpand(True)
-        box.set_opacity(max(0.0, min(1.0, cfg.overlay.opacity)))
+        # ── Root: vertical stack ─────────────────────────────────────────────
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        root.add_css_class("justsayit-overlay-box")
+        root.set_hexpand(True)
+        root.set_vexpand(True)
+        root.set_opacity(max(0.0, min(1.0, cfg.overlay.opacity)))
 
-        # Status dot — left side, vertically centered
+        # ── State label (compact mode only) ──────────────────────────────────
+        self._state_label = Gtk.Label(label=_STATE_STYLE[State.IDLE][0])
+        self._state_label.add_css_class("justsayit-overlay-label")
+        self._state_label.set_xalign(0.0)
+        self._state_label.set_hexpand(True)
+        root.append(self._state_label)
+
+        # ── Text area (result mode only, hidden by default) ───────────────────
+        # Separator + top field
+        self._sep1 = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        self._sep1.set_margin_bottom(4)
+        self._sep1.set_visible(False)
+        root.append(self._sep1)
+
+        self._detected_label = Gtk.Label()
+        self._detected_label.add_css_class("justsayit-detected-label")
+        self._detected_label.set_xalign(0.0)
+        self._detected_label.set_hexpand(True)
+        self._detected_label.set_wrap(True)
+        self._detected_label.set_visible(False)
+        root.append(self._detected_label)
+
+        # Separator + bottom (LLM) field
+        self._sep2 = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        self._sep2.set_margin_top(4)
+        self._sep2.set_margin_bottom(4)
+        self._sep2.set_visible(False)
+        root.append(self._sep2)
+
+        self._llm_label = Gtk.Label()
+        self._llm_label.add_css_class("justsayit-llm-label")
+        self._llm_label.set_xalign(0.0)
+        self._llm_label.set_hexpand(True)
+        self._llm_label.set_wrap(True)
+        self._llm_label.set_visible(False)
+        root.append(self._llm_label)
+
+        # Separator above bottom row (only shown in result mode)
+        self._sep_bottom = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        self._sep_bottom.set_margin_top(4)
+        self._sep_bottom.set_margin_bottom(4)
+        self._sep_bottom.set_visible(False)
+        root.append(self._sep_bottom)
+
+        # ── Bottom row: dot + meter (always visible) ──────────────────────────
+        bottom_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        bottom_row.set_hexpand(True)
+
         self._dot = Gtk.DrawingArea()
         self._dot.set_content_width(16)
         self._dot.set_content_height(16)
         self._dot.set_valign(Gtk.Align.CENTER)
         self._dot.set_draw_func(self._draw_dot, None)
-        box.append(self._dot)
-
-        # Right side: label above, meter below
-        right_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        right_box.set_hexpand(True)
-        right_box.set_vexpand(True)
-
-        self._label = Gtk.Label(label=_STATE_STYLE[State.IDLE][0])
-        self._label.add_css_class("justsayit-overlay-label")
-        self._label.set_xalign(0.0)
-        self._label.set_hexpand(True)
-        self._label.set_wrap(True)
-        self._label.set_max_width_chars(22)
-        right_box.append(self._label)
+        bottom_row.append(self._dot)
 
         self._meter = Gtk.DrawingArea()
         self._meter.set_content_height(10)
         self._meter.set_hexpand(True)
         self._meter.set_valign(Gtk.Align.CENTER)
         self._meter.set_draw_func(self._draw_meter, None)
-        right_box.append(self._meter)
+        bottom_row.append(self._meter)
 
-        box.append(right_box)
-        self.set_child(box)
-
+        root.append(bottom_row)
+        self.set_child(root)
         _install_css_once()
 
-        # ~60 Hz UI tick for level smoothing + recording pulse.
         GLib.timeout_add(33, self._tick)
 
-    # --- threadsafe entry points ------------------------------------------
+    # ── Thread-safe entry points ─────────────────────────────────────────────
 
     def push_state(self, state: State) -> None:
         GLib.idle_add(self._apply_state, state, priority=GLib.PRIORITY_DEFAULT)
 
     def push_level(self, rms: float) -> None:
-        # Don't bounce a GLib.idle per chunk; just store and let the tick use it.
         self._level = rms
 
-    def push_text(self, text: str) -> None:
-        """Show transcribed / LLM-cleaned text in the overlay.  Thread-safe."""
-        GLib.idle_add(self._apply_text, text, priority=GLib.PRIORITY_DEFAULT)
+    def push_detected_text(self, text: str, llm_pending: bool = False) -> None:
+        """Show regex-filtered text in the top field.
+
+        *llm_pending* = True → bottom field shows "Wait for LLM processing…"
+        until ``push_llm_text`` is called.
+        """
+        GLib.idle_add(
+            self._apply_detected_text, text, llm_pending,
+            priority=GLib.PRIORITY_DEFAULT,
+        )
+
+    def push_llm_text(self, text: str) -> None:
+        """Update the bottom field with the LLM-cleaned result."""
+        GLib.idle_add(self._apply_llm_text, text, priority=GLib.PRIORITY_DEFAULT)
 
     def push_linger_start(self) -> None:
-        """Start the post-paste linger timer.  Call after paste completes.  Thread-safe."""
         GLib.idle_add(self._start_linger, priority=GLib.PRIORITY_DEFAULT)
 
     def push_hide(self) -> None:
-        """Immediately hide the overlay (e.g. empty transcription).  Thread-safe."""
         GLib.idle_add(self._force_hide, priority=GLib.PRIORITY_DEFAULT)
 
-    # --- UI thread ---------------------------------------------------------
+    # ── UI-thread handlers ───────────────────────────────────────────────────
 
     def _apply_state(self, state: State) -> bool:
         prev = self._state
@@ -198,47 +253,70 @@ class OverlayWindow(Gtk.ApplicationWindow):
 
         if state is State.IDLE:
             if prev in (State.RECORDING, State.MANUAL):
-                # Transcription is imminent — show "processing…" and arm the
-                # safety timer so a stuck transcription doesn't freeze the overlay.
                 self._cancel_linger()
                 self._dot_color_override = None
-                self._label.set_label("processing…")
-                self._dot.queue_draw()
+                self._state_label.set_label("processing…")
+                self._state_label.set_visible(True)
+                self._hide_text_areas()
+                self._collapse_window()
                 self._schedule_safety_hide()
+                self._dot.queue_draw()
                 if not self.get_visible():
                     self.set_visible(True)
             else:
-                # Validation failed or already idle — hide immediately.
                 self._force_hide()
         else:
-            # Active recording/listening state — cancel any pending timers
-            # and show the standard state label.
             self._cancel_linger()
             self._cancel_safety()
             self._dot_color_override = None
             label, _ = _STATE_STYLE[state]
-            self._label.set_label(label)
+            self._state_label.set_label(label)
+            self._state_label.set_visible(True)
+            self._hide_text_areas()
+            self._collapse_window()
             self._dot.queue_draw()
             if not self.get_visible():
                 self.set_visible(True)
             self.present()
-        return False  # one-shot
+        return False
 
-    def _apply_text(self, text: str) -> bool:
-        """Display result text with a green dot.  Cancels the safety timer."""
+    def _apply_detected_text(self, text: str, llm_pending: bool) -> bool:
         self._cancel_safety()
         self._dot_color_override = _DOT_RESULT
-        # Truncate very long transcriptions so the overlay pill stays sane.
-        display = text if len(text) <= _MAX_DISPLAY_CHARS else text[:_MAX_DISPLAY_CHARS - 1] + "…"
-        self._label.set_label(display)
+
+        # Hide state label, show text fields above the bottom row.
+        self._state_label.set_visible(False)
+        self._detected_label.set_label(text)
+        self._sep1.set_visible(True)
+        self._detected_label.set_visible(True)
+
+        if llm_pending:
+            self._llm_label.set_label(_LLM_WAITING)
+            self._sep2.set_visible(True)
+            self._llm_label.set_visible(True)
+        else:
+            self._sep2.set_visible(False)
+            self._llm_label.set_visible(False)
+
+        self._sep_bottom.set_visible(True)
+
+        # Pre-size: height_for(text) × 2 + static, capped at max_height.
+        self._expand_window(text, two_fields=llm_pending)
+
         self._dot.queue_draw()
         if not self.get_visible():
             self.set_visible(True)
         self.present()
         return False
 
+    def _apply_llm_text(self, text: str) -> bool:
+        self._llm_label.set_label(text)
+        if not self._llm_label.get_visible():
+            self._sep2.set_visible(True)
+            self._llm_label.set_visible(True)
+        return False
+
     def _start_linger(self) -> bool:
-        """Arm the linger timer; called after paste (or when paste is disabled)."""
         self._cancel_linger()
         ms = self._cfg.overlay.result_linger_ms
         if ms > 0:
@@ -248,18 +326,51 @@ class OverlayWindow(Gtk.ApplicationWindow):
         return False
 
     def _finish_linger(self) -> bool:
-        """Called when the linger timer fires."""
         self._linger_source = None
         self._force_hide()
-        return False  # don't repeat
+        return False
 
     def _force_hide(self) -> bool:
-        """Immediately hide the overlay and cancel all pending timers."""
         self._cancel_linger()
         self._cancel_safety()
         self._dot_color_override = None
+        self._hide_text_areas()
+        self._collapse_window()
         self.set_visible(False)
         return False
+
+    # ── Layout helpers ───────────────────────────────────────────────────────
+
+    def _hide_text_areas(self) -> None:
+        self._sep1.set_visible(False)
+        self._detected_label.set_visible(False)
+        self._sep2.set_visible(False)
+        self._llm_label.set_visible(False)
+        self._sep_bottom.set_visible(False)
+        self._state_label.set_visible(True)
+
+    def _collapse_window(self) -> None:
+        self.set_default_size(self._cfg.overlay.width, self._cfg.overlay.height)
+
+    def _expand_window(self, text: str, two_fields: bool) -> None:
+        """Pre-size the window using: height_for(text) × 2 + static_height."""
+        max_w = self._cfg.overlay.max_width
+        max_h = self._cfg.overlay.max_height
+
+        # Usable text width: subtract padding (14 × 2) + dot (16) + spacing (10).
+        usable_w = max_w - 14 * 2 - 16 - 10
+        chars_per_line = max(1, int(usable_w / _CHAR_WIDTH_PX))
+        n_lines = max(1, math.ceil(len(text) / chars_per_line))
+        line_h = 16  # px
+        text_h = n_lines * line_h
+
+        # static = compact pill (state-label + bottom-row) + separators.
+        static_h = self._cfg.overlay.height + 3 * 12  # 3 separator rows
+        multiplier = 2 if two_fields else 1
+        estimated_h = min(max_h, static_h + text_h * multiplier + 8)
+        self.set_default_size(max_w, estimated_h)
+
+    # ── Timers ───────────────────────────────────────────────────────────────
 
     def _schedule_safety_hide(self) -> None:
         self._cancel_safety()
@@ -267,7 +378,7 @@ class OverlayWindow(Gtk.ApplicationWindow):
 
     def _safety_hide(self) -> bool:
         self._safety_source = None
-        log.warning("overlay safety-hide fired (transcription took > %ds)", _SAFETY_MS // 1000)
+        log.warning("overlay safety-hide fired (no text after %ds)", _SAFETY_MS // 1000)
         self._force_hide()
         return False
 
@@ -281,24 +392,36 @@ class OverlayWindow(Gtk.ApplicationWindow):
             GLib.source_remove(self._safety_source)
             self._safety_source = None
 
+    # ── Tick / draw ──────────────────────────────────────────────────────────
+
     def _tick(self) -> bool:
-        # Scale raw RMS (~0..0.3 for normal speech) to [0, 1] with soft cap,
-        # then apply user sensitivity multiplier.
         sensitivity = self._cfg.overlay.visualizer_sensitivity
-        target = min(1.0, self._level * 8.0 * sensitivity)
-        self._level_smoothed += (target - self._level_smoothed) * 0.25
-        if self._state in (State.RECORDING, State.MANUAL, State.VALIDATING) or self._dot_color_override is not None:
+        # Only animate the meter while actively recording / listening.
+        # In result / linger phase (state=IDLE, dot_color_override set) or
+        # while idle, decay the smoothed level to zero so the bar goes flat.
+        if self._state in (State.RECORDING, State.MANUAL, State.VALIDATING):
+            target = min(1.0, self._level * 8.0 * sensitivity)
+            self._level_smoothed += (target - self._level_smoothed) * 0.25
             self._pulse = (self._pulse + 0.08) % (2 * math.pi)
         else:
-            self._pulse *= 0.9
+            # Decay to flat: meter goes quiet; pulse slows but keeps halo in
+            # result phase via dot_color_override check in _draw_dot.
+            self._level_smoothed *= 0.85
+            if self._dot_color_override is not None:
+                self._pulse = (self._pulse + 0.04) % (2 * math.pi)
+            else:
+                self._pulse *= 0.9
         self._meter.queue_draw()
         self._dot.queue_draw()
         return True
 
     def _draw_dot(self, _area, cr, w, h, _user_data):
-        color = self._dot_color_override if self._dot_color_override is not None else _STATE_STYLE[self._state][1]
+        color = (
+            self._dot_color_override
+            if self._dot_color_override is not None
+            else _STATE_STYLE[self._state][1]
+        )
         radius = min(w, h) / 2.0 - 1.5
-        # Show animated halo when active or in result/linger phase.
         show_halo = (
             self._state in (State.RECORDING, State.MANUAL, State.VALIDATING)
             or self._dot_color_override is not None
@@ -313,15 +436,12 @@ class OverlayWindow(Gtk.ApplicationWindow):
         cr.fill()
 
     def _draw_meter(self, _area, cr, w, h, _user_data):
-        # background track (full width)
         cr.set_source_rgba(1.0, 1.0, 1.0, 0.10)
         self._round_rect(cr, 0, 0, w, h, h / 2)
         cr.fill()
-        # filled level — grows symmetrically from the center outward
         fill = max(0.0, min(1.0, self._level_smoothed))
         if fill <= 0.0:
             return
-        # Color shifts from green to amber as level rises.
         g = 0.85 - 0.45 * fill
         r = 0.35 + 0.50 * fill
         cr.set_source_rgba(r, g, 0.35, 0.92)

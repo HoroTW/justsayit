@@ -687,23 +687,26 @@ class App:
         if final != raw:
             log.info("filters changed output: %r -> %r", raw, final)
 
-        # Show the filtered text immediately so the user can read it while
-        # any LLM postprocessing (which may take a few seconds) is running.
-        if self.overlay is not None:
-            self.overlay.push_text(final)
-
+        # Snapshot pp before the overlay update so we know whether to show the
+        # LLM field immediately (as "Wait for LLM processing…").
         pp = self.postprocessor  # snapshot — avoids TOCTOU with tray thread
+
+        # Show the filtered text in the top field.  The bottom (LLM) field is
+        # shown as a waiting placeholder if the postprocessor is active.
+        if self.overlay is not None:
+            self.overlay.push_detected_text(final, llm_pending=(pp is not None))
+
         if pp is not None:
             try:
                 cleaned = pp.process(final)
                 if cleaned != final:
                     log.info("LLM cleaned: %r -> %r", final, cleaned)
                     final = cleaned
-                    # Update the overlay with the LLM-cleaned result.
-                    if self.overlay is not None:
-                        self.overlay.push_text(final)
             except Exception:
                 log.exception("LLM postprocessor failed; using unprocessed text")
+            # Always update the LLM field — clears "Wait…" even when text is unchanged.
+            if self.overlay is not None:
+                self.overlay.push_llm_text(final)
 
         # Space prefix / suffix (applied to paste content only; not shown in overlay)
         auto_space_ms = self.cfg.paste.auto_space_timeout_ms
