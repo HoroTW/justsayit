@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-04-15
+
+### Added
+
+- **Reload config** tray menu item — restarts the process via `execve` so
+  all config changes (including overlay, audio, and model settings that
+  cannot be hot-reloaded) take effect immediately.
+
 ## [0.2.1] - 2026-04-15
 
 ### Changed

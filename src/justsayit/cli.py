@@ -156,6 +156,7 @@ MID_AUTO_LISTEN = 1
 MID_SEP_1 = 2
 MID_CONFIGURE_SHORTCUT = 3
 MID_OPEN_CONFIG = 4
+MID_RELOAD_CONFIG = 7
 MID_SEP_2 = 5
 MID_QUIT = 6
 
@@ -199,6 +200,7 @@ class App:
         # Monotonic timestamp of the last successful transcription output,
         # used by the auto_space_timeout_ms feature.
         self._last_transcription_time: float | None = None
+        self._restart_requested: bool = False
 
     # --- setup -------------------------------------------------------------
 
@@ -418,6 +420,12 @@ class App:
             log.info("opening shortcut configuration dialog")
             self.shortcut_client.configure()
 
+        def on_reload_config() -> None:
+            log.info("reload-config requested from tray — restarting")
+            self._restart_requested = True
+            if self.gtk_app is not None:
+                self.gtk_app.quit()
+
         def on_quit() -> None:
             log.info("quit requested from tray")
             if self.gtk_app is not None:
@@ -442,6 +450,11 @@ class App:
                 id=MID_OPEN_CONFIG,
                 label="Open config file…",
                 on_activate=on_open_config,
+            ),
+            MenuItem(
+                id=MID_RELOAD_CONFIG,
+                label="Reload config",
+                on_activate=on_reload_config,
             ),
             MenuItem(id=MID_SEP_2, is_separator=True),
             MenuItem(id=MID_QUIT, label="Quit", on_activate=on_quit),
@@ -794,6 +807,9 @@ def main(argv: list[str] | None = None) -> int:
 
     rc = app.run([])
     ja.shutdown()
+    if ja._restart_requested:
+        log.info("restarting process to pick up new config")
+        _os.execve(_sys.executable, [_sys.executable] + _sys.argv, _os.environ)
     return rc
 
 
