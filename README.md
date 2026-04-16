@@ -1,5 +1,7 @@
 # JustSayIt
 
+![demo](docs/demo.gif)
+
 Local Parakeet v3 voice dictation for Wayland.
 
 > Heads up: I wrote this for myself because none of the existing
