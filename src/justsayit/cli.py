@@ -13,6 +13,25 @@ import os as _os
 import sys as _sys
 
 
+def _reexec_cmd() -> list[str]:
+    """Return the argv to re-execute the current process.
+
+    When running inside a Nix ``makeBinaryWrapper`` ELF wrapper, ``sys.argv[0]``
+    is the ELF binary path, not a Python script. Passing it to
+    ``[sys.executable, *sys.argv]`` would make Python try to execute a binary
+    as source code. Detect this case and exec the ELF directly instead —
+    the wrapper handles Python setup on its own.
+    """
+    argv0 = _sys.argv[0]
+    try:
+        with open(argv0, "rb") as f:
+            if f.read(4) == b"\x7fELF":
+                return [argv0] + _sys.argv[1:]
+    except OSError:
+        pass
+    return [_sys.executable, *_sys.argv]
+
+
 def _app_id() -> str:
     """Portal application id used for D-Bus / systemd scoping. Can be
     overridden via ``JUSTSAYIT_APP_ID`` so a dev build can run in
@@ -57,6 +76,7 @@ def _reexec_under_systemd_scope() -> None:
     env = _os.environ.copy()
     env["_JUSTSAYIT_SCOPED"] = "1"
     unit = f"app-{app_id}-{_os.getpid()}"
+    reexec = _reexec_cmd()
     argv = [
         systemd_run,
         "--user",
@@ -64,8 +84,7 @@ def _reexec_under_systemd_scope() -> None:
         f"--unit={unit}",
         "--quiet",
         "--collect",
-        _sys.executable,
-        *_sys.argv,
+        *reexec,
     ]
     _os.execvpe(systemd_run, argv, env)
 
@@ -105,7 +124,8 @@ def _preload_layer_shell() -> None:
     existing = env.get("LD_PRELOAD", "")
     env["LD_PRELOAD"] = f"{lib}:{existing}" if existing else lib
     env["_JUSTSAYIT_PRELOADED"] = "1"
-    _os.execvpe(_sys.executable, [_sys.executable, *_sys.argv], env)
+    cmd = _reexec_cmd()
+    _os.execvpe(cmd[0], cmd, env)
 
 
 _reexec_under_systemd_scope()
