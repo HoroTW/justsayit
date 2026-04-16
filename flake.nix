@@ -11,7 +11,36 @@
       # Runtime CLI tools justsayit shells out to.
       runtimeTools = with pkgs; [ wl-clipboard dotool wtype ];
 
-      justsayit = pkgs.python3Packages.buildPythonApplication {
+      # nixpkgs ships llama-cpp-python 0.3.16, which predates the qwen35 / gemma4
+      # architectures.  Override the source to 0.3.20 (latest on PyPI) so all
+      # current models are supported while reusing the nixpkgs build recipe.
+      llama-cpp-python-new = pkgs.python3Packages.llama-cpp-python.overridePythonAttrs (_old: {
+        version = "0.3.20";
+        # PyPI sdist bundles llama.cpp inline (no submodules needed).
+        src = pkgs.fetchurl {
+          url = "https://files.pythonhosted.org/packages/45/95/c69c47c9c8dda97f712f5864688d13a22b0159aa9adae91a69067a728532/llama_cpp_python-0.3.20.tar.gz";
+          hash = "sha256-cPAbfZFdMcYX3GZhCjMsstUc3oTIsVLQmjUiBjI2FvU=";
+        };
+        # The nixpkgs patch is a macOS Metal test fix against 0.3.16's llama.cpp;
+        # it doesn't apply to 0.3.20 and is irrelevant on Linux.
+        patches = [];
+      });
+
+      # llama-cpp-python 0.3.20 rebuilt with Vulkan support for GPU inference.
+      llama-cpp-python-vulkan = llama-cpp-python-new.overridePythonAttrs (old: {
+        nativeBuildInputs = (old.nativeBuildInputs or []) ++ (with pkgs; [
+          shaderc   # provides glslc, needed at compile time to build SPIR-V shaders
+        ]);
+        buildInputs = (old.buildInputs or []) ++ (with pkgs; [
+          vulkan-headers
+          vulkan-loader
+        ]);
+        env = (old.env or {}) // {
+          CMAKE_ARGS = ((old.env or {}).CMAKE_ARGS or "") + " -DGGML_VULKAN=1";
+        };
+      });
+
+      mkJustsayit = { withLlm ? false, llamaCppPython ? llama-cpp-python-new }: pkgs.python3Packages.buildPythonApplication {
         pname = "justsayit";
         version = "0.5.3";
         pyproject = true;
@@ -26,7 +55,7 @@
           numpy
           platformdirs
           pygobject3
-        ];
+        ] ++ pkgs.lib.optionals withLlm [ llamaCppPython ];
 
         # gobject-introspection scans buildInputs for typelibs at build time;
         # wrapGAppsHook4 populates gappsWrapperArgs with GI_TYPELIB_PATH,
@@ -83,11 +112,14 @@
         # Tests require audio hardware and a running Wayland compositor.
         doCheck = false;
       };
+      justsayit = mkJustsayit {};
     in
     {
       packages.${system} = {
         default = justsayit;
         justsayit = justsayit;
+        with-llm = mkJustsayit { withLlm = true; };
+        with-llm-vulkan = mkJustsayit { withLlm = true; llamaCppPython = llama-cpp-python-vulkan; };
       };
 
       # Development shell: system deps for PyGObject + the uv workflow.

@@ -989,7 +989,17 @@ def _ensure_llama_cpp(vulkan: bool = True) -> bool:
     import shutil
     import subprocess
 
-    # Quick check: already installed?
+    # Quick check: already importable in the current process?
+    # This covers Nix builds where the package is on sys.path via the wrapper
+    # script (not as an env var) and therefore invisible to a fresh subprocess.
+    try:
+        import llama_cpp  # noqa: F401
+        return True
+    except ImportError:
+        pass
+
+    # Fallback subprocess check for uv / pip managed installs where the
+    # package may be installed into a venv that sys.executable can reach.
     if subprocess.run(
         [sys.executable, "-c", "import llama_cpp"],
         capture_output=True,
