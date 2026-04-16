@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-04-16
+
+### Added
+
+- **Nix LLM support** — `nix build .#with-llm` (CPU) and `nix build .#with-llm-vulkan`
+  (Vulkan GPU) package outputs. Overrides `llama-cpp-python` to 0.3.20 so all current
+  model architectures (Qwen3.5, Gemma 4, …) are supported.
+- **`install.sh --nix [BINARY]`** — installs desktop integration and downloads models
+  for a Nix-built binary; skips venv/pip setup. Resolves the `result` symlink to the
+  real Nix store path so the `.desktop` entry survives rebuilds.
+- **Updated default postprocess profile** — multilingual system prompt (DE/EN/mixed)
+  with formatting and MetaRequest support; `n_ctx` and `max_tokens` raised to 4096;
+  `hf_repo`/`hf_filename` pre-filled for auto-download.
+
+### Fixed
+
+- **`setup-llm` under Nix** — `_ensure_llama_cpp` now tries importing in the current
+  process first; the Nix wrapper injects `sys.path` inline (not via env) so a fresh
+  subprocess could never see the package.
+
+### Changed
+
+- **App ID renamed** `dev.horo.justsayit` → `dev.horotw.justsayit`. Users with an
+  existing `.desktop` file should re-run `install.sh` (or `install.sh --nix`) to
+  update it; the old entry is cleaned up automatically.
+
 ## [0.5.3] - 2026-04-16
 
 ### Added
