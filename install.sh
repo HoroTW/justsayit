@@ -134,7 +134,7 @@ else
 
     need uv "install from https://docs.astral.sh/uv/"
     need wl-copy "install the 'wl-clipboard' package"
-    need dotool "install 'dotool' (AUR: dotool, yay -S dotool) and enable the dotoold service"
+    need dotool "install 'dotool' (AUR: dotool, yay -S dotool)"
     need wtype "install 'wtype' (optional fallback; Arch: pacman -S wtype)"
 
     if ! pkg-config --exists gtk4 2>/dev/null; then

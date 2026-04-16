@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-04-16
+
+### Added
+
+- **Quick Start** — README restructured with copy-paste Arch and Nix quick
+  start paths (Vulkan + LLM in two commands). Detailed install and
+  configuration reference moved to `docs/install.md` and
+  `docs/configuration.md`.
+- Input group check one-liner (`id -nG | grep -qw input`) in quick start and
+  install docs so users skip the `usermod` if already set up.
+
+### Fixed
+
+- `dotoold` service incorrectly listed as a requirement — justsayit spawns
+  its own persistent `dotool` process; `input` group membership is sufficient.
+
 ## [0.5.4] - 2026-04-16
 
 ### Added
