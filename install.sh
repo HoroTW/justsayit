@@ -15,7 +15,7 @@ VENV_DIR=${VENV_DIR:-$PROJECT_DIR/.venv}
 # (friendly name + icon) in the installed .desktop file. If they
 # diverge you'll see the bare app-id show up under "System Services"
 # with no icon in KDE's shortcut settings.
-APP_ID="dev.horo.justsayit"
+APP_ID="dev.horotw.justsayit"
 APP_NAME="Just Say It"
 # Legacy name from earlier versions; we clean it up on (re)install so
 # people upgrading don't end up with two launcher entries.

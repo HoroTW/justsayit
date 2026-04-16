@@ -37,7 +37,7 @@ def _app_id() -> str:
     overridden via ``JUSTSAYIT_APP_ID`` so a dev build can run in
     parallel with an installed build without fighting over the same
     shortcut binding."""
-    return _os.environ.get("JUSTSAYIT_APP_ID", "dev.horo.justsayit")
+    return _os.environ.get("JUSTSAYIT_APP_ID", "dev.horotw.justsayit")
 
 
 def _reexec_under_systemd_scope() -> None:
