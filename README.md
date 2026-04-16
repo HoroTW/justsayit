@@ -7,7 +7,7 @@ Local Parakeet v3 voice dictation for Wayland.
 > useful to someone else, but it's shaped around my machine and my
 > habits — no promises it fits yours.
 >
-> And yes, it's vibe-coded. Take that however you want 😉
+> And yes, it's mostly vibe-coded. Take that however you want 😉
 
 - Offline ASR via [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) +
   [Parakeet TDT 0.6B v3 INT8](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)

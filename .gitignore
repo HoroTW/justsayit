@@ -14,5 +14,9 @@ htmlcov/
 config.toml
 filters.json
 
+# Nix build output symlink
+result
+result-*
+
 # Claude Code user-local settings
 .claude/settings.local.json
