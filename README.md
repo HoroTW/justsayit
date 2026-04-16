@@ -51,6 +51,88 @@ sudo systemctl enable --now dotoold
 # log out / log in once so the new group membership takes effect
 ```
 
+## Install via Nix flake
+
+Requires Nix with flakes enabled. The flake targets `x86_64-linux`.
+
+### Basic install
+
+```sh
+nix build
+./result/bin/justsayit download-models
+```
+
+Run it directly from the result symlink or add it to your `PATH`:
+
+```sh
+./result/bin/justsayit
+```
+
+Or run without building first:
+
+```sh
+nix run github:HoroTW/justsayit
+```
+
+### Desktop launcher integration
+
+The Nix build doesn't install a `.desktop` file. Use `install.sh --nix` to
+handle that (and model download) in one step:
+
+```sh
+nix build           # or .#with-llm / .#with-llm-vulkan
+./install.sh --nix  # reads ./result/bin/justsayit by default
+```
+
+The script resolves the `result` symlink to the real Nix store path, so the
+launcher entry stays valid after rebuilds. Pass a custom path if needed:
+
+```sh
+./install.sh --nix /path/to/justsayit
+```
+
+### Paste (same requirement as regular install)
+
+```sh
+sudo usermod -aG input $USER
+# log out and back in so the group takes effect
+```
+
+### With LLM postprocessing (CPU)
+
+The `with-llm` package includes `llama-cpp-python` (CPU-only).
+After building you still need to download a GGUF model:
+
+```sh
+nix build .#with-llm
+./result/bin/justsayit setup-llm --cpu   # interactive: picks and downloads a model
+```
+
+`setup-llm` writes a profile under `~/.config/justsayit/postprocess/` and
+updates `config.toml` to point at it. Enable postprocessing in
+`~/.config/justsayit/config.toml`:
+
+```toml
+[postprocess]
+enabled = true
+```
+
+### With LLM postprocessing (Vulkan GPU)
+
+The `with-llm-vulkan` package rebuilds `llama-cpp-python` with
+`-DGGML_VULKAN=1` so inference runs on your GPU (takes a few minutes to
+compile):
+
+```sh
+nix build .#with-llm-vulkan
+./result/bin/justsayit setup-llm --cpu   # interactive: picks and downloads a model
+```
+
+Then enable postprocessing as above. `--cpu` only filters the interactive
+model list to smaller sizes — inference still uses the GPU at runtime.
+The build pulls in `vulkan-loader`, `vulkan-headers`, and `shaderc`
+automatically.
+
 ## Usage
 
 ```sh

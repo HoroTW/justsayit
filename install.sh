@@ -32,11 +32,14 @@ AUTOSTART=0
 SKIP_MODELS=0
 MODEL=""        # "" = parakeet (default), "whisper" = faster-whisper
 POSTPROCESS=0   # 1 = install llama-cpp-python with Vulkan for LLM cleanup
+NIX=0           # 1 = Nix-built binary; skip venv/pip, just do desktop + models
+NIX_BIN=""      # path to the Nix-built binary (default: ./result/bin/justsayit)
 
 usage() {
     cat <<'EOF'
 Usage: install.sh [--uninstall] [--autostart] [--skip-models]
                   [--model parakeet|whisper] [--postprocess]
+                  [--nix [BINARY]]
 
   (default)              Create/update .venv, install deps, install .desktop
                          file, download models (Parakeet + VAD).
@@ -52,6 +55,11 @@ Usage: install.sh [--uninstall] [--autostart] [--skip-models]
   --postprocess          Skip the postprocessing prompt and always set up
                          LLM cleanup (Vulkan GPU, interactive model select).
                          Useful for non-interactive / scripted installs.
+  --nix [BINARY]         Install desktop integration for a Nix-built binary.
+                         Skips venv/pip setup. BINARY defaults to
+                         ./result/bin/justsayit. Pairs with:
+                           nix build .#with-llm-vulkan
+                           ./install.sh --nix --postprocess
 EOF
 }
 
@@ -61,6 +69,16 @@ while [ $# -gt 0 ]; do
         --autostart) AUTOSTART=1 ;;
         --skip-models) SKIP_MODELS=1 ;;
         --postprocess) POSTPROCESS=1 ;;
+        --nix)
+            NIX=1
+            # Optional next argument: path to the binary (not a flag)
+            if [ $# -gt 1 ]; then
+                case "$2" in
+                    -*) : ;;  # next arg is a flag, not a path
+                    *)  NIX_BIN="$2"; shift ;;
+                esac
+            fi
+            ;;
         --model)
             shift
             case "$1" in
@@ -83,48 +101,70 @@ if [ "$UNINSTALL" -eq 1 ]; then
     exit 0
 fi
 
-# --- tool checks -----------------------------------------------------------
+if [ "$NIX" -eq 1 ]; then
+    # --- Nix mode: skip venv/pip, just wire up desktop + models ---------------
 
-need() {
-    if ! command -v "$1" >/dev/null 2>&1; then
-        echo "missing required tool: $1" >&2
-        echo "$2" >&2
+    if [ -z "$NIX_BIN" ]; then
+        NIX_BIN="$PROJECT_DIR/result/bin/justsayit"
+    fi
+    # Resolve symlink so the .desktop Exec= points at the real store path,
+    # which remains valid even after the result symlink is updated by a rebuild.
+    if command -v readlink >/dev/null 2>&1; then
+        NIX_BIN_REAL=$(readlink -f "$NIX_BIN" 2>/dev/null || echo "$NIX_BIN")
+    else
+        NIX_BIN_REAL="$NIX_BIN"
+    fi
+    if [ ! -x "$NIX_BIN_REAL" ]; then
+        echo "error: Nix binary not found or not executable: $NIX_BIN_REAL" >&2
+        echo "  Run 'nix build' first, or pass the path: ./install.sh --nix /path/to/justsayit" >&2
         exit 1
     fi
-}
+    BIN="$NIX_BIN_REAL"
+    echo "==> using Nix binary: $BIN"
+else
+    # --- tool checks -----------------------------------------------------------
 
-need uv "install from https://docs.astral.sh/uv/"
-need wl-copy "install the 'wl-clipboard' package"
-need dotool "install 'dotool' (AUR: dotool, yay -S dotool) and enable the dotoold service"
-need wtype "install 'wtype' (optional fallback; Arch: pacman -S wtype)"
+    need() {
+        if ! command -v "$1" >/dev/null 2>&1; then
+            echo "missing required tool: $1" >&2
+            echo "$2" >&2
+            exit 1
+        fi
+    }
 
-if ! pkg-config --exists gtk4 2>/dev/null; then
-    echo "warning: gtk4 pkg-config not found. PyGObject may still work via system gi," >&2
-    echo "         but if build fails install 'gtk4' and headers for your distro." >&2
-fi
-if ! pkg-config --exists gtk4-layer-shell-0 2>/dev/null; then
-    echo "error: gtk4-layer-shell not found." >&2
-    echo "  The Wayland layer-shell overlay requires this library." >&2
-    echo "  Install: pacman -S gtk4-layer-shell  (Arch / Manjaro)" >&2
-    echo "           or equivalent for your distro, then re-run install.sh." >&2
-    exit 1
-fi
+    need uv "install from https://docs.astral.sh/uv/"
+    need wl-copy "install the 'wl-clipboard' package"
+    need dotool "install 'dotool' (AUR: dotool, yay -S dotool) and enable the dotoold service"
+    need wtype "install 'wtype' (optional fallback; Arch: pacman -S wtype)"
 
-# --- venv ------------------------------------------------------------------
+    if ! pkg-config --exists gtk4 2>/dev/null; then
+        echo "warning: gtk4 pkg-config not found. PyGObject may still work via system gi," >&2
+        echo "         but if build fails install 'gtk4' and headers for your distro." >&2
+    fi
+    if ! pkg-config --exists gtk4-layer-shell-0 2>/dev/null; then
+        echo "error: gtk4-layer-shell not found." >&2
+        echo "  The Wayland layer-shell overlay requires this library." >&2
+        echo "  Install: pacman -S gtk4-layer-shell  (Arch / Manjaro)" >&2
+        echo "           or equivalent for your distro, then re-run install.sh." >&2
+        exit 1
+    fi
 
-echo "==> creating venv at $VENV_DIR (using --system-site-packages for gi bindings)"
-uv venv --system-site-packages "$VENV_DIR" >/dev/null
+    # --- venv ------------------------------------------------------------------
 
-echo "==> installing project into venv"
-EXTRAS="dev"
-[ "$MODEL" = "whisper" ] && EXTRAS="dev,whisper"
-UV_PROJECT_ENVIRONMENT="$VENV_DIR" uv pip install --python "$VENV_DIR/bin/python" \
-    -e "$PROJECT_DIR[$EXTRAS]"
+    echo "==> creating venv at $VENV_DIR (using --system-site-packages for gi bindings)"
+    uv venv --system-site-packages "$VENV_DIR" >/dev/null
 
-BIN="$VENV_DIR/bin/justsayit"
-if [ ! -x "$BIN" ]; then
-    echo "installation failed: $BIN is missing" >&2
-    exit 1
+    echo "==> installing project into venv"
+    EXTRAS="dev"
+    [ "$MODEL" = "whisper" ] && EXTRAS="dev,whisper"
+    UV_PROJECT_ENVIRONMENT="$VENV_DIR" uv pip install --python "$VENV_DIR/bin/python" \
+        -e "$PROJECT_DIR[$EXTRAS]"
+
+    BIN="$VENV_DIR/bin/justsayit"
+    if [ ! -x "$BIN" ]; then
+        echo "installation failed: $BIN is missing" >&2
+        exit 1
+    fi
 fi
 
 # --- default config --------------------------------------------------------

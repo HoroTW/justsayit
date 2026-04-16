@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keystroke, so dictation no longer clobbers whatever the user had copied.
   Primary/selection clipboard is not restored.  No-op when `type_directly`
   is enabled.
+- **Nix flake** — `flake.nix` packages justsayit for Nix on Arch Linux.
+  `nix build` produces a working binary with GTK4 layer-shell, PipeWire audio,
+  and all runtime tools (`wl-clipboard`, `dotool`, `wtype`) on PATH.
+  `nix build .#with-llm` adds `llama-cpp-python` (CPU) for LLM postprocessing.
 
 ## [0.5.2] - 2026-04-15
 
