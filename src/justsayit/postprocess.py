@@ -34,11 +34,27 @@ log = logging.getLogger(__name__)
 # Profile dataclass + loader
 # ---------------------------------------------------------------------------
 
-_DEFAULT_SYSTEM_DE = (
-    "Bereinige das folgende Transkript: entferne Füllwörter (ähm, öhm, halt, also),"
-    " korrigiere Grammatik und Rechtschreibung sowie falsch verstandene Wörter,"
-    " behalte den Sinn und den Sprachstil bei."
-    " Gib NUR den bereinigten Text zurück, keine Erklärungen."
+_DEFAULT_SYSTEM_PROMPT = (
+    "Clean up the following transcript: remove filler words"
+    " (ähm, öhm, halt, also, um, uh, like, so), correct grammar and misunderstood words,"
+    " while preserving the meaning and writing style."
+    " You might get German mixed with English, that is expected, keep it that way."
+    " It could also be just English or just German,"
+    " only translate something if there is a request to do so.\\n"
+    "If the transcript has things that should be clearly replaced like"
+    " emojis / smileys / special chars, do that!"
+    " Examples: `laughing emoji`->`🤣`,"
+    " `Hello comma new line greetings`->`Hello,\\ngreetings`,"
+    " `This allows us to do stuff like new line dash some point new line dash another point`"
+    "->`This allows us to do stuff like\\n - Some point\\n - Another Point`,"
+    " ... IF there is the intention to have formatting you should apply it.\\n"
+    "Return ONLY the cleaned-up text; do not include any explanations."
+    " If the LLM receives a metarequest `LLM MetaRequest` / `LLM Meta Request` /"
+    " ... something CLEARLY meant as instructions for the transcribing LLM,"
+    " then you should respond to, or follow these instructions"
+    " (e.g., adjust the writing style, provide translations, answer specific questions, etc.).\\n"
+    "If there is no `LLM Request` in the transcript than it is NOT a request"
+    " and just normal cleanup should happen!"
 )
 
 # Written to disk on first ``justsayit init`` so the user can inspect and
@@ -59,28 +75,28 @@ _DEFAULT_PROFILE_TOML = f"""\
 #     https://huggingface.co/<repo>/resolve/main/<model>.gguf
 
 # Path to the GGUF model file.  ~ is expanded.
-model_path = "~/.cache/justsayit/models/llm/gemma-4-e4b-it-Q4_K_M.gguf"
+model_path = "~/.cache/justsayit/models/llm/gemma-4-E4B-it-Q4_K_M.gguf"
 
 # Optional: HuggingFace repo + filename for auto-download via
 #   justsayit download-models
 # Set both to enable; leave empty to manage the file yourself.
-hf_repo = ""
-hf_filename = ""
+hf_repo = "unsloth/gemma-4-E4B-it-GGUF"
+hf_filename = "gemma-4-E4B-it-Q4_K_M.gguf"
 
 # GPU layer offloading.  -1 = all layers on GPU (fastest).  0 = CPU only.
 n_gpu_layers = -1
 
-# Context window size in tokens.  2048 is plenty for short transcriptions.
-n_ctx = 2048
+# Context window size in tokens.
+n_ctx = 4096
 
 # Temperature.  Keep very low (≤ 0.1) for deterministic cleanup.
 temperature = 0.08
 
 # Hard cap on generated tokens.
-max_tokens = 512
+max_tokens = 4096
 
 # System prompt.  Edit freely — the model reads this before every request.
-system_prompt = "{_DEFAULT_SYSTEM_DE}"
+system_prompt = "{_DEFAULT_SYSTEM_PROMPT}"
 
 # User message template.  {{text}} is replaced with the raw transcription.
 user_template = "{{text}}"
@@ -89,14 +105,14 @@ user_template = "{{text}}"
 
 @dataclass
 class PostprocessProfile:
-    model_path: str = "~/.cache/justsayit/models/llm/gemma-4-e4b-it-Q4_K_M.gguf"
-    hf_repo: str = ""
-    hf_filename: str = ""
+    model_path: str = "~/.cache/justsayit/models/llm/gemma-4-E4B-it-Q4_K_M.gguf"
+    hf_repo: str = "unsloth/gemma-4-E4B-it-GGUF"
+    hf_filename: str = "gemma-4-E4B-it-Q4_K_M.gguf"
     n_gpu_layers: int = -1
-    n_ctx: int = 2048
+    n_ctx: int = 4096
     temperature: float = 0.08
-    max_tokens: int = 512
-    system_prompt: str = _DEFAULT_SYSTEM_DE
+    max_tokens: int = 4096
+    system_prompt: str = _DEFAULT_SYSTEM_PROMPT
     user_template: str = "{text}"
 
 
