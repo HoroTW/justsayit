@@ -26,9 +26,10 @@ Local Parakeet v3 voice dictation for Wayland.
 
 ```sh
 # 1. Dependencies + input group
-sudo pacman -S uv gtk4 gtk4-layer-shell python-gobject portaudio wl-clipboard dotool
-id -nG | grep -qw input && echo "already in input group" || sudo usermod -aG input $USER
-# if you just added yourself: log out and back in
+sudo pacman -S uv gtk4 gtk4-layer-shell python-gobject portaudio wl-clipboard
+sudo yay -S dotool   # AUR — swap yay for your favourite AUR helper
+id -nG | grep -qw input && echo "already in input group" \
+    || (sudo usermod -aG input $USER && echo "Please log out and back in for changes to take effect.")
 
 # 2. Clone, install, download models, set up LLM
 git clone https://github.com/HoroTW/justsayit && cd justsayit
@@ -41,8 +42,9 @@ interactive LLM model selection (Gemma 4 for best quality).
 ### Nix flake (Vulkan GPU + LLM)
 
 ```sh
-# 1. Input group (log out and back in if you just added yourself)
-id -nG | grep -qw input && echo "already in input group" || sudo usermod -aG input $USER
+# 1. Input group
+id -nG | grep -qw input && echo "already in input group" \
+    || (sudo usermod -aG input $USER && echo "Please log out and back in for changes to take effect.")
 
 # 2. Download models + set up LLM
 nix run github:HoroTW/justsayit#with-llm-vulkan -- download-models

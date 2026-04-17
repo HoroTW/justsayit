@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-04-17
+
+### Changed
+
+- **Install instructions:** `dotool` is now fetched separately via an AUR
+  helper (`sudo yay -S dotool`) instead of being listed in the `pacman -S`
+  command — `dotool` is in the AUR, not the official repos, so the previous
+  instruction quietly failed for users without an AUR-aware wrapper.
+- The `usermod` one-liner now prints "Please log out and back in for changes
+  to take effect" when it actually adds the user, instead of silently
+  succeeding.
+
 ## [0.6.2] - 2026-04-17
 
 ### Removed

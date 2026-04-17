@@ -5,7 +5,8 @@
 ### Dependencies
 
 ```sh
-sudo pacman -S uv gtk4 gtk4-layer-shell python-gobject portaudio wl-clipboard dotool
+sudo pacman -S uv gtk4 gtk4-layer-shell python-gobject portaudio wl-clipboard
+sudo yay -S dotool   # AUR — substitute your favourite AUR helper
 ```
 
 ### Input group (required for paste)
@@ -14,14 +15,8 @@ justsayit spawns its own persistent `dotool` process on demand — the
 `dotoold` daemon is not required. Being in the `input` group is sufficient:
 
 ```sh
-# Check if you're already in the group
-id -nG | grep -qw input && echo "already in input group" || echo "run: sudo usermod -aG input $USER"
-```
-
-If you need to add yourself, log out and back in after:
-
-```sh
-sudo usermod -aG input $USER
+id -nG | grep -qw input && echo "already in input group" \
+    || (sudo usermod -aG input $USER && echo "Please log out and back in for changes to take effect.")
 ```
 
 ### Install
