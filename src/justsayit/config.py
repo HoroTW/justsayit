@@ -6,6 +6,7 @@ and resolves the filter-file and cache-dir paths.
 
 from __future__ import annotations
 
+import re
 import tomllib
 from dataclasses import dataclass, field, fields, is_dataclass, MISSING
 from pathlib import Path
@@ -369,20 +370,109 @@ def ensure_config_file(path: Path | None = None) -> Path:
 
 
 def ensure_filters_file(path: Path | None = None) -> Path:
-    """Write an example ``filters.json`` if it doesn't exist. Returns the
-    resolved path."""
+    """Write the default ``filters.json`` if it doesn't exist. Returns the
+    resolved path.
+
+    The default chain handles dictated punctuation and line-break words
+    (DE+EN), so the LLM postprocess step doesn't have to — and so the
+    feature works without an LLM at all. Disable any rule by setting
+    ``"enabled": false`` on it.
+    """
     import json
 
     if path is None:
         path = config_dir() / "filters.json"
     if not path.exists():
-        default = [
-            {"name": "trim whitespace", "pattern": r"^\s+|\s+$", "replacement": ""},
-            {"name": "collapse whitespace", "pattern": r"\s{2,}", "replacement": " "},
-        ]
+        default = _default_filter_chain()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(default, indent=2) + "\n", encoding="utf-8")
     return path
+
+
+def _default_filter_chain() -> list[dict]:
+    """Built-in spoken-punctuation + cleanup chain written to filters.json
+    on first run. Kept as a function so tests can apply it directly without
+    touching disk."""
+    # Per spoken word we ship a pair: a "drop when redundant" rule (when
+    # STT already inserted the matching character right before the spoken
+    # word) followed by a "replace" rule for everything else. The pair is
+    # listed adjacent so a later rule's replacement can satisfy the next
+    # word's lookbehind.
+    def _pair(name: str, alternation: str, char: str) -> list[dict]:
+        # Escape the character if it needs escaping inside a regex.
+        esc = re.escape(char)
+        return [
+            {
+                "name": f"spoken: drop redundant {name}",
+                "pattern": rf"(?<=[.!?,:;])[ \t]*\b(?:{alternation})\b{esc}?",
+                "replacement": "",
+                "flags": ["IGNORECASE"],
+            },
+            {
+                "name": f"spoken: {name} -> {char}",
+                "pattern": rf"[ \t]*\b(?:{alternation})\b{esc}?",
+                "replacement": char,
+                "flags": ["IGNORECASE"],
+            },
+        ]
+
+    chain: list[dict] = []
+
+    # Line-break words first: their trailing punctuation (e.g. STT's "." or
+    # "," after the dictation marker) gets absorbed by the optional
+    # punctuation slot in the pattern, so we don't need a separate "drop
+    # redundant" pair for them.
+    chain.append({
+        "name": "spoken: new paragraph",
+        "pattern": r"[ \t]*\b(?:neuer\s+Absatz|new\s+paragraph)\b[ \t]*[.,;:!?]?[ \t]*",
+        "replacement": "\n\n",
+        "flags": ["IGNORECASE"],
+    })
+    chain.append({
+        "name": "spoken: new line",
+        "pattern": r"[ \t]*\b(?:neue\s+Zeile|new\s+line)\b[ \t]*[.,;:!?]?[ \t]*",
+        "replacement": "\n",
+        "flags": ["IGNORECASE"],
+    })
+
+    chain += _pair("Punkt/period", r"Punkt|period|full\s+stop", ".")
+    chain += _pair("Komma/comma", r"Komma|comma", ",")
+    chain += _pair("Fragezeichen/question mark", r"Fragezeichen|question\s+mark", "?")
+    chain += _pair("Ausrufezeichen/exclamation mark", r"Ausrufezeichen|exclamation\s+mark", "!")
+    chain += _pair("Doppelpunkt/colon", r"Doppelpunkt|colon", ":")
+    chain += _pair("Semikolon/semicolon", r"Semikolon|semicolon", ";")
+
+    # Cleanup. Order matters: drop punctuation-only lines BEFORE trimming
+    # leading punctuation on a line, because the latter would turn ", "
+    # into "" and leave the newline alone.
+    chain.append({
+        "name": "drop punctuation-only line",
+        "pattern": r"^[ \t]*[.,;:!?]+[ \t]*\n?",
+        "replacement": "",
+        "flags": ["MULTILINE"],
+    })
+    chain.append({
+        "name": "drop leading punctuation on line",
+        "pattern": r"(?<=\n)[ \t]*[.,;:!?]+[ \t]*",
+        "replacement": "",
+    })
+    chain.append({
+        "name": "trim trailing whitespace per line",
+        "pattern": r"[ \t]+$",
+        "replacement": "",
+        "flags": ["MULTILINE"],
+    })
+    chain.append({
+        "name": "collapse spaces (preserves newlines)",
+        "pattern": r"[ \t]{2,}",
+        "replacement": " ",
+    })
+    chain.append({
+        "name": "trim whitespace",
+        "pattern": r"^\s+|\s+$",
+        "replacement": "",
+    })
+    return chain
 
 
 # silence "unused" warning on MISSING import

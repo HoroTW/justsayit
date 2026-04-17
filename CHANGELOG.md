@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-04-17
+
+### Added
+
+- **Spoken-punctuation regex filters shipped as `filters.json`
+  defaults**, so the dictation flow handles `Punkt` / `Komma` /
+  `Fragezeichen` / `Ausrufezeichen` / `Doppelpunkt` / `Semikolon` /
+  `neue Zeile` / `neuer Absatz` (and English equivalents incl.
+  `full stop`) without needing the LLM postprocess step at all. The
+  LLM is now a backup, not the primary line of defence — `justsayit`
+  with `postprocess.enabled = false` produces clean text on its own.
+  Each spoken word ships as a pair: a "drop redundant" rule that
+  removes the word silently when the STT already wrote the matching
+  character, plus a "replace" rule for the standalone case. Cleanup
+  rules drop punctuation-only lines, leading punctuation after a
+  forced newline, and trailing whitespace; `collapse spaces` now uses
+  `[ \t]{2,}` so newlines from `neue Zeile` survive. The headline
+  failure case (`Hallo, neue Zeile. Ich komme nicht. Punkt. Neue
+  Zeile, eure Katja.`) is covered by an end-to-end test.
+
+### Changed
+
+- **Default `filters.json` chain replaced.** The old two-rule starter
+  (trim + collapse-whitespace) is preserved (with collapse fixed to
+  preserve newlines) but now sits at the end of a much richer chain.
+  Existing users keep their `filters.json` untouched — delete it to
+  regenerate with the new defaults, or copy individual rules in by
+  hand.
+
 ## [0.7.1] - 2026-04-17
 
 ### Changed

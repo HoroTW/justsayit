@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from justsayit.config import _default_filter_chain, ensure_filters_file
 from justsayit.filters import (
     Filter,
     FilterError,
@@ -15,6 +16,11 @@ from justsayit.filters import (
     build_filters,
     load_filters,
 )
+
+
+def _default_chain():
+    """Compile the shipped default chain for end-to-end assertions."""
+    return build_filters(_default_filter_chain())
 
 
 # --- parsing / validation ---------------------------------------------------
@@ -248,3 +254,119 @@ def test_load_filters_must_be_list(tmp_path: Path):
     p.write_text('{"name":"x"}', encoding="utf-8")
     with pytest.raises(FilterError):
         load_filters(p)
+
+
+# --- shipped default filter chain -------------------------------------------
+
+
+def test_default_chain_compiles():
+    # Every filter must compile without raising.
+    chain = _default_chain()
+    assert len(chain) > 0
+
+
+def test_default_chain_headline_example():
+    chain = _default_chain()
+    text = "Hallo, neue Zeile. Ich komme nicht. Punkt. Neue Zeile, eure Katja."
+    expected = "Hallo,\nIch komme nicht.\neure Katja."
+    assert apply_filters(text, chain) == expected
+
+
+def test_default_chain_replaces_punkt_mid_sentence():
+    chain = _default_chain()
+    assert apply_filters("Hello Punkt next", chain) == "Hello. next"
+
+
+def test_default_chain_drops_redundant_punkt():
+    chain = _default_chain()
+    # STT already wrote "." after "ich"; spoken "Punkt" must be dropped, not stacked.
+    assert apply_filters("ich. Punkt. weiter", chain) == "ich. weiter"
+
+
+def test_default_chain_replaces_komma():
+    chain = _default_chain()
+    assert apply_filters("Hello Komma world", chain) == "Hello, world"
+
+
+def test_default_chain_drops_redundant_komma():
+    chain = _default_chain()
+    assert apply_filters("Hallo, Komma weiter", chain) == "Hallo, weiter"
+
+
+def test_default_chain_question_mark_de_and_en():
+    chain = _default_chain()
+    assert apply_filters("ist das so Fragezeichen", chain) == "ist das so?"
+    assert apply_filters("really question mark", chain) == "really?"
+
+
+def test_default_chain_exclamation():
+    chain = _default_chain()
+    assert apply_filters("super Ausrufezeichen", chain) == "super!"
+    assert apply_filters("yes exclamation mark", chain) == "yes!"
+
+
+def test_default_chain_colon_and_semicolon():
+    chain = _default_chain()
+    assert apply_filters("Liste Doppelpunkt eins", chain) == "Liste: eins"
+    assert apply_filters("a Semikolon b", chain) == "a; b"
+
+
+def test_default_chain_new_paragraph():
+    chain = _default_chain()
+    text = "Erster Absatz. Neuer Absatz. Zweiter."
+    assert apply_filters(text, chain) == "Erster Absatz.\n\nZweiter."
+
+
+def test_default_chain_new_line_english():
+    chain = _default_chain()
+    assert apply_filters("Hello comma new line greetings", chain) == (
+        "Hello,\ngreetings"
+    )
+
+
+def test_default_chain_full_stop_en():
+    chain = _default_chain()
+    assert apply_filters("Hello full stop next", chain) == "Hello. next"
+
+
+def test_default_chain_preserves_punctuation_inside_words():
+    # `\b` boundary should keep "Diskussionspunkt" intact.
+    chain = _default_chain()
+    assert apply_filters("Der Diskussionspunkt war wichtig.", chain) == (
+        "Der Diskussionspunkt war wichtig."
+    )
+
+
+def test_default_chain_collapse_preserves_newlines():
+    chain = _default_chain()
+    # The collapse-spaces rule must not turn `\n` into a single space.
+    assert apply_filters("a    neue Zeile    b", chain) == "a\nb"
+
+
+def test_default_chain_drops_stray_punct_only_line():
+    chain = _default_chain()
+    # A literal "." sitting alone on a line should be removed.
+    assert apply_filters("Hallo\n.\nWelt", chain) == "Hallo\nWelt"
+
+
+def test_ensure_filters_file_writes_default(tmp_path: Path):
+    p = tmp_path / "filters.json"
+    ensure_filters_file(p)
+    assert p.exists()
+    raw = json.loads(p.read_text(encoding="utf-8"))
+    assert isinstance(raw, list)
+    names = [entry["name"] for entry in raw]
+    assert any("Punkt" in n for n in names)
+    assert any("new line" in n for n in names)
+    # And it must compile end-to-end.
+    chain = build_filters(raw)
+    assert apply_filters(
+        "Test Komma noch eins Punkt", chain
+    ) == "Test, noch eins."
+
+
+def test_ensure_filters_file_does_not_overwrite(tmp_path: Path):
+    p = tmp_path / "filters.json"
+    p.write_text("[]", encoding="utf-8")
+    ensure_filters_file(p)
+    assert p.read_text(encoding="utf-8") == "[]"
