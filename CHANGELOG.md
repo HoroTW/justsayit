@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.10] - 2026-04-17
+
+### Fixed
+
+- **`install.sh --update` no longer destroys the venv** (and with it
+  manually-installed `llama-cpp-python`). Previously every `--update`
+  unconditionally ran `uv venv --system-site-packages "$VENV_DIR"`,
+  which prompted "replace existing venv? [y/N]" — and if the user
+  said yes, the venv (including `llama-cpp-python` built locally with
+  `CMAKE_ARGS=-DGGML_VULKAN=1` for Vulkan GPU) was nuked. The
+  reinstall step then only restored `pyproject.toml` extras, so
+  `llama_cpp` was missing on next launch and the first dictation
+  crashed with `ModuleNotFoundError`. install.sh now reuses an
+  existing valid venv (the `uv pip install -e` upgrade still pulls
+  in dep refreshes) and only creates fresh when none exists.
+
+### Added
+
+- **`--update` defense-in-depth check**: at the end of an update,
+  if `llama_cpp` isn't importable from the venv but the user's
+  `state.toml` or `config.toml` has `[postprocess] enabled = true`,
+  print a clear warning telling them to run
+  `./install.sh --update --postprocess`. Catches users who already
+  hit the 0.8.9-and-earlier venv-nuke bug and need a one-line
+  recovery hint instead of debugging a `ModuleNotFoundError` from
+  the app log. Awk-based check (no Python TOML parser needed) —
+  triggers only on the `[postprocess]` section's `enabled` line, not
+  on `[vad] enabled = true`.
+
 ## [0.8.9] - 2026-04-17
 
 ### Fixed

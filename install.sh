@@ -179,8 +179,17 @@ else
 
     # --- venv ------------------------------------------------------------------
 
-    echo "==> creating venv at $VENV_DIR (using --system-site-packages for gi bindings)"
-    uv venv --system-site-packages "$VENV_DIR" >/dev/null
+    # Reuse an existing venv rather than recreating it. Recreation prompts
+    # ("replace? [y/N]") and, if the user agrees, NUKES manually-installed
+    # extras like llama-cpp-python (built locally with CMAKE_ARGS=-DGGML_VULKAN=1
+    # — not in pyproject extras since it needs custom CMake flags). Reusing
+    # preserves them across `--update` runs.
+    if [ -d "$VENV_DIR" ] && [ -x "$VENV_DIR/bin/python" ]; then
+        echo "==> reusing existing venv at $VENV_DIR (preserves llama-cpp-python etc.)"
+    else
+        echo "==> creating venv at $VENV_DIR (using --system-site-packages for gi bindings)"
+        uv venv --system-site-packages "$VENV_DIR" >/dev/null
+    fi
 
     echo "==> installing project into venv"
     EXTRAS="dev"
@@ -441,6 +450,40 @@ if [ "$UPDATE" -eq 1 ]; then
     # run via ensure_context_file()).
     maybe_update_user_file "$_CFG_HOME/postprocess/gemma4-cleanup.toml" "profile-cleanup"
     maybe_update_user_file "$_CFG_HOME/postprocess/gemma4-fun.toml" "profile-fun"
+
+    # Defense-in-depth: catch the case where the venv was rebuilt by an
+    # older install.sh (or by the user manually) and llama-cpp-python
+    # got dropped, but the user's config/state still has postprocess
+    # enabled. The app would otherwise crash with ModuleNotFoundError
+    # on the first dictation.
+    if [ "$NIX" -eq 0 ] && [ -x "$VENV_DIR/bin/python" ]; then
+        if ! "$VENV_DIR/bin/python" -c "import llama_cpp" 2>/dev/null; then
+            # Cheap grep instead of TOML parsing — `enabled = true` (any
+            # whitespace) under [postprocess] in either file is enough to
+            # warn. Both files are tiny so reading them is fine.
+            _PP_ON=0
+            for _f in "$_CFG_HOME/state.toml" "$_CFG_HOME/config.toml"; do
+                [ -f "$_f" ] || continue
+                if awk '
+                    /^\[postprocess\]/ { in_pp=1; next }
+                    /^\[/              { in_pp=0 }
+                    in_pp && /^[[:space:]]*enabled[[:space:]]*=[[:space:]]*true/ { found=1 }
+                    END { exit (found ? 0 : 1) }
+                ' "$_f"; then
+                    _PP_ON=1
+                    break
+                fi
+            done
+            if [ "$_PP_ON" -eq 1 ]; then
+                echo
+                echo "WARNING: your config has [postprocess] enabled = true but"
+                echo "         llama-cpp-python is not installed in the venv."
+                echo "         The app will crash on the first dictation. To fix:"
+                echo "           ./install.sh --update --postprocess"
+                echo "         (re-installs llama-cpp-python with Vulkan GPU support)"
+            fi
+        fi
+    fi
 fi
 
 # --- LLM postprocessing (optional) ----------------------------------------
