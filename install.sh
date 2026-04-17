@@ -260,22 +260,37 @@ fi
 
 # --- update mode: prompt to refresh user config files ---------------------
 
-# Sidecar baseline path matching defaults_baseline_path() in config.py:
-# foo.json -> foo.defaults-baseline.json, foo.toml -> foo.defaults-baseline.toml.
+# Baseline path matching defaults_baseline_path() in config.py:
+# <dir>/foo.ext -> <dir>/.baseline/foo.ext. Each directory holds its
+# own .baseline/ subdir so the snapshots don't clutter the visible
+# config tree.
+#
+# Side effect: if a pre-0.8.7 sidecar exists at the legacy location
+# (<dir>/foo.defaults-baseline.ext), it's moved into the new layout
+# transparently. Idempotent.
 baseline_path_for() {
     _f=$1
     _dir=$(dirname "$_f")
     _base=$(basename "$_f")
+    _new="$_dir/.baseline/$_base"
     case "$_base" in
         *.*)
             _stem=${_base%.*}
             _ext=${_base##*.}
-            echo "$_dir/$_stem.defaults-baseline.$_ext"
+            _legacy="$_dir/$_stem.defaults-baseline.$_ext"
             ;;
         *)
-            echo "$_dir/$_base.defaults-baseline"
+            _legacy="$_dir/$_base.defaults-baseline"
             ;;
     esac
+    if [ -f "$_legacy" ]; then
+        if [ -f "$_new" ]; then
+            rm -f "$_legacy"
+        else
+            mkdir -p "$_dir/.baseline" 2>/dev/null && mv "$_legacy" "$_new" 2>/dev/null
+        fi
+    fi
+    echo "$_new"
 }
 
 # Reconcile the user's $1 against the freshly-rendered defaults from
@@ -294,6 +309,10 @@ maybe_update_user_file() {
     _KIND=$2
     [ -f "$_USER_FILE" ] || return 0
     _BASELINE=$(baseline_path_for "$_USER_FILE")
+    # Ensure the .baseline/ subdir exists before any cp into $_BASELINE.
+    # Best-effort — if the mkdir fails the cp will too and the function
+    # will still complete (baseline tracking is non-essential).
+    mkdir -p "$(dirname "$_BASELINE")" 2>/dev/null || true
 
     _NEW=$(mktemp -t justsayit-defaults.XXXXXX)
     if ! "$BIN" show-defaults "$_KIND" >"$_NEW" 2>/dev/null; then

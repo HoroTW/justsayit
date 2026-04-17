@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.7] - 2026-04-17
+
+### Changed
+
+- **Defaults-baseline snapshots moved to a hidden `.baseline/` subdir
+  per directory.** Previously each baseline lived next to its user
+  file as `<stem>.defaults-baseline.<ext>`, cluttering the visible
+  config tree (a user with config + filters + two profiles ended up
+  with four sidecars next to four real files). Now:
+  - `~/.config/justsayit/filters.json` → `~/.config/justsayit/.baseline/filters.json`
+  - `~/.config/justsayit/postprocess/gemma4-cleanup.toml` → `~/.config/justsayit/postprocess/.baseline/gemma4-cleanup.toml`
+  - (config.toml is no longer reconciled, so its baseline is just
+    catch-up state from earlier `init` runs.)
+
+  Migration is automatic and lazy: both the Python helpers
+  (`_write_baseline`, `_heal_baseline`) and the shell
+  `baseline_path_for()` move legacy sidecars into the new layout on
+  first encounter (next app start OR next `install.sh --update`,
+  whichever runs first). Users who never re-run install.sh get
+  migrated on app launch; users who never launch the app get
+  migrated on `--update`. Idempotent — collisions remove the legacy
+  copy. Best-effort: if `mkdir`/`mv` fails, install.sh degrades to
+  the existing "no baseline → plain diff prompt" path.
+
 ## [0.8.6] - 2026-04-17
 
 ### Changed

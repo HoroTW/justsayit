@@ -366,23 +366,60 @@ def defaults_baseline_path(user_path: Path) -> Path:
       2. user file != baseline, baseline == new defaults (user customised, defaults didn't move → leave alone)
       3. both diverged (true 3-way: show what changed in defaults vs what user customised)
 
-    Convention: ``filters.json`` → ``filters.defaults-baseline.json``,
-    ``config.toml`` → ``config.defaults-baseline.toml``. install.sh
-    derives the path from the user-file name with the same rule.
+    Layout: each directory gets a hidden ``.baseline/`` subdir holding
+    snapshots that share the user-file's name verbatim. So
+    ``~/.config/justsayit/filters.json`` →
+    ``~/.config/justsayit/.baseline/filters.json`` and
+    ``~/.config/justsayit/postprocess/gemma4-cleanup.toml`` →
+    ``~/.config/justsayit/postprocess/.baseline/gemma4-cleanup.toml``.
+    install.sh derives the same path with shell parameter expansion.
 
     Best-effort state — if the baseline goes missing, install.sh degrades
     cleanly to a plain diff prompt, then writes a fresh baseline.
     """
+    return user_path.parent / ".baseline" / user_path.name
+
+
+def _legacy_baseline_path(user_path: Path) -> Path:
+    """Pre-0.8.7 sidecar layout: ``foo.json`` → ``foo.defaults-baseline.json``
+    in the same directory. Kept for one-shot migration."""
     return user_path.with_name(
         f"{user_path.stem}.defaults-baseline{user_path.suffix}"
     )
 
 
+def _migrate_legacy_baseline(user_path: Path) -> None:
+    """Move a pre-0.8.7 sidecar (``foo.defaults-baseline.json``) into the
+    new ``.baseline/`` subdir if present. Best-effort, idempotent — a
+    no-op if the legacy file is missing or the new-layout file already
+    exists. Called lazily from baseline read/write paths so users who
+    never re-run ``install.sh --update`` still get migrated on next app
+    start."""
+    legacy = _legacy_baseline_path(user_path)
+    if not legacy.exists():
+        return
+    new = defaults_baseline_path(user_path)
+    if new.exists():
+        try:
+            legacy.unlink()
+        except OSError:
+            pass
+        return
+    try:
+        new.parent.mkdir(parents=True, exist_ok=True)
+        legacy.rename(new)
+    except OSError:
+        pass
+
+
 def _write_baseline(user_path: Path, content: str) -> None:
     """Write the defaults baseline next to *user_path*. Best-effort —
     OSError is swallowed since baseline-tracking is non-essential."""
+    _migrate_legacy_baseline(user_path)
     try:
-        defaults_baseline_path(user_path).write_text(content, encoding="utf-8")
+        target = defaults_baseline_path(user_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
     except OSError:
         pass
 
@@ -392,6 +429,7 @@ def _heal_baseline(user_path: Path, current_defaults: str) -> None:
     defaults verbatim and no baseline exists yet, snapshot one. Lets
     pre-baseline installs auto-upgrade silently for users who never
     customised."""
+    _migrate_legacy_baseline(user_path)
     baseline = defaults_baseline_path(user_path)
     if baseline.exists():
         return
