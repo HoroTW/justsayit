@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.5] - 2026-04-17
+
+### Fixed
+
+- **`install.sh --update` was silently looking in the wrong config
+  directory** and skipping every reconcile prompt. Python's
+  `config_dir()` uses platformdirs with `APP_NAME = "justsayit"`
+  (→ `~/.config/justsayit/`), but the shell script was building paths
+  from the `.desktop` `APP_ID = "dev.horotw.justsayit"`
+  (→ `~/.config/dev.horotw.justsayit/`, which doesn't exist). Result:
+  `maybe_update_user_file` hit `[ -f "$_USER_FILE" ] || return 0` for
+  every file and returned silently — clients running `--update` never
+  saw the diff prompt for `filters.json`, `config.toml`, or the
+  profile TOMLs, no matter how stale they were. The same bug also
+  made `init` re-run on every `--update` (the wrong-path existence
+  check was always true), but `init` is internally idempotent so it
+  just printed "config already exists" and moved on. Added a
+  `CONFIG_DIR_NAME="justsayit"` variable and use it for both the
+  init-gate check (line ~196) and `_CFG_HOME` (line ~395). The
+  reverse-DNS `APP_ID` is still used (correctly) for the `.desktop`
+  filename and `StartupWMClass`.
+
 ## [0.8.4] - 2026-04-17
 
 ### Changed

@@ -17,6 +17,11 @@ VENV_DIR=${VENV_DIR:-$PROJECT_DIR/.venv}
 # with no icon in KDE's shortcut settings.
 APP_ID="dev.horotw.justsayit"
 APP_NAME="Just Say It"
+# Config directory name — must match APP_NAME in src/justsayit/config.py
+# (Python's platformdirs uses that, NOT the .desktop APP_ID). Keep this
+# in sync or --update will silently look in the wrong place and skip
+# every reconcile prompt.
+CONFIG_DIR_NAME="justsayit"
 # Legacy name from earlier versions; we clean it up on (re)install so
 # people upgrading don't end up with two launcher entries.
 LEGACY_APP_ID="justsayit"
@@ -190,7 +195,7 @@ fi
 
 # --- default config --------------------------------------------------------
 
-if [ ! -f "${XDG_CONFIG_HOME:-$HOME/.config}/$APP_ID/config.toml" ]; then
+if [ ! -f "${XDG_CONFIG_HOME:-$HOME/.config}/$CONFIG_DIR_NAME/config.toml" ]; then
     echo "==> writing default config and example filters"
     INIT_ARGS=""
     [ -n "$MODEL" ] && INIT_ARGS="--backend $MODEL"
@@ -393,7 +398,7 @@ maybe_update_user_file() {
 }
 
 if [ "$UPDATE" -eq 1 ]; then
-    _CFG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}/$APP_ID
+    _CFG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}/$CONFIG_DIR_NAME
     maybe_update_user_file "$_CFG_HOME/config.toml" "config"
     maybe_update_user_file "$_CFG_HOME/filters.json" "filters"
     # Shipped postprocess profiles. context.toml lives elsewhere (it's
