@@ -140,7 +140,14 @@ justsayit init
   `--no-overlay` there.
 - The XDG GlobalShortcuts portal requires KDE Plasma 6 / GNOME 45+. On
   compositors without it (sway, niri, Hyprland) use a compositor keybind
-  instead — not currently shipped.
+  to toggle recording via DBus instead:
+  ```sh
+  busctl --user call dev.horotw.justsayit /dev/horotw/justsayit org.gtk.Actions Activate "sava{sv}" toggle 0 0
+  ```
+  For example, in a niri config:
+  ```
+  Super+T { spawn "busctl" "--user" "call" "dev.horotw.justsayit" "/dev/horotw/justsayit" "org.gtk.Actions" "Activate" "sava{sv}" "toggle" "0" "0"; }
+  ```
 - If the Parakeet model URL has moved, override `model.parakeet_archive_url`
   and `model.parakeet_archive_dir` in `config.toml`.
 
