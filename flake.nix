@@ -40,9 +40,21 @@
         };
       });
 
-      mkJustsayit = { withLlm ? false, llamaCppPython ? llama-cpp-python-new }: pkgs.python3Packages.buildPythonApplication {
+      # Vulkan ICDs (driver descriptors) from nixpkgs mesa.  Each JSON points at
+      # an absolute /nix/store path for its .so, so the sandboxed nixpkgs
+      # vulkan-loader can actually load it — unlike system ICDs at
+      # /usr/share/vulkan/icd.d/, whose relative library_path fields only
+      # resolve against the host distro's /usr/lib.  Covers AMD (radv), Intel
+      # (anv), Nouveau, lavapipe (CPU fallback), virtio, etc.  NVIDIA
+      # proprietary driver is not covered — those users need nixGL.
+      vulkanICDs = pkgs.runCommand "vulkan-icds" {} ''
+        mkdir -p $out
+        cp ${pkgs.mesa}/share/vulkan/icd.d/*.json $out/
+      '';
+
+      mkJustsayit = { withLlm ? false, withVulkan ? false, llamaCppPython ? llama-cpp-python-new }: pkgs.python3Packages.buildPythonApplication {
         pname = "justsayit";
-        version = "0.6.0";
+        version = "0.6.1";
         pyproject = true;
 
         src = pkgs.lib.cleanSource ./.;
@@ -101,6 +113,14 @@
             # via Nix store RPATH rather than requiring a system search.
             "--set-default" "ALSA_CONFIG_DIR" "/usr/share/alsa"
             "--set-default" "ALSA_PLUGIN_DIR" "${pkgs.pipewire}/lib/alsa-lib"
+            ${pkgs.lib.optionalString withVulkan ''
+            # Add nixpkgs mesa ICDs to the vulkan-loader's search so GPU
+            # inference works on non-NixOS hosts (whose system ICD JSONs have
+            # relative library_paths the sandboxed loader can't resolve).
+            # VK_ADD_DRIVER_FILES *appends* rather than replaces, so NixOS
+            # users keep their NVIDIA / system ICDs from /run/opengl-driver.
+            "--suffix" "VK_ADD_DRIVER_FILES" ":" "$(echo ${vulkanICDs}/*.json | tr ' ' ':')"
+            ''}
           )
         '';
 
@@ -119,7 +139,9 @@
         default = justsayit;
         justsayit = justsayit;
         with-llm = mkJustsayit { withLlm = true; };
-        with-llm-vulkan = mkJustsayit { withLlm = true; llamaCppPython = llama-cpp-python-vulkan; };
+        with-llm-vulkan = mkJustsayit { withLlm = true; withVulkan = true; llamaCppPython = llama-cpp-python-vulkan; };
+        # Exposed for debugging (nm, readelf on libllama.so / libggml-vulkan.so).
+        llama-cpp-python-vulkan = llama-cpp-python-vulkan;
       };
 
       # Development shell: system deps for PyGObject + the uv workflow.

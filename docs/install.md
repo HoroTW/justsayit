@@ -64,7 +64,16 @@ Same requirement as Arch — see above.
 | `nix build .#with-llm-vulkan` | Vulkan | ✓ |
 
 The Vulkan build compiles `llama-cpp-python` from source — takes a few minutes
-the first time, then cached.
+the first time, then cached. It also fetches nixpkgs `mesa` (~800 MB, binary
+cache) so the bundled Vulkan ICDs (RADV, ANV, Nouveau, lavapipe, …) work on
+non-NixOS hosts without [nixGL](https://github.com/nix-community/nixGL).
+
+> **NVIDIA proprietary driver:** not bundled (mesa only ships open-source
+> drivers). On NixOS, your system's NVIDIA ICD at `/run/opengl-driver/…` is
+> picked up automatically (the flake uses `VK_ADD_DRIVER_FILES`, which
+> appends rather than overrides). On non-NixOS with the NVIDIA proprietary
+> driver, wrap the command: `nix run --impure github:nix-community/nixGL --
+> nix run github:HoroTW/justsayit#with-llm-vulkan`.
 
 ### Desktop launcher integration
 

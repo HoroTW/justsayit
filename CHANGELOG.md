@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-04-17
+
+### Fixed
+
+- **`with-llm-vulkan` now works on non-NixOS hosts.** Previously the nixpkgs
+  `vulkan-loader` found the system ICD JSON (e.g. `/usr/share/vulkan/icd.d/radeon_icd.json`)
+  but couldn't resolve its relative `library_path` against the host's `/usr/lib`,
+  so GPU init failed silently and llama.cpp fell back to CPU. The flake now
+  bundles nixpkgs `mesa`'s Vulkan ICDs (absolute store paths) and the wrapper
+  appends them to `VK_ADD_DRIVER_FILES`. Covers AMD (radv), Intel (anv),
+  Nouveau, lavapipe, virtio. NixOS + NVIDIA users keep their system ICD from
+  `/run/opengl-driver/…` (appends, doesn't replace). Non-NixOS NVIDIA
+  proprietary users still need nixGL as a wrapper.
+- Added `llama-cpp-python-vulkan` as an exposed flake package for debugging
+  (`nm` / `readelf` on the compiled `libggml-vulkan.so`).
+
 ## [0.6.0] - 2026-04-16
 
 ### Added

@@ -52,6 +52,13 @@ nix run github:HoroTW/justsayit#with-llm-vulkan -- setup-llm
 nix run github:HoroTW/justsayit#with-llm-vulkan
 ```
 
+Non-NixOS hosts with the **NVIDIA proprietary driver** need a nixGL wrapper
+(bundled mesa covers AMD / Intel / Nouveau only):
+
+```sh
+nix run --impure github:nix-community/nixGL -- nix run github:HoroTW/justsayit#with-llm-vulkan
+```
+
 For a persistent install with a desktop launcher, see [docs/install.md](docs/install.md).
 
 ## Usage
