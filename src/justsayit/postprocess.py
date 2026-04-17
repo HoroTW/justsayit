@@ -125,6 +125,18 @@ temperature = 0.08
 max_tokens = 4096
 
 # System prompt.  Edit freely — the model reads this before every request.
+#
+# The default prompt enables Gemma's "thinking" channel (the leading
+# `<|think|>` tokens make the model emit a `<|channel>...<channel|>`
+# reasoning block before its real reply).  This usually improves quality
+# on ambiguous "Hey Computer" requests but adds latency and produces
+# extra text that has to be stripped before pasting (see
+# `paste_strip_regex` below).
+#
+# To disable thinking entirely: remove BOTH `<|think|>` markers from the
+# beginning of the prompt.  The model will then reply directly with the
+# cleaned text and you can also clear `paste_strip_regex` since there is
+# no channel block to strip.
 system_prompt = "{_toml_basic_escape(_DEFAULT_SYSTEM_PROMPT)}"
 
 # User message template.  {{text}} is replaced with the raw transcription.
@@ -135,10 +147,15 @@ user_template = "{{text}}"
 # whose output contains a reasoning preamble that should not land in the
 # focused window. Empty = no stripping.
 #
+# The default below matches Gemma's harmony-style channel block — note the
+# tags are ASYMMETRIC: the opening is `<|channel>` (one pipe, before
+# `channel`) and the closing is `<channel|>` (one pipe, after).  Don't add
+# a second pipe to the opening — the model never emits `<|channel|>`.
+#
 # Examples:
-#   paste_strip_regex = '<\\|channel\\|>.*?<\\|message\\|>'   # one channel block
-#   paste_strip_regex = '(?s).*<\\|message\\|>'              # everything up to last <|message|>
-paste_strip_regex = ""
+#   paste_strip_regex = '<\\|channel>.*?<channel\\|>'   # Gemma thinking channel
+#   paste_strip_regex = '(?s).*<\\|message\\|>'         # everything up to last <|message|>
+paste_strip_regex = '<\\|channel>.*?<channel\\|>'
 
 # Optional free-form context about the user — appended to the system prompt
 # under a "User context" heading, so the model can correctly spell your name,
@@ -167,16 +184,15 @@ class PostprocessProfile:
     system_prompt: str = _DEFAULT_SYSTEM_PROMPT
     user_template: str = "{text}"
     # Regex applied (re.DOTALL) to the LLM output before it is pasted
-    # but NOT before it is shown in the overlay. Useful to strip
-    # reasoning/channel tags from "thinking" models (e.g. Gemma harmony
-    # format) so the user sees the full reply but only the final
-    # message lands in the focused window.
+    # but NOT before it is shown in the overlay. Useful to strip the
+    # reasoning preamble produced by "thinking" models (e.g. Gemma's
+    # asymmetric `<|channel>...<channel|>` block) so the user sees the
+    # full reply in the overlay but only the final message lands in the
+    # focused window.
     #
-    # Example patterns:
-    #   r"<\|channel\|>.*?<\|message\|>"  – strip a single channel block
-    #   r"(?s).*<\|message\|>"             – strip everything up to and
-    #                                        including the last <|message|>
-    paste_strip_regex: str = ""
+    # Default matches Gemma 4 with the `<|think|>` markers in the prompt;
+    # set to "" if you remove `<|think|>` from system_prompt.
+    paste_strip_regex: str = r"<\|channel>.*?<channel\|>"
     # Free-form text appended to the system prompt under a "User context"
     # heading so the model knows who's dictating (name, language, country,
     # technical interests, etc.). Empty by default; users can fill in via

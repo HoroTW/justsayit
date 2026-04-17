@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.10] - 2026-04-17
+
+### Changed
+
+- **Default `paste_strip_regex` now matches the actual Gemma channel
+  tags** the model emits with the default `<|think|>` prompt:
+  `<\|channel>.*?<channel\|>`. The tags are asymmetric — the opening is
+  `<|channel>` (one pipe, before `channel`) and the closing is
+  `<channel|>` (one pipe, after). Earlier docs and examples used
+  `<|channel|>` for the opening, which the model never emits, so the
+  strip silently no-op'd and the entire reasoning preamble landed in
+  the focused window.
+- **Default profile comments** explain how to disable thinking entirely:
+  remove BOTH `<|think|>` markers from `system_prompt` and clear
+  `paste_strip_regex`. Useful for users who'd rather trade reply quality
+  on ambiguous "Hey Computer" prompts for lower latency.
+
 ## [0.6.9] - 2026-04-17
 
 ### Fixed
