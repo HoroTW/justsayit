@@ -11,14 +11,32 @@ Local Parakeet v3 voice dictation for Wayland.
 >
 > And yes, it's mostly vibe-coded. Take that however you want 😉
 
-- Offline ASR via [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) +
+- **Offline ASR** via [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) +
   [Parakeet TDT 0.6B v3 INT8](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)
-- Transparent layer-shell overlay (GTK4 + `gtk4-layer-shell`)
-- Global toggle shortcut via the XDG Desktop Portal
-- Auto-start on speech with a 3-second "did we actually hear words?" validation
-- `wl-copy` + `dotool` to paste the result into the focused window
-- Optional LLM cleanup pass (grammar, filler words, formatting, MetaRequests)
-- JSON regex post-processing (with capture groups)
+  — also supports local [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
+  or any **OpenAI-compatible `/audio/transcriptions` endpoint** (Groq,
+  vLLM, whisper.cpp server, …). See [docs/configuration.md](docs/configuration.md#asr-backends).
+- **Transparent layer-shell overlay** (GTK4 + `gtk4-layer-shell`) with
+  mic visualizer, status colours, and a result preview after paste
+- **Global toggle shortcut** via the XDG Desktop Portal
+- **Auto-start on speech** with a 3-second "did we actually hear words?" validation
+- **`wl-copy` + `dotool` paste** into the focused window — with a privacy
+  mode that bypasses the clipboard entirely (`paste.type_directly`)
+- **System tray** to toggle dictation / auto-VAD, switch postprocess
+  profile, and open config files
+- **Optional LLM cleanup pass** with shipped profiles (cleanup, emoji,
+  OpenAI-compatible endpoint) and **fully customisable system prompts**
+  for emojification, translation, summarisation, or your own style.
+  Runs locally via `llama-cpp-python` or remotely against any
+  **OpenAI-compatible `/chat/completions` endpoint** (OpenAI,
+  OpenRouter, Groq, vLLM, Ollama, LM Studio, …). API keys can live in
+  a shared `~/.config/justsayit/.env`. See [docs/postprocessing.md](docs/postprocessing.md).
+- **JSON regex post-processing** with capture groups (default chain
+  handles dictated punctuation in DE+EN — works without an LLM)
+- **Personal context sidecar** (`~/.config/justsayit/context.toml`) so
+  the LLM knows your name, languages, and project-specific spellings
+- **Notification sounds** for start / stop / mute (configurable, fully
+  optional)
 
 ## Quick Start
 
@@ -75,7 +93,10 @@ justsayit setup-llm       # interactive LLM model setup
 ```
 
 See [docs/configuration.md](docs/configuration.md) for activation modes,
-overlay states, regex filters, and LLM postprocessing.
+ASR backends (Parakeet / Whisper / OpenAI), overlay, sounds, tray, and
+regex filters. LLM cleanup — shipped profiles, custom prompts (emoji /
+translate / summarise / your own style), OpenAI-compatible endpoints,
+personal-context sidecar — is in [docs/postprocessing.md](docs/postprocessing.md).
 
 ## Known gotchas
 
@@ -91,18 +112,23 @@ overlay states, regex filters, and LLM postprocessing.
 
 ```
 src/justsayit/
-    audio.py         mic capture + Silero VAD state machine
-    cli.py           argparse + GLib glue
-    config.py        TOML loader with dataclass defaults
-    filters.py       regex post-processor
-    model.py         download Parakeet + VAD to ~/.cache/justsayit
-    overlay.py       gtk4-layer-shell bar with mic meter
-    paste.py         wl-copy + dotool helpers
-    shortcuts.py     XDG Desktop Portal GlobalShortcuts client
-    transcribe.py    sherpa-onnx Parakeet TDT recognizer
-tests/test_filters.py
-install.sh
+    audio.py             mic capture + Silero VAD state machine
+    cli.py               argparse + GLib glue
+    config.py            TOML loader with dataclass defaults + .env
+    filters.py           regex post-processor
+    model.py             download Parakeet + VAD to ~/.cache/justsayit
+    overlay.py           gtk4-layer-shell bar with mic meter
+    paste.py             wl-copy + dotool helpers
+    postprocess.py       LLM cleanup (local llama-cpp + remote OpenAI)
+    shortcuts.py         XDG Desktop Portal GlobalShortcuts client
+    sound.py             notification chimes
+    transcribe.py        backend dispatcher
+    transcribe_parakeet.py
+    transcribe_whisper.py    faster-whisper backend
+    transcribe_openai.py     OpenAI-compatible /audio/transcriptions
+    tray.py              StatusNotifier tray icon + menu
 docs/
-    install.md       detailed install (Arch + Nix)
-    configuration.md activation, overlay, filters, LLM postprocessing
+    install.md           detailed install (Arch + Nix)
+    configuration.md     backends, activation, overlay, sounds, tray, filters
+    postprocessing.md    LLM profiles, custom prompts, OpenAI endpoint, context
 ```

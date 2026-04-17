@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-04-17
+
+### Documentation
+
+- README feature list expanded to surface previously undocumented
+  capabilities: alternative ASR backends (faster-whisper, OpenAI-
+  compatible Whisper endpoint), OpenAI-compatible LLM endpoint,
+  customisable system prompts (emojify / translate / summarise / your
+  own style), system tray with profile switcher, personal-context
+  sidecar, notification sounds, privacy paste options.
+- `docs/configuration.md` rewritten as an index of all config files
+  with new sections for ASR backends, `.env` / API keys, system tray,
+  sounds, paste privacy options, and logging. The LLM section is now a
+  pointer.
+- New `docs/postprocessing.md` covering the three shipped profiles
+  (gemma4-cleanup, gemma4-fun, openai-cleanup), OpenAI-compatible
+  endpoint setup, personal-context sidecar, and worked examples for
+  custom profiles (emojify, translate, summarise, formal-email tone).
+
 ## [0.11.0] - 2026-04-17
 
 ### Added
