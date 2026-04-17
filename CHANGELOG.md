@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.7] - 2026-04-17
+
+### Added
+
+- **`context`** field on the postprocess profile — free-form text
+  (TOML multi-line string) appended to the system prompt under a
+  `# User context` heading so the LLM knows who's dictating (name,
+  country, languages, area of work, …). Empty by default.
+
+  ```toml
+  context = '''
+  Name: Jane Doe
+  Country: Germany
+  Languages: German (native), English (fluent)
+  '''
+  ```
+
 ## [0.6.6] - 2026-04-17
 
 ### Added

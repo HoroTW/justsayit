@@ -110,6 +110,19 @@ user_template = "{{text}}"
 #   paste_strip_regex = '<\\|channel\\|>.*?<\\|message\\|>'   # one channel block
 #   paste_strip_regex = '(?s).*<\\|message\\|>'              # everything up to last <|message|>
 paste_strip_regex = ""
+
+# Optional free-form context about the user — appended to the system prompt
+# under a "User context" heading, so the model can correctly spell your name,
+# pick the right register, etc. Use a TOML multi-line string ('''…''').
+# Leave empty to send no context. Example:
+#
+#   context = '''
+#   Name: Jane Doe
+#   Country: Germany
+#   Languages: German (native), English (fluent)
+#   Notes: works in software, often dictates code-related text
+#   '''
+context = ""
 """
 
 
@@ -135,6 +148,11 @@ class PostprocessProfile:
     #   r"(?s).*<\|message\|>"             – strip everything up to and
     #                                        including the last <|message|>
     paste_strip_regex: str = ""
+    # Free-form text appended to the system prompt under a "User context"
+    # heading so the model knows who's dictating (name, language, country,
+    # technical interests, etc.). Empty by default; users can fill in via
+    # a multi-line TOML string. Only sent if non-empty.
+    context: str = ""
 
 
 def profiles_dir() -> Path:
@@ -264,6 +282,13 @@ class LLMPostprocessor:
             if self._llm is None:
                 self._llm = self._build()
 
+    def _system_prompt(self) -> str:
+        prompt = self.profile.system_prompt.strip()
+        ctx = self.profile.context.strip()
+        if ctx:
+            prompt = f"{prompt}\n\n# User context\n{ctx}"
+        return prompt
+
     def process(self, text: str) -> str:
         """Run the LLM on *text* and return the cleaned result.
 
@@ -276,7 +301,7 @@ class LLMPostprocessor:
             user_msg = self.profile.user_template.format(text=text)
             resp = self._llm.create_chat_completion(
                 messages=[
-                    {"role": "system", "content": self.profile.system_prompt.strip()},
+                    {"role": "system", "content": self._system_prompt()},
                     {"role": "user", "content": user_msg},
                 ],
                 temperature=self.profile.temperature,

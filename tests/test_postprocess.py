@@ -216,6 +216,37 @@ def test_strip_for_paste_invalid_regex_disabled(caplog):
     assert pp.strip_for_paste("anything") == "anything"
 
 
+def test_context_appended_to_system_prompt():
+    profile = PostprocessProfile(
+        model_path="/fake/model.gguf",
+        system_prompt="Base prompt.",
+        context="Name: Alice\nCountry: NL",
+    )
+    pp = LLMPostprocessor(profile)
+    pp._llm = _make_mock_llama("ok")
+    pp.process("input")
+    messages = pp._llm.create_chat_completion.call_args[1]["messages"]
+    system_msg = next(m for m in messages if m["role"] == "system")
+    assert system_msg["content"].startswith("Base prompt.")
+    assert "# User context" in system_msg["content"]
+    assert "Name: Alice" in system_msg["content"]
+    assert "Country: NL" in system_msg["content"]
+
+
+def test_context_empty_no_heading():
+    profile = PostprocessProfile(
+        model_path="/fake/model.gguf",
+        system_prompt="Base prompt.",
+    )
+    pp = LLMPostprocessor(profile)
+    pp._llm = _make_mock_llama("ok")
+    pp.process("input")
+    messages = pp._llm.create_chat_completion.call_args[1]["messages"]
+    system_msg = next(m for m in messages if m["role"] == "system")
+    assert system_msg["content"] == "Base prompt."
+    assert "User context" not in system_msg["content"]
+
+
 def test_build_raises_without_llama_cpp():
     profile = PostprocessProfile(model_path="/nonexistent/model.gguf")
     pp = LLMPostprocessor(profile)
