@@ -420,12 +420,14 @@ maybe_update_user_file() {
 
 if [ "$UPDATE" -eq 1 ]; then
     _CFG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}/$CONFIG_DIR_NAME
-    # config.toml is intentionally NOT reconciled — it's a settings file
-    # (per-user choices like `postprocess.enabled` and `postprocess.profile`),
-    # not a shipped template. New config keys we add ship with sensible
-    # dataclass defaults in src/justsayit/config.py, so old user configs
-    # silently pick them up; no overwrite needed. Power users can diff
-    # against the shipped defaults with `justsayit show-defaults config`.
+    # config.toml and state.toml are intentionally NOT reconciled.
+    # config.toml is the user's authored settings; the app never
+    # rewrites it (since 0.8.8 the runtime-mutable subset —
+    # vad.enabled, postprocess.enabled, postprocess.profile — lives in
+    # state.toml instead so toggles don't nuke comments). New config
+    # keys we add inherit dataclass defaults in src/justsayit/config.py
+    # for old user configs; no overwrite needed. Power users can diff
+    # with `justsayit show-defaults config`.
     if [ -f "$_CFG_HOME/config.toml" ]; then
         echo
         echo "==> config.toml left untouched (it's your settings, not a"

@@ -546,7 +546,7 @@ class App:
             try:
                 save_config(self.cfg)
                 log.info(
-                    "persisted auto-listen=%s to config.toml",
+                    "persisted auto-listen=%s to state.toml",
                     new_enabled,
                 )
             except Exception:

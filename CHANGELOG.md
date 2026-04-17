@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.8] - 2026-04-17
+
+### Changed
+
+- **Runtime state split out into `state.toml`.** Previously the app
+  toggling auto-listen, postprocess on/off, or the active profile
+  caused `save_config()` to re-load `config.toml`, overlay the three
+  runtime-mutable fields (`vad.enabled`, `postprocess.enabled`,
+  `postprocess.profile`), and rewrite the **whole** file via
+  `render_config_toml()` — which nuked any inline comments the user
+  had written in `config.toml` and dropped any unknown fields.
+
+  Now those three fields persist to `~/.config/justsayit/state.toml`
+  instead, and `load_config()` overlays state on top after reading
+  `config.toml`. State wins. The user's `config.toml` is never
+  touched by the app — comments and customisations there survive
+  forever. Same separation pattern we already used for `context.toml`
+  (pure user data) and the `.baseline/` snapshots (internal
+  bookkeeping).
+
+  Migration is implicit: existing `vad.enabled = true` / `profile =
+  "gemma4"` entries in your authored `config.toml` keep working as
+  the "initial state". The first time you toggle anything, a
+  `state.toml` appears and overlays from then on. Delete `state.toml`
+  to reset to whatever your `config.toml` says. `save_config()` is
+  now a thin back-compat wrapper around the new `save_state()`; the
+  CLI log message changed from "persisted auto-listen=… to
+  config.toml" to "to state.toml" to reflect reality.
+
+  `install.sh --update` already left `config.toml` alone (since
+  0.8.6); the notice now also mentions that `state.toml` is
+  app-managed runtime state and not reconciled either.
+
 ## [0.8.7] - 2026-04-17
 
 ### Changed

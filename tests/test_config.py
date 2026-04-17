@@ -18,6 +18,7 @@ from justsayit.config import (
     load_config,
     render_config_toml,
     save_config,
+    save_state,
 )
 
 
@@ -206,50 +207,105 @@ def test_render_load_roundtrip_whisper(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# save_config
+# save_config / state.toml split
 # ---------------------------------------------------------------------------
 
 
-def test_save_config_creates_file(tmp_path):
+def test_save_config_writes_state_not_config(tmp_path):
+    """save_config persists the runtime-mutable subset to a sibling
+    state.toml and never touches config.toml."""
     p = tmp_path / "config.toml"
     cfg = Config()
     cfg.vad.enabled = True
     save_config(cfg, p)
-    assert p.exists()
+    # config.toml is untouched (didn't exist before, doesn't exist after).
+    assert not p.exists()
+    # state.toml carries the toggle.
+    assert (tmp_path / "state.toml").exists()
     restored = load_config(p)
     assert restored.vad.enabled is True
 
 
-def test_save_config_persists_only_vad_enabled(tmp_path):
-    """save_config should only change vad.enabled; all other fields come from
-    the on-disk file (or defaults if the file doesn't exist yet)."""
+def test_save_config_does_not_overwrite_existing_config_toml(tmp_path):
+    """If the user has authored config.toml (with comments, custom values,
+    extra fields…), save_config must not rewrite it. Only state.toml
+    moves."""
     p = tmp_path / "config.toml"
-    # Write a config with non-default sound settings.
-    initial = Config()
-    initial.sound.volume = 0.3
-    p.write_text(render_config_toml(initial), encoding="utf-8")
+    authored = (
+        "# my carefully written config\n"
+        "[sound]\n"
+        "volume = 0.3  # quieter than default\n"
+        "\n"
+        "[model]\n"
+        'backend = "whisper"\n'
+    )
+    p.write_text(authored, encoding="utf-8")
 
-    # Now save with vad.enabled flipped but sound unchanged in the runtime config.
+    runtime = Config()
+    runtime.vad.enabled = True
+    save_config(runtime, p)
+
+    # config.toml is byte-identical to what the user authored.
+    assert p.read_text(encoding="utf-8") == authored
+
+
+def test_state_overlay_wins_over_config_toml(tmp_path):
+    """State.toml's runtime fields override what's in config.toml; non-state
+    fields fall through from config.toml."""
+    p = tmp_path / "config.toml"
+    disk_cfg = Config()
+    disk_cfg.model.backend = "whisper"
+    disk_cfg.sound.volume = 0.3
+    disk_cfg.vad.enabled = False  # config.toml says off
+    p.write_text(render_config_toml(disk_cfg), encoding="utf-8")
+
+    # Toggle VAD on at runtime.
     runtime = Config()
     runtime.vad.enabled = True
     save_config(runtime, p)
 
     restored = load_config(p)
-    assert restored.vad.enabled is True
-    # The sound.volume that was on disk should be preserved.
+    assert restored.vad.enabled is True            # state wins
+    assert restored.model.backend == "whisper"     # config.toml preserved
     assert restored.sound.volume == pytest.approx(0.3)
 
 
-def test_save_config_does_not_clobber_whisper_backend(tmp_path):
-    """A runtime save of vad.enabled must not reset model.backend to parakeet."""
+def test_load_config_falls_back_to_config_toml_when_state_missing(tmp_path):
+    """No state.toml → config.toml's runtime fields are used as-is."""
     p = tmp_path / "config.toml"
     disk_cfg = Config()
-    disk_cfg.model.backend = "whisper"
+    disk_cfg.vad.enabled = True
+    disk_cfg.postprocess.enabled = True
+    disk_cfg.postprocess.profile = "gemma4-cleanup"
     p.write_text(render_config_toml(disk_cfg), encoding="utf-8")
 
-    runtime = Config()  # default is parakeet
-    runtime.vad.enabled = True
-    save_config(runtime, p)
+    restored = load_config(p)
+    assert restored.vad.enabled is True
+    assert restored.postprocess.enabled is True
+    assert restored.postprocess.profile == "gemma4-cleanup"
+
+
+def test_save_state_persists_postprocess_profile(tmp_path):
+    """save_state covers all three runtime fields, not just vad.enabled."""
+    sp = tmp_path / "state.toml"
+    cfg = Config()
+    cfg.postprocess.enabled = True
+    cfg.postprocess.profile = "gemma4-fun"
+    save_state(cfg, sp)
+
+    raw = tomllib.loads(sp.read_text(encoding="utf-8"))
+    assert raw["postprocess"]["enabled"] is True
+    assert raw["postprocess"]["profile"] == "gemma4-fun"
+
+
+def test_state_overlay_ignores_malformed_file(tmp_path):
+    """A broken state.toml should never crash the app — load_config falls
+    back to config.toml values."""
+    p = tmp_path / "config.toml"
+    disk_cfg = Config()
+    disk_cfg.vad.enabled = True
+    p.write_text(render_config_toml(disk_cfg), encoding="utf-8")
+    (tmp_path / "state.toml").write_text("this is not valid TOML [[[", encoding="utf-8")
 
     restored = load_config(p)
-    assert restored.model.backend == "whisper"
+    assert restored.vad.enabled is True

@@ -264,30 +264,104 @@ def _coerce_section(section_cls, data: dict[str, Any] | None):
 
 
 def load_config(path: Path | None = None) -> Config:
-    """Load config from ``path`` (defaults to ``$XDG_CONFIG_HOME/justsayit/config.toml``)."""
+    """Load config from ``path`` (defaults to ``$XDG_CONFIG_HOME/justsayit/config.toml``).
+
+    After reading ``config.toml`` (the user's authored settings — never
+    rewritten by the app), overlays the runtime-mutable subset from a
+    sibling ``state.toml`` if present. State wins. See :func:`save_state`
+    for the list of fields persisted as state.
+    """
     if path is None:
         path = config_dir() / "config.toml"
 
     cfg = Config()
-    if not path.exists():
-        return cfg
+    if path.exists():
+        with path.open("rb") as f:
+            raw = tomllib.load(f)
 
-    with path.open("rb") as f:
-        raw = tomllib.load(f)
+        cfg.audio = _coerce_section(AudioConfig, raw.get("audio"))
+        cfg.vad = _coerce_section(VadConfig, raw.get("vad"))
+        cfg.shortcut = _coerce_section(ShortcutConfig, raw.get("shortcut"))
+        cfg.paste = _coerce_section(PasteConfig, raw.get("paste"))
+        cfg.model = _coerce_section(ModelConfig, raw.get("model"))
+        cfg.overlay = _coerce_section(OverlayConfig, raw.get("overlay"))
+        cfg.sound = _coerce_section(SoundConfig, raw.get("sound"))
+        cfg.log = _coerce_section(LogConfig, raw.get("log"))
+        cfg.postprocess = _coerce_section(PostprocessConfig, raw.get("postprocess"))
 
-    cfg.audio = _coerce_section(AudioConfig, raw.get("audio"))
-    cfg.vad = _coerce_section(VadConfig, raw.get("vad"))
-    cfg.shortcut = _coerce_section(ShortcutConfig, raw.get("shortcut"))
-    cfg.paste = _coerce_section(PasteConfig, raw.get("paste"))
-    cfg.model = _coerce_section(ModelConfig, raw.get("model"))
-    cfg.overlay = _coerce_section(OverlayConfig, raw.get("overlay"))
-    cfg.sound = _coerce_section(SoundConfig, raw.get("sound"))
-    cfg.log = _coerce_section(LogConfig, raw.get("log"))
-    cfg.postprocess = _coerce_section(PostprocessConfig, raw.get("postprocess"))
+        if "filters_path" in raw:
+            cfg.filters_path = Path(raw["filters_path"]).expanduser()
 
-    if "filters_path" in raw:
-        cfg.filters_path = Path(raw["filters_path"]).expanduser()
+    _apply_state_overlay(cfg, _state_path_for(path))
     return cfg
+
+
+def _state_path_for(config_path: Path) -> Path:
+    """Sibling ``state.toml`` next to *config_path*. Pairing rule shared
+    by :func:`load_config` and :func:`save_state` so callers passing a
+    custom config path (tests, alternate dirs) get matching state."""
+    return config_path.parent / "state.toml"
+
+
+def state_path() -> Path:
+    """Default state-file location: ``$XDG_CONFIG_HOME/justsayit/state.toml``."""
+    return config_dir() / "state.toml"
+
+
+def _apply_state_overlay(cfg: Config, path: Path) -> None:
+    """Read *path* and overlay the runtime-mutable fields onto *cfg*.
+    Silent no-op if the file is missing or malformed — state is
+    best-effort, the on-disk config.toml is the source of truth for
+    everything else."""
+    if not path.exists():
+        return
+    try:
+        with path.open("rb") as f:
+            raw = tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError):
+        return
+    vad = raw.get("vad") or {}
+    if "enabled" in vad:
+        cfg.vad.enabled = bool(vad["enabled"])
+    ps = raw.get("postprocess") or {}
+    if "enabled" in ps:
+        cfg.postprocess.enabled = bool(ps["enabled"])
+    if "profile" in ps:
+        cfg.postprocess.profile = str(ps["profile"])
+
+
+def save_state(cfg: Config, path: Path | None = None) -> None:
+    """Persist the runtime-mutable subset of *cfg* to ``state.toml``.
+
+    Fields written: ``vad.enabled``, ``postprocess.enabled``,
+    ``postprocess.profile``. The rest of *cfg* is ignored — those are
+    user-authored settings that live in ``config.toml`` and the app
+    never rewrites that file.
+
+    Best-effort: OSError is swallowed (state-tracking is non-essential;
+    on next start the user just gets whatever's in config.toml)."""
+    if path is None:
+        path = state_path()
+    content = (
+        "# justsayit runtime state — written by the app whenever you toggle\n"
+        "# auto-listen, postprocess, or switch profile (via the tray menu or\n"
+        "# the equivalent hotkey). Editing by hand is fine but expect the\n"
+        "# app to overwrite on the next change. Settings (audio, model,\n"
+        "# overlay, …) live in config.toml — the app never rewrites that\n"
+        "# file, so comments and customisations there survive forever.\n"
+        "\n"
+        "[vad]\n"
+        f"enabled = {'true' if cfg.vad.enabled else 'false'}\n"
+        "\n"
+        "[postprocess]\n"
+        f"enabled = {'true' if cfg.postprocess.enabled else 'false'}\n"
+        f'profile = "{cfg.postprocess.profile}"\n'
+    )
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    except OSError:
+        pass
 
 
 def ensure_dirs(cfg: Config | None = None) -> None:
@@ -335,26 +409,20 @@ def default_config_toml() -> str:
 
 
 def save_config(cfg: Config, path: Path | None = None) -> None:
-    """Persist ``cfg`` to TOML, preserving any edits the user made to the
-    file in the meantime.
+    """Persist the runtime-mutable subset of *cfg* (back-compat wrapper).
 
-    Strategy: re-load the on-disk file so any fields the user tweaked
-    (e.g. via the "Open config" tray item while the app was running) are
-    the baseline, then overlay the runtime-mutable fields from ``cfg``
-    on top.  Runtime-mutable fields: ``vad.enabled``,
-    ``postprocess.enabled``, ``postprocess.profile``.
+    Historically wrote the entire merged config back to ``config.toml``,
+    nuking any inline comments the user had written. Now delegates to
+    :func:`save_state`, which writes only ``vad.enabled``,
+    ``postprocess.enabled``, and ``postprocess.profile`` to a sibling
+    ``state.toml``. The user's ``config.toml`` is never touched.
+
+    *path* is interpreted as the config.toml location (for test
+    parity); the state file is derived as a sibling.
     """
     if path is None:
         path = config_dir() / "config.toml"
-    if path.exists():
-        merged = load_config(path)
-    else:
-        merged = Config()
-    merged.vad.enabled = cfg.vad.enabled
-    merged.postprocess.enabled = cfg.postprocess.enabled
-    merged.postprocess.profile = cfg.postprocess.profile
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(render_config_toml(merged), encoding="utf-8")
+    save_state(cfg, _state_path_for(path))
 
 
 def defaults_baseline_path(user_path: Path) -> Path:
