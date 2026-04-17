@@ -693,3 +693,56 @@ def test_warmup_skipped_for_remote_endpoint():
     pp = LLMPostprocessor(profile)
     pp.warmup()  # would raise RuntimeError("llama-cpp-python is not installed")
     assert pp._llm is None  # never tried to build
+
+
+def test_remote_endpoint_swaps_default_prompt_to_channel_free_variant():
+    """The shipped Gemma default uses `<|think|>` and tells the model to
+    write `No changes.` when nothing changes — generic LLMs would echo
+    that literally.  When endpoint is set AND the user kept the dataclass
+    default, the prompt must auto-swap to the channel-free variant."""
+    from justsayit.postprocess import (
+        _DEFAULT_SYSTEM_PROMPT,
+        _REMOTE_CLEANUP_SYSTEM_PROMPT,
+    )
+
+    profile = PostprocessProfile(
+        endpoint="https://api.example.com/v1",
+        model="gpt-4o-mini",
+        api_key="sk",
+    )
+    pp = LLMPostprocessor(profile)
+    out = pp._system_prompt()
+    assert out == _REMOTE_CLEANUP_SYSTEM_PROMPT.strip()
+    # Sanity: the swap actually drops the Gemma channel directive…
+    assert "<|think|>" not in out
+    # …and explicitly forbids the literal "No changes." reply that the
+    # original prompt asked for via the channel.
+    assert "do NOT write `No changes.`" in out
+    # Original default still mentions both — proves we swapped, not edited.
+    assert "<|think|>" in _DEFAULT_SYSTEM_PROMPT
+    assert "just write `No changes.`" in _DEFAULT_SYSTEM_PROMPT
+
+
+def test_remote_endpoint_keeps_user_overridden_prompt():
+    """If the user customised system_prompt, respect it verbatim — even
+    on the remote path.  The auto-swap is a safety net for the default,
+    not a hijack."""
+    profile = PostprocessProfile(
+        endpoint="https://api.example.com/v1",
+        model="gpt-4o-mini",
+        api_key="sk",
+        system_prompt="Translate everything to pirate.",
+    )
+    pp = LLMPostprocessor(profile)
+    assert pp._system_prompt() == "Translate everything to pirate."
+
+
+def test_local_endpoint_keeps_default_prompt_with_channel_directives():
+    """Without an endpoint set, the local llama-cpp path must still see
+    the Gemma `<|think|>`-channel prompt — that's what `paste_strip_regex`
+    is paired with."""
+    from justsayit.postprocess import _DEFAULT_SYSTEM_PROMPT
+
+    profile = PostprocessProfile()  # no endpoint
+    pp = LLMPostprocessor(profile)
+    assert pp._system_prompt() == _DEFAULT_SYSTEM_PROMPT.strip()

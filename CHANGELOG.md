@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-04-17
+
+### Changed
+
+- Default cleanup prompts (local Gemma + remote variant) now explicitly
+  forbid removing existing blank lines or collapsing whitespace —
+  models were occasionally flattening multi-paragraph dictations.
+
+## [0.10.1] - 2026-04-17
+
+### Fixed
+
+- Remote OpenAI-compatible LLM endpoints no longer reply with the
+  literal string `No changes.` (or leak `<|channel>thought…` reasoning).
+  The shipped default cleanup prompt relies on Gemma's `<|think|>`
+  channel to hide reasoning from the visible reply; generic models
+  (OpenAI / OpenRouter / Groq / vLLM / …) have no such channel and
+  interpreted "If nothing needs changing, just write `No changes.` and
+  stop" as a literal output instruction. When `profile.endpoint` is set
+  AND the user hasn't customised `system_prompt`, justsayit now
+  auto-swaps in `_REMOTE_CLEANUP_SYSTEM_PROMPT` — same cleanup rules
+  and spoken-punctuation table, no Gemma-specific channel scaffolding,
+  and an explicit "echo the input verbatim if nothing needs changing"
+  rule. Custom `system_prompt` values are passed through untouched.
+
 ## [0.10.0] - 2026-04-17
 
 ### Added

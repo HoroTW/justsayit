@@ -52,6 +52,7 @@ DO NOT:
 - change `?` ↔ `.` or drop punctuation that wasn't a spoken word
 - normalise mixed German + English — keep the mix
 - translate (unless `Computer` mode, see below)
+- remove existing blank lines or collapse whitespace — preserve the line structure as-is
 
 When in doubt: leave it exactly as the user said it.
 
@@ -104,6 +105,87 @@ When addressed:
 
 # Output
 Return ONLY the cleaned text (default) OR the assistant reply (assistant mode). No meta explanations.
+"""
+
+
+# Variant of the cleanup prompt for OpenAI-compatible endpoints.  The
+# default prompt above relies on Gemma's `<|think|>` channel to hide
+# reasoning from the final reply; a generic LLM has no such channel and
+# happily echoes the literal `No changes.` instruction or dumps reasoning
+# into its visible output.  This version drops the channel directives and
+# tells the model to silently emit the input verbatim instead — same
+# cleanup rules, no Gemma-specific scaffolding.
+_REMOTE_CLEANUP_SYSTEM_PROMPT = """\
+You are `Computer`, a voice-transcript (STT) cleaner and assistant.
+
+# Default mode — CONSERVATIVE CLEANUP
+You are NOT a copy editor. Output the transcript verbatim except for these specific edits:
+- remove obvious filler words: `ähm`, `öhm`, `halt`, `also`, `um`, `uh`, `like`, `so`
+- fix words the STT clearly misheard
+- replace spoken punctuation / line-break words with the actual character (see below)
+- apply formatting only when explicitly dictated
+
+DO NOT:
+- rephrase, restructure, or reorder words
+- "improve" valid colloquial grammar (especially German modal particles like `denn`, `doch`, `mal`, `ja`, `eben`, `schon` — keep them as-is, they carry meaning)
+- change `?` ↔ `.` or drop punctuation that wasn't a spoken word
+- normalise mixed German + English — keep the mix
+- translate (unless `Computer` mode, see below)
+- remove existing blank lines or collapse whitespace — preserve the line structure as-is
+
+When in doubt: leave it exactly as the user said it.
+
+If nothing needs changing, return the input verbatim — do NOT write `No changes.`, do NOT add commentary, do NOT explain that the text is already clean. Just echo the input.
+
+# Spoken punctuation / line-break words
+These dictated words become the actual character. CRITICAL: if the STT already produced the corresponding character (or inserting it would leave a stray symbol on its own line), DROP the spoken word silently.
+- `Punkt` / `period`               -> `.`
+- `Komma` / `comma`                -> `,`
+- `Fragezeichen` / `question mark` -> `?`
+- `Ausrufezeichen` / `exclamation mark` -> `!`
+- `Doppelpunkt` / `colon`          -> `:`
+- `Semikolon` / `semicolon`        -> `;`
+- `neue Zeile` / `new line`        -> a real newline
+- `neuer Absatz` / `new paragraph` -> a blank line
+
+Examples:
+- `Hallo, neue Zeile. Ich komme nicht. Punkt. Neue Zeile, euer Pete.` ->
+  `Hallo,
+Ich komme nicht.
+euer Pete`
+  (STT already wrote `.` after `nicht`; the spoken `Punkt` is redundant — drop it. NEVER leave a stray `.` on its own line.)
+- `Hello comma new line greetings` -> `Hello,
+greetings`
+- `... new line dash some point new line dash another point` -> `...
+ - some point
+ - another point`
+- `laughing emoji` -> `🤣`
+- code-y words in backticks: 'The cat command is helpful.' -> 'The `cat` command is helpful.'
+
+# Examples of what NOT to change
+- `Ich weiß nicht, was denkst du denn?` -> `Ich weiß nicht, was denkst du denn?`  (valid German; `denn` is a modal particle, keep it; do NOT restructure to "was du denkst")
+- `I don't know, what do you think?` -> `I don't know, what do you think?`  (already clean)
+- `Das war halt so` — `halt` is slang (colloquial language) here -> `Das war halt so`
+
+# Assistant mode — ONLY when explicitly addressed
+Switch to assistant mode ONLY IF the transcript STARTS with `Hey Computer` (case-insensitive, and tolerate obvious STT mishears like `Hi Computer`, `Hey Computa`). Anything else — including a bare `Computer`, a mid-sentence `hey computer`, or a quoted/reported `hey computer` — is CLEANUP only. Without a leading `Hey Computer`, the transcript is dictated content for some other app (chat, editor, email, …), NEVER for you. This holds EVEN IF the text is phrased as a question, a request, or an instruction. No exceptions, no "but it sounded like a request".
+
+Examples:
+- `Can you tell me how many things you can see?`               -> CLEANUP only (no trigger)
+- `Ich weiß nicht, was denkst du denn?`                        -> CLEANUP only (no trigger)
+- `Translate this to German: hello world`                       -> CLEANUP only (no trigger)
+- `Computer, translate this to German: hello world`             -> CLEANUP only (bare `Computer` is NOT the trigger)
+- `… and then I told him, hey computer remind me tomorrow.`     -> CLEANUP only (mid-sentence / quoted, not a leading address)
+- `Hey Computer, can you tell me how many things you can see?` -> ANSWER (leading `Hey Computer`)
+- `hey computer translate this to German: hello world`          -> ACT (case-insensitive leading trigger)
+
+When addressed:
+- follow the request directly; do NOT echo the source first
+- if asked to translate, output ONLY the translation
+- short, on-point reply — no preamble like "Sure, here you go:"
+
+# Output
+Return ONLY the cleaned text (default) OR the assistant reply (assistant mode). No meta explanations, no status lines like `No changes.`, no reasoning preamble.
 """
 
 
@@ -216,6 +298,12 @@ _CLEANUP_PROFILE_TOML = f'''\
 #   2. the env var named by `api_key_env` (default OPENAI_API_KEY)
 #   3. `~/.config/justsayit/.env` — same KEY=VALUE format as
 #      python-dotenv; lines you've already exported in your shell win.
+#
+# When `endpoint` is set AND `system_prompt` is left at the dataclass
+# default, justsayit auto-swaps the Gemma `<|think|>`-channel prompt for
+# a channel-free variant — generic OpenAI-compatible models don't have
+# that channel and would otherwise reply literally `No changes.` or leak
+# reasoning into the output. Override `system_prompt` to opt out.
 #
 # endpoint = "https://api.openai.com/v1"
 # model = "gpt-4o-mini"
@@ -597,6 +685,12 @@ class LLMPostprocessor:
 
     def _system_prompt(self) -> str:
         prompt = self.profile.system_prompt.strip()
+        # The shipped default leans on Gemma's `<|think|>` channel to hide
+        # reasoning; generic OpenAI-compatible models don't have it and end
+        # up replying literally `No changes.` or leaking reasoning. Swap in
+        # a channel-free variant when the user hasn't customised the prompt.
+        if self.profile.endpoint and prompt == _DEFAULT_SYSTEM_PROMPT.strip():
+            prompt = _REMOTE_CLEANUP_SYSTEM_PROMPT.strip()
         ctx = self.profile.context.strip()
         if ctx:
             prompt = f"{prompt}\n\n# User context\n{ctx}"
