@@ -16,7 +16,8 @@ you actually want.
 | `postprocess/<profile>.toml` | LLM profile (model, prompt, temperature, …). Three are shipped — see [postprocessing.md](postprocessing.md). |
 
 Want to see every available knob? `justsayit show-defaults config` prints
-the shipped `config.toml` with every key + its default value.
+the shipped `config.toml` in the same commented-defaults form that `init`
+writes.
 
 ## ASR backends
 

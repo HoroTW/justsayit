@@ -184,7 +184,6 @@ from justsayit.config import (
     Config,
     cache_dir,
     config_dir,
-    default_config_toml,
     ensure_config_file,
     ensure_dirs,
     ensure_filters_file,
@@ -200,6 +199,7 @@ from justsayit.postprocess import (
     _CLEANUP_PROFILE_TOML,
     _CONTEXT_SIDECAR_TEMPLATE,
     _FUN_PROFILE_TOML,
+    _OPENAI_PROFILE_TOML,
     download_llm_model,
     ensure_default_profile,
     ensure_default_profiles,
@@ -1403,7 +1403,14 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     show_sub.add_argument(
         "kind",
-        choices=["config", "filters", "context", "profile-cleanup", "profile-fun"],
+        choices=[
+            "config",
+            "filters",
+            "context",
+            "profile-cleanup",
+            "profile-fun",
+            "profile-openai",
+        ],
     )
     return ap
 
@@ -1428,7 +1435,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.subcommand == "show-defaults":
         if args.kind == "config":
-            sys.stdout.write(default_config_toml())
+            sys.stdout.write(render_config_toml(commented=True))
         elif args.kind == "filters":
             import json
 
@@ -1439,6 +1446,8 @@ def main(argv: list[str] | None = None) -> int:
             sys.stdout.write(_CLEANUP_PROFILE_TOML)
         elif args.kind == "profile-fun":
             sys.stdout.write(_FUN_PROFILE_TOML)
+        elif args.kind == "profile-openai":
+            sys.stdout.write(_OPENAI_PROFILE_TOML)
         return 0
 
     ensure_dirs()
