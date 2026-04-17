@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.6] - 2026-04-17
+
+### Changed
+
+- **`install.sh --update` no longer reconciles `config.toml`.** It's
+  a settings file (per-user choices like `postprocess.enabled` and
+  `postprocess.profile`), not a shipped template. Treating it as a
+  template meant every update produced an "always" conflict prompt —
+  e.g. a client running `enabled = true, profile = "gemma4"` was
+  prompted to overwrite with the shipped `enabled = false, profile =
+  "gemma4-cleanup"`, which would have silently disabled their LLM
+  postprocess. New config keys we add ship with sensible dataclass
+  defaults in `config.py`, so old user configs silently pick them up
+  on next load — no overwrite needed. Power users can diff against
+  shipped defaults with `justsayit show-defaults config`. The
+  `filters.json` and profile TOML reconciles are unchanged (those
+  are templates the user is meant to either accept or fork).
+
 ## [0.8.5] - 2026-04-17
 
 ### Fixed

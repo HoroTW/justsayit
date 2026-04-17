@@ -68,11 +68,13 @@ Usage: install.sh [--uninstall] [--autostart] [--skip-models] [--update]
                            ./install.sh --nix --postprocess
   --update               Pull latest commits (git pull), refresh the venv +
                          dependencies, refresh the .desktop entry, and
-                         interactively offer to replace your config.toml
-                         and filters.json with the new shipped defaults.
-                         The current files are backed up to *.bak.<ts>
-                         before they're overwritten. Implies --skip-models
-                         and skips the postprocess prompt.
+                         interactively offer to replace your filters.json
+                         and shipped postprocess profile TOMLs with the
+                         new shipped defaults. config.toml is left alone
+                         (settings file, not a template — new keys inherit
+                         dataclass defaults). Files that are replaced are
+                         backed up to *.bak.<ts> first. Implies
+                         --skip-models and skips the postprocess prompt.
 EOF
 }
 
@@ -399,7 +401,19 @@ maybe_update_user_file() {
 
 if [ "$UPDATE" -eq 1 ]; then
     _CFG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}/$CONFIG_DIR_NAME
-    maybe_update_user_file "$_CFG_HOME/config.toml" "config"
+    # config.toml is intentionally NOT reconciled — it's a settings file
+    # (per-user choices like `postprocess.enabled` and `postprocess.profile`),
+    # not a shipped template. New config keys we add ship with sensible
+    # dataclass defaults in src/justsayit/config.py, so old user configs
+    # silently pick them up; no overwrite needed. Power users can diff
+    # against the shipped defaults with `justsayit show-defaults config`.
+    if [ -f "$_CFG_HOME/config.toml" ]; then
+        echo
+        echo "==> config.toml left untouched (it's your settings, not a"
+        echo "    shipped template). Run \`justsayit show-defaults config\`"
+        echo "    to compare against the latest shipped defaults if you"
+        echo "    want to discover new knobs."
+    fi
     maybe_update_user_file "$_CFG_HOME/filters.json" "filters"
     # Shipped postprocess profiles. context.toml lives elsewhere (it's
     # pure user data, never overwritten — created by the app on first
