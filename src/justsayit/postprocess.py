@@ -25,7 +25,7 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
 
-from justsayit.config import config_dir
+from justsayit.config import config_dir, write_or_heal_baseline
 
 log = logging.getLogger(__name__)
 
@@ -369,9 +369,11 @@ def ensure_default_profile(path: Path | None = None) -> Path:
     """
     if path is None:
         path = profiles_dir() / "gemma4-cleanup.toml"
-    if not path.exists():
+    just_written = not path.exists()
+    if just_written:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(_CLEANUP_PROFILE_TOML, encoding="utf-8")
+    write_or_heal_baseline(path, _CLEANUP_PROFILE_TOML, just_written=just_written)
     return path
 
 
@@ -384,9 +386,11 @@ def ensure_fun_profile(path: Path | None = None) -> Path:
     """
     if path is None:
         path = profiles_dir() / "gemma4-fun.toml"
-    if not path.exists():
+    just_written = not path.exists()
+    if just_written:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(_FUN_PROFILE_TOML, encoding="utf-8")
+    write_or_heal_baseline(path, _FUN_PROFILE_TOML, just_written=just_written)
     return path
 
 

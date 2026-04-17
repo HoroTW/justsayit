@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.9] - 2026-04-17
+
+### Fixed
+
+- **Postprocess profile TOMLs (`gemma4-cleanup.toml`,
+  `gemma4-fun.toml`) now get a `.baseline/` snapshot on first write
+  and auto-heal on app start**, matching the behaviour
+  `config.toml` and `filters.json` already had. Previously
+  `ensure_default_profile()` / `ensure_fun_profile()` (postprocess.py)
+  just wrote the file and never touched the baseline — so install.sh
+  `--update` always landed in Case 5 (pre-baseline diff prompt) for
+  profile TOMLs even on fresh installs, instead of Case 1 (in sync,
+  no-op) or Case 2 (stale defaults, friendly `[Y/n]`). The path was
+  always correct (`postprocess/.baseline/<name>.toml` after 0.8.7);
+  the file just never got written from the Python side.
+- Refactored the write-and-snapshot pattern into a single public
+  helper `write_or_heal_baseline(user_path, current_defaults, *,
+  just_written)` in `config.py` so the four `ensure_*` sites
+  (config, filters, cleanup-profile, fun-profile) share one
+  implementation.
+
+### Added
+
+- Four new tests covering profile baseline write-on-fresh-install,
+  heal-on-sync, no-heal-on-customised, and the parallel for the fun
+  profile. 165 tests total (was 161).
+
 ## [0.8.8] - 2026-04-17
 
 ### Changed

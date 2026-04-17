@@ -8,14 +8,22 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from justsayit.config import Config, load_config, render_config_toml
+from justsayit.config import (
+    Config,
+    defaults_baseline_path,
+    load_config,
+    render_config_toml,
+)
 from justsayit.postprocess import (
     KNOWN_LLM_MODELS,
     LLMPostprocessor,
     PostprocessProfile,
+    _CLEANUP_PROFILE_TOML,
+    _FUN_PROFILE_TOML,
     context_file_path,
     ensure_context_file,
     ensure_default_profile,
+    ensure_fun_profile,
     find_hf_q4_filename,
     load_context_sidecar,
     load_profile,
@@ -426,6 +434,52 @@ def test_load_profile_context_field_overrides_sidecar(tmp_path, monkeypatch):
     target.write_text('context = "Sidecar-level"\n', encoding="utf-8")
     profile = load_profile("demo")
     assert profile.context == "Profile-level"
+
+
+# ---------------------------------------------------------------------------
+# Profile-TOML defaults baselines
+# ---------------------------------------------------------------------------
+
+
+def test_ensure_default_profile_writes_baseline_on_fresh_install(tmp_path: Path):
+    p = tmp_path / "gemma4-cleanup.toml"
+    ensure_default_profile(p)
+    baseline = defaults_baseline_path(p)
+    assert baseline.exists(), (
+        "profile baseline should be snapshotted under .baseline/ on first write"
+    )
+    assert baseline.parent.name == ".baseline"
+    assert baseline.read_text(encoding="utf-8") == _CLEANUP_PROFILE_TOML
+
+
+def test_ensure_fun_profile_writes_baseline_on_fresh_install(tmp_path: Path):
+    p = tmp_path / "gemma4-fun.toml"
+    ensure_fun_profile(p)
+    baseline = defaults_baseline_path(p)
+    assert baseline.exists()
+    assert baseline.read_text(encoding="utf-8") == _FUN_PROFILE_TOML
+
+
+def test_ensure_default_profile_heals_baseline_when_user_in_sync(tmp_path: Path):
+    """Pre-baseline install: the user's profile TOML happens to match the
+    current shipped default verbatim. Next app start should snapshot the
+    baseline silently so future install.sh --update lands in Case 1/2,
+    not Case 5."""
+    p = tmp_path / "gemma4-cleanup.toml"
+    p.write_text(_CLEANUP_PROFILE_TOML, encoding="utf-8")
+    assert not defaults_baseline_path(p).exists()
+    ensure_default_profile(p)
+    assert defaults_baseline_path(p).exists()
+
+
+def test_ensure_default_profile_does_not_heal_when_user_customised(tmp_path: Path):
+    """If the on-disk profile diverges from the shipped default, no
+    auto-baseline. The first --update will then land in Case 5 (plain
+    diff prompt) and write the baseline only after the user accepts."""
+    p = tmp_path / "gemma4-cleanup.toml"
+    p.write_text("# my custom profile\nmodel_path = \"/tmp/x.gguf\"\n", encoding="utf-8")
+    ensure_default_profile(p)
+    assert not defaults_baseline_path(p).exists()
 
 
 # ---------------------------------------------------------------------------

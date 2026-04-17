@@ -508,6 +508,25 @@ def _heal_baseline(user_path: Path, current_defaults: str) -> None:
         pass
 
 
+def write_or_heal_baseline(
+    user_path: Path, current_defaults: str, *, just_written: bool
+) -> None:
+    """Public wrapper used by every ``ensure_<file>()`` to keep the
+    ``.baseline/<name>`` snapshot in sync.
+
+    - *just_written=True* → caller created the file in this call; snapshot
+      the baseline unconditionally (it's known to match defaults).
+    - *just_written=False* → caller found the file already present; heal
+      only if it matches the current defaults verbatim, so pre-baseline
+      installs auto-upgrade silently for users who never customised.
+    Best-effort: errors are swallowed (baseline tracking is non-essential).
+    """
+    if just_written:
+        _write_baseline(user_path, current_defaults)
+    else:
+        _heal_baseline(user_path, current_defaults)
+
+
 def ensure_config_file(path: Path | None = None) -> Path:
     """Write the fully-populated default ``config.toml`` if it doesn't
     exist yet, so the file is always available for inspection / editing.
@@ -515,12 +534,11 @@ def ensure_config_file(path: Path | None = None) -> Path:
     if path is None:
         path = config_dir() / "config.toml"
     rendered = render_config_toml(None)
-    if not path.exists():
+    just_written = not path.exists()
+    if just_written:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(rendered, encoding="utf-8")
-        _write_baseline(path, rendered)
-    else:
-        _heal_baseline(path, rendered)
+    write_or_heal_baseline(path, rendered, just_written=just_written)
     return path
 
 
@@ -538,12 +556,11 @@ def ensure_filters_file(path: Path | None = None) -> Path:
     if path is None:
         path = config_dir() / "filters.json"
     rendered = json.dumps(_default_filter_chain(), indent=2) + "\n"
-    if not path.exists():
+    just_written = not path.exists()
+    if just_written:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(rendered, encoding="utf-8")
-        _write_baseline(path, rendered)
-    else:
-        _heal_baseline(path, rendered)
+    write_or_heal_baseline(path, rendered, just_written=just_written)
     return path
 
 
