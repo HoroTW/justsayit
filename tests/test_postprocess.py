@@ -260,6 +260,27 @@ def test_build_messages_keeps_leading_hey_computer_request_as_is():
     assert user_msg["content"] == "Hey Computer, make this sound more formal"
 
 
+@pytest.mark.parametrize("prompt", [_DEFAULT_SYSTEM_PROMPT, _REMOTE_CLEANUP_SYSTEM_PROMPT])
+def test_assistant_mode_requires_literal_word_computer(prompt):
+    """Regression test for the Gemma misfire on bare leading `Hey ...`
+    (German example: `Hey, ich habe gesehen, wir haben ganz viel
+    geschrieben.`). The shipped prompts must explicitly require the
+    literal word `Computer` and must include counter-examples for bare
+    greetings (`Hey`, `Hi`, `Hallo`) so the model doesn't fuzzy-match
+    leading interjections to the trigger phrase."""
+    # The hard requirement must be stated, not just implied.
+    assert "HARD REQUIREMENT" in prompt
+    assert "literal word `Computer`" in prompt
+    # Bare-greeting counter-examples — these are what guard against the
+    # bug case (`Hey, ...` triggering assistant mode).
+    assert "bare `Hey`" in prompt
+    assert "bare `Hi`" in prompt
+    assert "bare `Hallo`" in prompt
+    # The exact German example that misfired in the wild belongs in the
+    # examples block as the most prominent counter-example.
+    assert "Hey, ich habe gesehen" in prompt
+
+
 def test_warmup_loads_model(tmp_path):
     """warmup() should call _build() and cache the result in _llm."""
     profile = PostprocessProfile(model_path=str(tmp_path / "model.gguf"))

@@ -21,6 +21,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behavior as best-effort prompt semantics rather than deterministic app
   logic.
 
+## [0.11.10] - 2026-04-17
+
+### Fixed
+
+- Hardened both shipped cleanup prompts (local Gemma 3 and the
+  OpenAI-compatible variant) against bare-`Hey` misfires. Gemma was
+  fuzzy-matching leading interjections like `Hey, ich habe gesehen, …`
+  to `Hey Computer` and switching into assistant mode on plain
+  dictation. The prompts now state a HARD REQUIREMENT that the literal
+  word `Computer` must be present, explicitly name common bare
+  greetings (`Hey` / `Hi` / `Hallo` / `Hej` / `Hallöchen` / `Yo` /
+  `Servus`) as never being triggers on their own, and surface the
+  in-the-wild German failure case as the most prominent counter-example.
+
+### Tests
+
+- Added a parametrized regression test covering both shipped prompts to
+  pin the HARD REQUIREMENT wording and the bare-greeting
+  counter-examples in place.
+
 ## [0.11.3] - 2026-04-17
 
 ### Changed
