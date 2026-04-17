@@ -46,9 +46,37 @@ class _CountingTranscriber(TranscriberBase):
 class _StubOverlay:
     def __init__(self) -> None:
         self.hide_calls = 0
+        self.detected = []
+        self.llm = []
+        self.linger_calls = 0
 
     def push_hide(self) -> None:
         self.hide_calls += 1
+
+    def push_detected_text(self, text: str, llm_pending: bool = False) -> None:
+        self.detected.append((text, llm_pending))
+
+    def push_llm_text(self, text: str, thought: str = "") -> None:
+        self.llm.append((text, thought))
+
+    def push_linger_start(self) -> None:
+        self.linger_calls += 1
+
+
+class _RaisingPostprocessor:
+    def __init__(self, message: str = "remote exploded") -> None:
+        self.message = message
+        self.strip_calls = 0
+
+    def process(self, text: str) -> str:
+        raise RuntimeError(self.message)
+
+    def strip_for_paste(self, text: str) -> str:
+        self.strip_calls += 1
+        return text.replace("secret", "")
+
+    def find_strip_matches(self, text: str) -> list[str]:
+        return []
 
 
 def _make_seg(duration_s: float = 1.01) -> Segment:
@@ -223,3 +251,30 @@ def test_trailing_space_takes_precedence_over_auto_space(capsys):
     out = capsys.readouterr().out
     # Trailing space appended, no leading space.
     assert out == "word \n"
+
+
+def test_llm_failure_shows_overlay_error_but_prints_original_text(capsys):
+    cfg = Config()
+    app = _app(cfg)
+    app.overlay = _StubOverlay()
+    app.transcriber = _StubTranscriber("hello world")
+    app.postprocessor = _RaisingPostprocessor("HTTP 503: upstream timeout")
+
+    app._handle_segment(_make_seg())
+
+    assert capsys.readouterr().out == "hello world\n"
+    assert app.overlay.detected == [("hello world", True)]
+    assert app.overlay.llm == [("LLM error: HTTP 503: upstream timeout", "")]
+
+
+def test_llm_failure_does_not_strip_fallback_text(capsys):
+    cfg = Config()
+    app = _app(cfg)
+    app.transcriber = _StubTranscriber("keep secret text")
+    pp = _RaisingPostprocessor("boom")
+    app.postprocessor = pp
+
+    app._handle_segment(_make_seg())
+
+    assert capsys.readouterr().out == "keep secret text\n"
+    assert pp.strip_calls == 0

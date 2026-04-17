@@ -20,6 +20,7 @@ import logging
 import re
 import subprocess
 import threading
+import time
 import tomllib
 import urllib.error
 import urllib.request
@@ -418,6 +419,11 @@ model = "gpt-4o-mini"
 # HTTP timeout (seconds) for the chat-completions request.
 # request_timeout = 60.0
 
+# Retry transient HTTP / network failures on the remote path.
+# `remote_retries` counts retries after the first attempt.
+# remote_retries = 3
+# remote_retry_delay_seconds = 1.0
+
 # Cleanup tuning. Defaults are tuned for deterministic STT cleanup —
 # raise temperature for more creative output.
 # temperature = 0.08
@@ -499,6 +505,10 @@ class PostprocessProfile:
     api_key_env: str = "OPENAI_API_KEY"
     # HTTP timeout (seconds) for the chat-completions request.
     request_timeout: float = 60.0
+    # Retry transient remote request failures after the first attempt.
+    remote_retries: int = 3
+    # Delay (seconds) between remote retries.
+    remote_retry_delay_seconds: float = 1.0
 
 
 def profiles_dir() -> Path:
@@ -941,29 +951,59 @@ class LLMPostprocessor:
             "temperature": self.profile.temperature,
             "max_tokens": self.profile.max_tokens,
         }
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(body).encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {api_key}",
-                "User-Agent": "justsayit",
-            },
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(
-                req, timeout=self.profile.request_timeout
-            ) as resp:
-                data = json.loads(resp.read())
-        except urllib.error.HTTPError as exc:
+        attempts = 1 + max(0, self.profile.remote_retries)
+        last_error: RuntimeError | None = None
+        for attempt in range(1, attempts + 1):
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(body).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {api_key}",
+                    "User-Agent": "justsayit",
+                },
+                method="POST",
+            )
             try:
-                detail = exc.read().decode("utf-8", errors="replace")[:500]
-            except Exception:
-                detail = ""
-            raise RuntimeError(
-                f"LLM endpoint returned HTTP {exc.code}: {exc.reason}\n  {detail}"
-            ) from exc
+                with urllib.request.urlopen(
+                    req, timeout=self.profile.request_timeout
+                ) as resp:
+                    data = json.loads(resp.read())
+                break
+            except urllib.error.HTTPError as exc:
+                retryable = exc.code in {408, 409, 425, 429, 500, 502, 503, 504}
+                try:
+                    detail = exc.read().decode("utf-8", errors="replace")[:500]
+                except Exception:
+                    detail = ""
+                last_error = RuntimeError(
+                    f"LLM endpoint returned HTTP {exc.code}: {exc.reason}\n  {detail}"
+                )
+                if not retryable or attempt >= attempts:
+                    raise last_error from exc
+                log.warning(
+                    "remote LLM request failed with HTTP %d; retrying %d/%d in %.1fs",
+                    exc.code,
+                    attempt,
+                    attempts - 1,
+                    self.profile.remote_retry_delay_seconds,
+                )
+            except (urllib.error.URLError, TimeoutError) as exc:
+                reason = getattr(exc, "reason", exc)
+                last_error = RuntimeError(f"LLM endpoint request failed: {reason}")
+                if attempt >= attempts:
+                    raise last_error from exc
+                log.warning(
+                    "remote LLM request failed; retrying %d/%d in %.1fs: %s",
+                    attempt,
+                    attempts - 1,
+                    self.profile.remote_retry_delay_seconds,
+                    reason,
+                )
+            time.sleep(max(0.0, self.profile.remote_retry_delay_seconds))
+        else:
+            assert last_error is not None
+            raise last_error
         choices = data.get("choices") or []
         if not choices:
             raise RuntimeError(f"LLM endpoint returned no choices: {str(data)[:300]}")

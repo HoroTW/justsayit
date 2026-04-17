@@ -838,30 +838,44 @@ class App:
             self.overlay.push_detected_text(final, llm_pending=(pp is not None))
 
         if pp is not None:
+            llm_overlay_text = final
+            llm_overlay_thought = ""
+            paste_text = final
             try:
                 cleaned = pp.process(final)
                 if cleaned != final:
                     log.info("LLM cleaned: %r -> %r", final, cleaned)
-                    final = cleaned
-            except Exception:
+                llm_overlay_text = cleaned
+                paste_text = cleaned
+            except Exception as exc:
                 log.exception("LLM postprocessor failed; using unprocessed text")
-            stripped = pp.strip_for_paste(final)
-            # Surface the reasoning preamble (whatever paste_strip_regex
-            # matched) above the body so the user sees the full LLM reply
-            # but only the stripped body lands in the focused window.
-            thought = ""
-            if stripped != final:
-                matches = [m.strip() for m in pp.find_strip_matches(final) if m.strip()]
-                thought = "\n".join(matches)
-                log.info(
-                    "paste_strip_regex applied: %d -> %d chars",
-                    len(final),
-                    len(stripped),
-                )
+                detail = str(exc).strip().splitlines()[0]
+                llm_overlay_text = f"LLM error: {detail or exc.__class__.__name__}"
+            else:
+                stripped = pp.strip_for_paste(paste_text)
+                # Surface the reasoning preamble (whatever paste_strip_regex
+                # matched) above the body so the user sees the full LLM reply
+                # but only the stripped body lands in the focused window.
+                if stripped != paste_text:
+                    matches = [
+                        m.strip()
+                        for m in pp.find_strip_matches(paste_text)
+                        if m.strip()
+                    ]
+                    llm_overlay_thought = "\n".join(matches)
+                    log.info(
+                        "paste_strip_regex applied: %d -> %d chars",
+                        len(paste_text),
+                        len(stripped),
+                    )
+                llm_overlay_text = stripped
+                paste_text = stripped
             # Always update the LLM field — clears "Wait…" even when text is unchanged.
             if self.overlay is not None:
-                self.overlay.push_llm_text(stripped, thought=thought)
-            final = stripped
+                self.overlay.push_llm_text(
+                    llm_overlay_text, thought=llm_overlay_thought
+                )
+            final = paste_text
 
         # Space prefix / suffix (applied to paste content only; not shown in overlay)
         auto_space_ms = self.cfg.paste.auto_space_timeout_ms

@@ -147,6 +147,8 @@ def test_openai_profile_template_has_endpoint_and_model_uncommented(
     # Defining keys live as bare assignments at the top of the file.
     assert '\nendpoint = "https://api.openai.com/v1"' in text
     assert '\nmodel = "gpt-4o-mini"' in text
+    assert "# remote_retries = 3" in text
+    assert "# remote_retry_delay_seconds = 1.0" in text
     # System prompt stays commented; the auto-swap handles the rest.
     assert "# system_prompt = " in text
     assert "\nsystem_prompt =" not in text
@@ -718,6 +720,20 @@ def test_profile_has_openai_fields():
     assert p.api_key == ""
     assert p.api_key_env == "OPENAI_API_KEY"
     assert p.request_timeout == 60.0
+    assert p.remote_retries == 3
+    assert p.remote_retry_delay_seconds == pytest.approx(1.0)
+
+
+def test_load_profile_defaults_include_remote_retry_fields(tmp_path):
+    p = tmp_path / "minimal.toml"
+    p.write_text(
+        'endpoint = "https://api.example.com/v1"\nmodel = "m"\n', encoding="utf-8"
+    )
+
+    profile = load_profile(str(p))
+
+    assert profile.remote_retries == 3
+    assert profile.remote_retry_delay_seconds == pytest.approx(1.0)
 
 
 def test_remote_process_posts_chat_completions(monkeypatch):
@@ -854,6 +870,89 @@ def test_remote_process_falls_back_to_input_on_empty_response(monkeypatch):
 
     monkeypatch.setattr(pp_mod.urllib.request, "urlopen", fake_urlopen)
     assert pp.process("original") == "original"
+
+
+def test_remote_process_retries_transient_http_error_then_succeeds(monkeypatch):
+    import json
+    import justsayit.postprocess as pp_mod
+
+    profile = PostprocessProfile(
+        endpoint="https://api.example.com/v1",
+        model="m",
+        api_key="sk",
+        remote_retries=2,
+        remote_retry_delay_seconds=0.25,
+    )
+    pp = LLMPostprocessor(profile)
+
+    calls = {"count": 0}
+    sleeps = []
+
+    def fake_sleep(delay):
+        sleeps.append(delay)
+
+    def fake_urlopen(req, timeout=None):
+        calls["count"] += 1
+        if calls["count"] < 3:
+            raise pp_mod.urllib.error.HTTPError(
+                req.full_url,
+                503,
+                "Service Unavailable",
+                hdrs=None,
+                fp=None,
+            )
+
+        class _Resp:
+            def read(self):
+                return json.dumps(
+                    {"choices": [{"message": {"content": "done"}}]}
+                ).encode()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        return _Resp()
+
+    monkeypatch.setattr(pp_mod.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(pp_mod.time, "sleep", fake_sleep)
+
+    assert pp.process("original") == "done"
+    assert calls["count"] == 3
+    assert sleeps == [0.25, 0.25]
+
+
+def test_remote_process_exhausts_retries_on_transient_error(monkeypatch):
+    import justsayit.postprocess as pp_mod
+
+    profile = PostprocessProfile(
+        endpoint="https://api.example.com/v1",
+        model="m",
+        api_key="sk",
+        remote_retries=2,
+        remote_retry_delay_seconds=0.5,
+    )
+    pp = LLMPostprocessor(profile)
+
+    calls = {"count": 0}
+    sleeps = []
+
+    def fake_sleep(delay):
+        sleeps.append(delay)
+
+    def fake_urlopen(req, timeout=None):
+        calls["count"] += 1
+        raise pp_mod.urllib.error.URLError("temporary dns failure")
+
+    monkeypatch.setattr(pp_mod.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(pp_mod.time, "sleep", fake_sleep)
+
+    with pytest.raises(RuntimeError, match="temporary dns failure"):
+        pp.process("original")
+    assert calls["count"] == 3
+    assert sleeps == [0.5, 0.5]
 
 
 def test_warmup_skipped_for_remote_endpoint():

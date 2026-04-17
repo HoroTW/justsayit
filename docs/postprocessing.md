@@ -124,7 +124,8 @@ Activate `openai-cleanup` from the tray and you're done — the profile
 ships with `endpoint = "https://api.openai.com/v1"` and
 `model = "gpt-4o-mini"` already uncommented. Provide the API key via
 [any of the three resolver tiers](configuration.md#api-keys-env), then
-flip postprocess on.
+flip postprocess on. Remote requests retry transient failures by default
+with `remote_retries = 3` and `remote_retry_delay_seconds = 1.0`.
 
 Works with anything that speaks the OpenAI chat-completions schema:
 OpenAI, OpenRouter, Groq, Together, vLLM, Ollama (`/v1`), LM Studio,
@@ -185,7 +186,7 @@ The dataclass keys you can override:
 | `paste_strip_regex` | Regex (`re.DOTALL`) applied to the LLM output before paste but not before overlay display. Useful to hide reasoning preambles. |
 | `context` | Per-profile context that overrides the sidecar. |
 | **Local LLM** | `model_path`, `hf_repo`, `hf_filename`, `n_gpu_layers`, `n_ctx` |
-| **Remote LLM** | `endpoint`, `model`, `api_key`, `api_key_env`, `request_timeout` |
+| **Remote LLM** | `endpoint`, `model`, `api_key`, `api_key_env`, `request_timeout`, `remote_retries`, `remote_retry_delay_seconds` |
 
 ### Custom-prompt examples
 
