@@ -76,7 +76,7 @@ def load_dotenv(*, force: bool = False) -> None:
             continue
         # Strip an optional leading "export " for shell compatibility.
         if line.startswith("export "):
-            line = line[len("export "):].lstrip()
+            line = line[len("export ") :].lstrip()
         key, _, val = line.partition("=")
         key = key.strip()
         if not key or key in os.environ:
@@ -125,6 +125,9 @@ class AudioConfig:
     # Silero is still deciding "is this speech?" or while the user's
     # finger is still on the hotkey.
     lookback_ms: int = 300
+    # Segments shorter than this are dropped before transcription,
+    # regex filters, and LLM cleanup.  Set to 0 to disable.
+    skip_segments_below_seconds: float = 1.0
 
 
 @dataclass
@@ -322,6 +325,11 @@ class PostprocessConfig:
     # Profile name (resolved to config_dir()/postprocess/<profile>.toml)
     # or a direct path to a .toml file.
     profile: str = "gemma4-cleanup"
+    # Bash script executed on every LLM request; stdout is prepended to the
+    # system prompt as a dynamic state block when non-empty.
+    dynamic_context_script: str = field(
+        default_factory=lambda: str(config_dir() / "dynamic-context.sh")
+    )
 
 
 @dataclass
@@ -507,7 +515,17 @@ def render_config_toml(cfg: Config | None = None, *, commented: bool = False) ->
             "",
         ]
     prefix = "# " if commented else ""
-    for section_name in ("audio", "vad", "shortcut", "paste", "model", "overlay", "sound", "log", "postprocess"):
+    for section_name in (
+        "audio",
+        "vad",
+        "shortcut",
+        "paste",
+        "model",
+        "overlay",
+        "sound",
+        "log",
+        "postprocess",
+    ):
         section = getattr(cfg, section_name)
         lines.append(f"[{section_name}]")
         for f in fields(section):
@@ -667,6 +685,7 @@ def _default_filter_chain() -> list[dict]:
     """Built-in spoken-punctuation + cleanup chain written to filters.json
     on first run. Kept as a function so tests can apply it directly without
     touching disk."""
+
     # Per spoken word we ship a pair: a "drop when redundant" rule (when
     # STT already inserted the matching character right before the spoken
     # word) followed by a "replace" rule for everything else. The pair is
@@ -696,56 +715,72 @@ def _default_filter_chain() -> list[dict]:
     # "," after the dictation marker) gets absorbed by the optional
     # punctuation slot in the pattern, so we don't need a separate "drop
     # redundant" pair for them.
-    chain.append({
-        "name": "spoken: new paragraph",
-        "pattern": r"[ \t]*\b(?:neuer\s+Absatz|new\s+paragraph)\b[ \t]*[.,;:!?]?[ \t]*",
-        "replacement": "\n\n",
-        "flags": ["IGNORECASE"],
-    })
-    chain.append({
-        "name": "spoken: new line",
-        "pattern": r"[ \t]*\b(?:neue\s+Zeile|new\s+line)\b[ \t]*[.,;:!?]?[ \t]*",
-        "replacement": "\n",
-        "flags": ["IGNORECASE"],
-    })
+    chain.append(
+        {
+            "name": "spoken: new paragraph",
+            "pattern": r"[ \t]*\b(?:neuer\s+Absatz|new\s+paragraph)\b[ \t]*[.,;:!?]?[ \t]*",
+            "replacement": "\n\n",
+            "flags": ["IGNORECASE"],
+        }
+    )
+    chain.append(
+        {
+            "name": "spoken: new line",
+            "pattern": r"[ \t]*\b(?:neue\s+Zeile|new\s+line)\b[ \t]*[.,;:!?]?[ \t]*",
+            "replacement": "\n",
+            "flags": ["IGNORECASE"],
+        }
+    )
 
     chain += _pair("Punkt/period", r"Punkt|period|full\s+stop", ".")
     chain += _pair("Komma/comma", r"Komma|comma", ",")
     chain += _pair("Fragezeichen/question mark", r"Fragezeichen|question\s+mark", "?")
-    chain += _pair("Ausrufezeichen/exclamation mark", r"Ausrufezeichen|exclamation\s+mark", "!")
+    chain += _pair(
+        "Ausrufezeichen/exclamation mark", r"Ausrufezeichen|exclamation\s+mark", "!"
+    )
     chain += _pair("Doppelpunkt/colon", r"Doppelpunkt|colon", ":")
     chain += _pair("Semikolon/semicolon", r"Semikolon|semicolon", ";")
 
     # Cleanup. Order matters: drop punctuation-only lines BEFORE trimming
     # leading punctuation on a line, because the latter would turn ", "
     # into "" and leave the newline alone.
-    chain.append({
-        "name": "drop punctuation-only line",
-        "pattern": r"^[ \t]*[.,;:!?]+[ \t]*\n?",
-        "replacement": "",
-        "flags": ["MULTILINE"],
-    })
-    chain.append({
-        "name": "drop leading punctuation on line",
-        "pattern": r"(?<=\n)[ \t]*[.,;:!?]+[ \t]*",
-        "replacement": "",
-    })
-    chain.append({
-        "name": "trim trailing whitespace per line",
-        "pattern": r"[ \t]+$",
-        "replacement": "",
-        "flags": ["MULTILINE"],
-    })
-    chain.append({
-        "name": "collapse spaces (preserves newlines)",
-        "pattern": r"[ \t]{2,}",
-        "replacement": " ",
-    })
-    chain.append({
-        "name": "trim whitespace",
-        "pattern": r"^\s+|\s+$",
-        "replacement": "",
-    })
+    chain.append(
+        {
+            "name": "drop punctuation-only line",
+            "pattern": r"^[ \t]*[.,;:!?]+[ \t]*\n?",
+            "replacement": "",
+            "flags": ["MULTILINE"],
+        }
+    )
+    chain.append(
+        {
+            "name": "drop leading punctuation on line",
+            "pattern": r"(?<=\n)[ \t]*[.,;:!?]+[ \t]*",
+            "replacement": "",
+        }
+    )
+    chain.append(
+        {
+            "name": "trim trailing whitespace per line",
+            "pattern": r"[ \t]+$",
+            "replacement": "",
+            "flags": ["MULTILINE"],
+        }
+    )
+    chain.append(
+        {
+            "name": "collapse spaces (preserves newlines)",
+            "pattern": r"[ \t]{2,}",
+            "replacement": " ",
+        }
+    )
+    chain.append(
+        {
+            "name": "trim whitespace",
+            "pattern": r"^\s+|\s+$",
+            "replacement": "",
+        }
+    )
     return chain
 
 

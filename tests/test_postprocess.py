@@ -18,10 +18,15 @@ from justsayit.postprocess import (
     LLMPostprocessor,
     PostprocessProfile,
     _CLEANUP_PROFILE_TOML,
+    _DEFAULT_SYSTEM_PROMPT,
+    _DYNAMIC_CONTEXT_SCRIPT,
     _FUN_PROFILE_TOML,
+    _REMOTE_CLEANUP_SYSTEM_PROMPT,
     context_file_path,
+    dynamic_context_script_path,
     ensure_context_file,
     ensure_default_profile,
+    ensure_dynamic_context_script,
     ensure_fun_profile,
     find_hf_q4_filename,
     load_context_sidecar,
@@ -209,6 +214,13 @@ def test_process_uses_system_prompt():
     assert system_msg["content"] == "My custom prompt."
 
 
+def test_default_prompts_include_full_emoji_collapse_guidance():
+    for prompt in (_DEFAULT_SYSTEM_PROMPT, _REMOTE_CLEANUP_SYSTEM_PROMPT):
+        assert "collapse the WHOLE phrase to only the emoji" in prompt
+        assert "Fragen da Emoji" in prompt
+        assert "not `Fragen da 🤔`" in prompt
+
+
 def test_process_uses_temperature_and_max_tokens():
     profile = PostprocessProfile(
         model_path="/fake/model.gguf",
@@ -367,6 +379,74 @@ def test_context_empty_no_heading():
     assert "User context" not in system_msg["content"]
 
 
+def test_dynamic_context_prepended_before_system_prompt_and_user_context(monkeypatch):
+    profile = PostprocessProfile(
+        model_path="/fake/model.gguf",
+        system_prompt="Base prompt.",
+        context="Name: Alice",
+    )
+    pp = LLMPostprocessor(profile, dynamic_context_script="~/dynamic-context.sh")
+    monkeypatch.setattr(
+        pp, "_dynamic_context", lambda: "Date: 2026-04-17\nTimezone: Europe/Berlin"
+    )
+
+    prompt = pp._system_prompt()
+
+    assert prompt == (
+        "# STATE (DYNAMIC CONTEXT):\n"
+        "Date: 2026-04-17\n"
+        "Timezone: Europe/Berlin\n\n"
+        "----\n\n"
+        "Base prompt.\n\n"
+        "# User context\n"
+        "Name: Alice"
+    )
+
+
+def test_dynamic_context_empty_omits_state_block(monkeypatch):
+    profile = PostprocessProfile(
+        model_path="/fake/model.gguf",
+        system_prompt="Base prompt.",
+    )
+    pp = LLMPostprocessor(profile, dynamic_context_script="~/dynamic-context.sh")
+    monkeypatch.setattr(pp, "_dynamic_context", lambda: "")
+
+    assert pp._system_prompt() == "Base prompt."
+
+
+def test_dynamic_context_script_empty_stdout_omitted(monkeypatch):
+    import justsayit.postprocess as pp_mod
+
+    profile = PostprocessProfile(model_path="/fake/model.gguf")
+    pp = LLMPostprocessor(profile, dynamic_context_script="~/dynamic-context.sh")
+
+    class _Proc:
+        returncode = 0
+        stdout = "\n"
+        stderr = ""
+
+    monkeypatch.setattr(pp_mod.subprocess, "run", lambda *a, **k: _Proc())
+
+    assert pp._dynamic_context() == ""
+
+
+def test_dynamic_context_script_failure_logged_and_ignored(monkeypatch, caplog):
+    import justsayit.postprocess as pp_mod
+
+    profile = PostprocessProfile(model_path="/fake/model.gguf")
+    pp = LLMPostprocessor(profile, dynamic_context_script="~/dynamic-context.sh")
+
+    class _Proc:
+        returncode = 7
+        stdout = ""
+        stderr = "boom"
+
+    monkeypatch.setattr(pp_mod.subprocess, "run", lambda *a, **k: _Proc())
+
+    assert pp._dynamic_context() == ""
+    assert "dynamic context script exited with 7" in caplog.text
+
+
 def test_build_raises_without_llama_cpp():
     profile = PostprocessProfile(model_path="/nonexistent/model.gguf")
     pp = LLMPostprocessor(profile)
@@ -420,6 +500,26 @@ def test_ensure_context_file_writes_template(tmp_path, monkeypatch):
     assert "User context" not in body or "appended" in body, (
         "template should explain the field"
     )
+
+
+def test_ensure_dynamic_context_script_writes_template(tmp_path, monkeypatch):
+    monkeypatch.setattr("justsayit.postprocess.config_dir", lambda: tmp_path)
+    p = ensure_dynamic_context_script()
+    assert p == dynamic_context_script_path()
+    assert p.exists()
+    assert p.read_text(encoding="utf-8") == _DYNAMIC_CONTEXT_SCRIPT
+    assert p.stat().st_mode & 0o111
+
+
+def test_ensure_dynamic_context_script_does_not_overwrite(tmp_path, monkeypatch):
+    monkeypatch.setattr("justsayit.postprocess.config_dir", lambda: tmp_path)
+    target = dynamic_context_script_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("#!/bin/sh\nprintf 'custom\\n'\n", encoding="utf-8")
+
+    ensure_dynamic_context_script()
+
+    assert target.read_text(encoding="utf-8") == "#!/bin/sh\nprintf 'custom\\n'\n"
 
 
 def test_ensure_context_file_does_not_overwrite(tmp_path, monkeypatch):

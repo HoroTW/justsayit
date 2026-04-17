@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import subprocess
 import threading
 import tomllib
 import urllib.error
@@ -81,6 +82,7 @@ greetings`
  - some point
  - another point`
 - `laughing emoji` -> `🤣`
+- when the user clearly dictated an emoji phrase, collapse the WHOLE phrase to only the emoji (`thinking face emoji`, `questioning emoji`, slight STT mishears like `Fragen da Emoji` -> `🤔`, not `Fragen da 🤔`)
 - code-y words in backticks: 'The cat command is helpful.' -> 'The `cat` command is helpful.'
 
 # Examples of what NOT to change
@@ -165,6 +167,7 @@ greetings`
  - some point
  - another point`
 - `laughing emoji` -> `🤣`
+- when the user clearly dictated an emoji phrase, collapse the WHOLE phrase to only the emoji (`thinking face emoji`, `questioning emoji`, slight STT mishears like `Fragen da Emoji` -> `🤔`, not `Fragen da 🤔`)
 - code-y words in backticks: 'The cat command is helpful.' -> 'The `cat` command is helpful.'
 
 # Examples of what NOT to change
@@ -533,8 +536,48 @@ context = ""
 '''
 
 
+_DYNAMIC_CONTEXT_SCRIPT = """#!/bin/sh
+set -eu
+
+local_time=$(date +%H:%M:%S)
+local_date=$(date +%F)
+timezone=""
+
+if [ -L /etc/localtime ]; then
+    localtime_target=$(readlink /etc/localtime 2>/dev/null || true)
+    case "$localtime_target" in
+        *zoneinfo/*)
+            timezone=${localtime_target##*zoneinfo/}
+            ;;
+    esac
+fi
+
+if [ -z "$timezone" ] && [ -r /etc/timezone ]; then
+    IFS= read -r timezone < /etc/timezone || true
+fi
+
+if [ -z "$timezone" ]; then
+    timezone=$(date +%Z)
+fi
+
+printf 'Local time: %s\n' "$local_time"
+printf 'Date: %s\n' "$local_date"
+printf 'Timezone: %s\n' "$timezone"
+
+locale_hint=${LC_ALL:-${LC_TIME:-${LANG:-}}}
+locale_hint=${locale_hint%%.*}
+if [ -n "$locale_hint" ] && [ "$locale_hint" != "C" ] && [ "$locale_hint" != "POSIX" ]; then
+    printf 'Locale hint: %s\n' "$locale_hint"
+fi
+"""
+
+
 def context_file_path() -> Path:
     return config_dir() / "context.toml"
+
+
+def dynamic_context_script_path() -> Path:
+    return config_dir() / "dynamic-context.sh"
 
 
 def ensure_context_file(path: Path | None = None) -> Path:
@@ -546,6 +589,17 @@ def ensure_context_file(path: Path | None = None) -> Path:
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(_CONTEXT_SIDECAR_TEMPLATE, encoding="utf-8")
+    return path
+
+
+def ensure_dynamic_context_script(path: Path | None = None) -> Path:
+    """Write the default dynamic-context helper script if missing."""
+    if path is None:
+        path = dynamic_context_script_path()
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_DYNAMIC_CONTEXT_SCRIPT, encoding="utf-8")
+        path.chmod(0o755)
     return path
 
 
@@ -636,6 +690,7 @@ def ensure_default_profiles() -> tuple[Path, Path, Path]:
     Returns ``(cleanup, fun, openai)``.
     """
     ensure_context_file()
+    ensure_dynamic_context_script()
     return (
         ensure_default_profile(),
         ensure_fun_profile(),
@@ -689,11 +744,50 @@ class LLMPostprocessor:
     transcription worker thread.
     """
 
-    def __init__(self, profile: PostprocessProfile) -> None:
+    def __init__(
+        self,
+        profile: PostprocessProfile,
+        *,
+        dynamic_context_script: str = "",
+    ) -> None:
         self.profile = profile
+        self.dynamic_context_script = dynamic_context_script
         self._llm = None
         self._lock = threading.Lock()
         self._paste_strip = self._compile_paste_strip(profile.paste_strip_regex)
+
+    def _dynamic_context(self) -> str:
+        script = self.dynamic_context_script.strip()
+        if not script:
+            return ""
+        try:
+            proc = subprocess.run(
+                ["bash", str(Path(script).expanduser())],
+                capture_output=True,
+                text=True,
+                timeout=1.0,
+                check=False,
+            )
+        except Exception:
+            log.exception("dynamic context script failed to run: %s", script)
+            return ""
+        if proc.returncode != 0:
+            stderr = proc.stderr.strip()
+            if stderr:
+                log.warning(
+                    "dynamic context script exited with %d: %s (%s)",
+                    proc.returncode,
+                    script,
+                    stderr,
+                )
+            else:
+                log.warning(
+                    "dynamic context script exited with %d: %s",
+                    proc.returncode,
+                    script,
+                )
+            return ""
+        return proc.stdout.strip()
 
     @staticmethod
     def _compile_paste_strip(pattern: str) -> re.Pattern[str] | None:
@@ -799,6 +893,9 @@ class LLMPostprocessor:
         # a channel-free variant when the user hasn't customised the prompt.
         if self.profile.endpoint and prompt == _DEFAULT_SYSTEM_PROMPT.strip():
             prompt = _REMOTE_CLEANUP_SYSTEM_PROMPT.strip()
+        dynamic = self._dynamic_context()
+        if dynamic:
+            prompt = f"# STATE (DYNAMIC CONTEXT):\n{dynamic}\n\n----\n\n{prompt}"
         ctx = self.profile.context.strip()
         if ctx:
             prompt = f"{prompt}\n\n# User context\n{ctx}"

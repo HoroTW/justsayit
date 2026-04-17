@@ -57,6 +57,18 @@ def test_default_overlay_fields():
     assert o.opacity == 0.78
 
 
+def test_default_short_segment_skip_field():
+    cfg = Config()
+    assert cfg.audio.skip_segments_below_seconds == pytest.approx(1.0)
+
+
+def test_default_dynamic_context_script_field():
+    cfg = Config()
+    assert cfg.postprocess.dynamic_context_script.endswith(
+        "/justsayit/dynamic-context.sh"
+    )
+
+
 def test_default_log_config():
     l = LogConfig()
     assert l.file_enabled is False
@@ -81,6 +93,14 @@ def test_render_produces_valid_toml():
 def test_render_includes_model_section_with_backend():
     raw = _parsed()
     assert raw["model"]["backend"] == "parakeet"
+
+
+def test_render_includes_short_segment_skip_and_dynamic_context_script():
+    raw = _parsed()
+    assert raw["audio"]["skip_segments_below_seconds"] == pytest.approx(1.0)
+    assert raw["postprocess"]["dynamic_context_script"].endswith(
+        "/justsayit/dynamic-context.sh"
+    )
 
 
 def test_render_includes_whisper_fields():
@@ -115,7 +135,12 @@ def test_render_non_default_backend():
 def test_render_includes_all_parakeet_file_fields():
     raw = _parsed()
     model = raw["model"]
-    for key in ("parakeet_encoder", "parakeet_decoder", "parakeet_joiner", "parakeet_tokens"):
+    for key in (
+        "parakeet_encoder",
+        "parakeet_decoder",
+        "parakeet_joiner",
+        "parakeet_tokens",
+    ):
         assert key in model, f"missing key: {key}"
 
 
@@ -170,9 +195,23 @@ def test_load_config_paste_space_settings(tmp_path):
     assert cfg.paste.append_trailing_space is True
 
 
+def test_load_config_short_segment_skip_and_dynamic_context_script(tmp_path):
+    p = tmp_path / "config.toml"
+    p.write_text(
+        "[audio]\nskip_segments_below_seconds = 0.4\n\n"
+        '[postprocess]\ndynamic_context_script = "~/bin/jit-state.sh"\n',
+        encoding="utf-8",
+    )
+    cfg = load_config(p)
+    assert cfg.audio.skip_segments_below_seconds == pytest.approx(0.4)
+    assert cfg.postprocess.dynamic_context_script == "~/bin/jit-state.sh"
+
+
 def test_load_config_unknown_keys_ignored(tmp_path):
     p = tmp_path / "config.toml"
-    p.write_text("[model]\nbackend = \"parakeet\"\nfuture_setting = 99\n", encoding="utf-8")
+    p.write_text(
+        '[model]\nbackend = "parakeet"\nfuture_setting = 99\n', encoding="utf-8"
+    )
     cfg = load_config(p)  # must not raise
     assert cfg.model.backend == "parakeet"
 
@@ -265,8 +304,8 @@ def test_state_overlay_wins_over_config_toml(tmp_path):
     save_config(runtime, p)
 
     restored = load_config(p)
-    assert restored.vad.enabled is True            # state wins
-    assert restored.model.backend == "whisper"     # config.toml preserved
+    assert restored.vad.enabled is True  # state wins
+    assert restored.model.backend == "whisper"  # config.toml preserved
     assert restored.sound.volume == pytest.approx(0.3)
 
 
@@ -318,6 +357,7 @@ def test_state_overlay_ignores_malformed_file(tmp_path):
 
 def test_resolve_secret_prefers_literal(monkeypatch, tmp_path):
     import justsayit.config as cfg_mod
+
     monkeypatch.setattr(cfg_mod, "config_dir", lambda: tmp_path)
     cfg_mod._DOTENV_LOADED = False
     monkeypatch.setenv("FOO_KEY", "from-env")
@@ -326,6 +366,7 @@ def test_resolve_secret_prefers_literal(monkeypatch, tmp_path):
 
 def test_resolve_secret_falls_back_to_process_env(monkeypatch, tmp_path):
     import justsayit.config as cfg_mod
+
     monkeypatch.setattr(cfg_mod, "config_dir", lambda: tmp_path)
     cfg_mod._DOTENV_LOADED = False
     monkeypatch.setenv("FOO_KEY", "from-env")
@@ -336,6 +377,7 @@ def test_resolve_secret_loads_dotenv(monkeypatch, tmp_path):
     """When the env var isn't already exported, a value from
     <config_dir>/.env should be picked up."""
     import justsayit.config as cfg_mod
+
     monkeypatch.setattr(cfg_mod, "config_dir", lambda: tmp_path)
     cfg_mod._DOTENV_LOADED = False
     monkeypatch.delenv("DOTENV_KEY", raising=False)
@@ -346,32 +388,36 @@ def test_resolve_secret_loads_dotenv(monkeypatch, tmp_path):
 def test_load_dotenv_does_not_override_process_env(monkeypatch, tmp_path):
     """Process env wins over .env (matches python-dotenv default)."""
     import justsayit.config as cfg_mod
+
     monkeypatch.setattr(cfg_mod, "config_dir", lambda: tmp_path)
     cfg_mod._DOTENV_LOADED = False
     monkeypatch.setenv("CONTESTED", "from-shell")
     (tmp_path / ".env").write_text("CONTESTED=from-dotenv\n", encoding="utf-8")
     cfg_mod.load_dotenv(force=True)
     import os
+
     assert os.environ["CONTESTED"] == "from-shell"
 
 
 def test_load_dotenv_strips_quotes_and_export(monkeypatch, tmp_path):
     import justsayit.config as cfg_mod
+
     monkeypatch.setattr(cfg_mod, "config_dir", lambda: tmp_path)
     cfg_mod._DOTENV_LOADED = False
     monkeypatch.delenv("QUOTED", raising=False)
     monkeypatch.delenv("EXPORTED", raising=False)
     monkeypatch.delenv("PLAIN", raising=False)
     (tmp_path / ".env").write_text(
-        '# a comment\n'
+        "# a comment\n"
         'QUOTED="has spaces"\n'
         "EXPORTED='single-q'\n"
-        'export PLAIN=plain-value\n'
-        '\n',
+        "export PLAIN=plain-value\n"
+        "\n",
         encoding="utf-8",
     )
     cfg_mod.load_dotenv(force=True)
     import os
+
     assert os.environ["QUOTED"] == "has spaces"
     assert os.environ["EXPORTED"] == "single-q"
     assert os.environ["PLAIN"] == "plain-value"
@@ -379,6 +425,7 @@ def test_load_dotenv_strips_quotes_and_export(monkeypatch, tmp_path):
 
 def test_load_dotenv_missing_file_is_noop(monkeypatch, tmp_path):
     import justsayit.config as cfg_mod
+
     monkeypatch.setattr(cfg_mod, "config_dir", lambda: tmp_path)
     cfg_mod._DOTENV_LOADED = False
     cfg_mod.load_dotenv(force=True)  # must not raise
@@ -386,6 +433,7 @@ def test_load_dotenv_missing_file_is_noop(monkeypatch, tmp_path):
 
 def test_resolve_secret_returns_empty_when_unset(monkeypatch, tmp_path):
     import justsayit.config as cfg_mod
+
     monkeypatch.setattr(cfg_mod, "config_dir", lambda: tmp_path)
     cfg_mod._DOTENV_LOADED = False
     monkeypatch.delenv("NOPE_KEY", raising=False)

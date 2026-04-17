@@ -14,7 +14,26 @@ Enable in `config.toml` (or toggle from the tray):
 [postprocess]
 enabled = true
 profile = "gemma4-cleanup"   # filename stem under postprocess/
+dynamic_context_script = "~/.config/justsayit/dynamic-context.sh"
 ```
+
+`justsayit init` writes the default `dynamic-context.sh` helper if it is
+missing. justsayit runs that bash script on every LLM request with a
+small timeout. When stdout is non-empty, it is prepended before the
+normal system prompt exactly like this:
+
+```text
+# STATE (DYNAMIC CONTEXT):
+$RESULT
+
+----
+
+$SYSTEM_PROMPT
+```
+
+If the script prints nothing, the state block is omitted entirely. The
+shipped script uses only local, no-network heuristics and prints local
+time, date, timezone, and a locale hint when available.
 
 ## "Hey Computer" — inline assistant mode
 
@@ -67,6 +86,13 @@ different wake word, a different language, or stricter / looser trigger
 semantics, edit your profile's `system_prompt` and the rules change with
 it. Custom profiles (translate, emojify, summarise, …) typically drop the
 assistant-mode block entirely so they always rewrite, never branch.
+
+## Emoji phrases
+
+The shipped cleanup prompts now make the emoji rule explicit: when a
+spoken emoji phrase is clearly intended, the whole dictated phrase should
+collapse to just the emoji, including slight STT mishears. Example:
+`Fragen da Emoji` should become `🤔`, not `Fragen da 🤔`.
 
 ## Shipped profiles
 
@@ -133,6 +159,10 @@ Notes: software engineer; often dictates code-related text.
 Lives in its own file so updates to the shipped profile templates never
 clobber it. A profile-level `context = "..."` (in the profile TOML)
 overrides the sidecar for that one profile.
+
+Dynamic context runs before this static user-context block, so the
+prompt order is: dynamic state first, then the normal system prompt,
+then `# User context` when configured.
 
 ## Custom profiles
 

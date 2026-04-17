@@ -12,6 +12,7 @@ you actually want.
 | `filters.json` | Ordered list of regex post-processing rules. |
 | `.env` | API keys for the OpenAI-compatible LLM and Whisper backends. Same `KEY=VALUE` format as python-dotenv. Process env wins on collision. |
 | `context.toml` | Personal context (name, languages, project spellings) appended to every LLM cleanup prompt. |
+| `dynamic-context.sh` | Bash script run on every LLM request. Its stdout is prepended before the normal system prompt as a dynamic state block when non-empty. |
 | `postprocess/<profile>.toml` | LLM profile (model, prompt, temperature, …). Three are shipped — see [postprocessing.md](postprocessing.md). |
 
 Want to see every available knob? `justsayit show-defaults config` prints
@@ -64,6 +65,19 @@ anything you've already exported in the shell wins — same precedence as
 python-dotenv.
 
 ## Activation modes
+
+## Short-segment Skip
+
+Very short clips can be dropped before any text processing happens:
+
+```toml
+[audio]
+skip_segments_below_seconds = 1.0   # default; 0 disables the skip
+```
+
+Segments below this threshold are ignored before transcription, regex
+filters, and LLM cleanup. The app just logs the skip and clears/hides
+the overlay instead of producing text.
 
 ### Global hotkey (default)
 
@@ -183,6 +197,17 @@ appears as an actual cue to the model. The shipped prompts treat that as
 a best-effort signal anywhere in the transcript, while clearly quoted,
 reported, incidental, or nonsensical uses should remain cleanup-only.
 This is prompt-guided behavior, not a separate hard-coded parser.
+
+```toml
+[postprocess]
+dynamic_context_script = "~/.config/justsayit/dynamic-context.sh"
+```
+
+`justsayit init` writes that script if missing. It is executed on every
+LLM request with a small timeout; when it prints text, justsayit
+prepends it before the normal system prompt in a `# STATE (DYNAMIC CONTEXT):`
+block. The shipped script uses only local heuristics and prints local
+time, date, timezone, and a locale hint when available.
 
 See [docs/postprocessing.md](postprocessing.md).
 

@@ -203,6 +203,7 @@ from justsayit.postprocess import (
     download_llm_model,
     ensure_default_profile,
     ensure_default_profiles,
+    ensure_dynamic_context_script,
     find_hf_q4_filename,
     load_profile,
     profiles_dir,
@@ -224,9 +225,9 @@ MID_SEP_1 = 2
 MID_CONFIGURE_SHORTCUT = 3
 MID_OPEN_CONFIG = 4
 MID_RELOAD_CONFIG = 7
-MID_LLM_SUBMENU = 8       # "LLM: <profile>" parent item
-MID_LLM_OFF = 9           # "Off" radio item inside the LLM submenu
-MID_LLM_SEP_INNER = 10    # separator before the "Off" item
+MID_LLM_SUBMENU = 8  # "LLM: <profile>" parent item
+MID_LLM_OFF = 9  # "Off" radio item inside the LLM submenu
+MID_LLM_SEP_INNER = 10  # separator before the "Off" item
 MID_SEP_2 = 5
 MID_QUIT = 6
 # LLM profile radio items occupy IDs 100, 101, 102 … (one per profile file)
@@ -242,7 +243,7 @@ class App:
         self.no_paste = no_paste
 
         self.model_paths = None  # set in setup_models (Parakeet only)
-        self.vad_path = None    # set in setup_models (all backends)
+        self.vad_path = None  # set in setup_models (all backends)
         self.transcriber: TranscriberBase | None = None
         self.engine: AudioEngine | None = None
         self.overlay: OverlayWindow | None = None
@@ -303,7 +304,10 @@ class App:
             return
         try:
             profile = load_profile(self.cfg.postprocess.profile)
-            self.postprocessor = LLMPostprocessor(profile)
+            self.postprocessor = LLMPostprocessor(
+                profile,
+                dynamic_context_script=self.cfg.postprocess.dynamic_context_script,
+            )
             log.info(
                 "warming up LLM postprocessor (profile=%s)…",
                 self.cfg.postprocess.profile,
@@ -513,9 +517,7 @@ class App:
                 return
 
             def _apply() -> bool:
-                log.info(
-                    "update available: v%s -> v%s", info.current, info.latest
-                )
+                log.info("update available: v%s -> v%s", info.current, info.latest)
                 if self.overlay is not None:
                     self.overlay.push_update_available(info.latest)
                 self._notify_update_available(info, install_dir)
@@ -525,9 +527,7 @@ class App:
 
         check_async(__version__, _on_result)
 
-    def _notify_update_available(
-        self, info, install_dir: Path | None
-    ) -> None:
+    def _notify_update_available(self, info, install_dir: Path | None) -> None:
         if self.gtk_app is None:
             return
         title = f"justsayit update available: v{info.latest}"
@@ -636,7 +636,9 @@ class App:
         llm_submenu_item: MenuItem | None = None
 
         if profile_names:
-            active = self.cfg.postprocess.profile if self.cfg.postprocess.enabled else None
+            active = (
+                self.cfg.postprocess.profile if self.cfg.postprocess.enabled else None
+            )
 
             def _on_llm_profile(key: str | None) -> None:
                 if key is None:
@@ -654,27 +656,45 @@ class App:
                     try:
                         prof = load_profile(self.cfg.postprocess.profile)
                         self.postprocessor = LLMPostprocessor(prof)
-                        log.info("LLM profile switched to: %s", self.cfg.postprocess.profile)
+                        log.info(
+                            "LLM profile switched to: %s", self.cfg.postprocess.profile
+                        )
                     except Exception:
-                        log.exception("failed to load LLM profile %s", self.cfg.postprocess.profile)
+                        log.exception(
+                            "failed to load LLM profile %s",
+                            self.cfg.postprocess.profile,
+                        )
                 # Update radio states and parent label via ItemsPropertiesUpdated
                 # (not LayoutUpdated) so the client replaces its cached values
                 # directly — LayoutUpdated goes through a merge path that leaves
                 # the previously-selected radio still checked.
-                cur = self.cfg.postprocess.profile if self.cfg.postprocess.enabled else None
+                cur = (
+                    self.cfg.postprocess.profile
+                    if self.cfg.postprocess.enabled
+                    else None
+                )
                 prop_updates: list[tuple[int, dict]] = []
                 for k, item in llm_profile_items.items():
                     item.toggle_state = 1 if k == cur else 0
                     prop_updates.append(
-                        (item.id, {"toggle-state": GLib.Variant("i", item.toggle_state)})
+                        (
+                            item.id,
+                            {"toggle-state": GLib.Variant("i", item.toggle_state)},
+                        )
                     )
                 llm_off_item.toggle_state = 1 if cur is None else 0
                 prop_updates.append(
-                    (llm_off_item.id, {"toggle-state": GLib.Variant("i", llm_off_item.toggle_state)})
+                    (
+                        llm_off_item.id,
+                        {"toggle-state": GLib.Variant("i", llm_off_item.toggle_state)},
+                    )
                 )
                 llm_submenu_item.label = _llm_label()  # type: ignore[union-attr]
                 prop_updates.append(
-                    (llm_submenu_item.id, {"label": GLib.Variant("s", llm_submenu_item.label)})  # type: ignore[union-attr]
+                    (
+                        llm_submenu_item.id,
+                        {"label": GLib.Variant("s", llm_submenu_item.label)},
+                    )  # type: ignore[union-attr]
                 )
                 if self.tray is not None:
                     self.tray.notify_properties_updated(prop_updates)
@@ -698,7 +718,10 @@ class App:
                 toggle_state=1 if active is None else 0,
                 on_activate=lambda: _on_llm_profile(None),
             )
-            children += [MenuItem(id=MID_LLM_SEP_INNER, is_separator=True), llm_off_item]
+            children += [
+                MenuItem(id=MID_LLM_SEP_INNER, is_separator=True),
+                llm_off_item,
+            ]
 
             llm_submenu_item = MenuItem(
                 id=MID_LLM_SUBMENU,
@@ -772,9 +795,7 @@ class App:
         )
         # Icon reflects the live (enabled AND not paused) state so the
         # user can see at a glance whether VAD is actually listening.
-        self.tray.set_icon(
-            ICON_ACTIVE if self.engine.vad_active else ICON_PAUSED
-        )
+        self.tray.set_icon(ICON_ACTIVE if self.engine.vad_active else ICON_PAUSED)
         self.tray.set_tooltip(self._tray_tooltip())
 
     # --- runtime -----------------------------------------------------------
@@ -782,6 +803,17 @@ class App:
     def _handle_segment(self, seg: Segment) -> None:
         assert self.transcriber is not None
         duration = len(seg.samples) / seg.sample_rate
+        min_duration = self.cfg.audio.skip_segments_below_seconds
+        if min_duration > 0 and duration < min_duration:
+            log.info(
+                "skipping short segment: %.2fs < %.2fs (reason=%s)",
+                duration,
+                min_duration,
+                seg.reason,
+            )
+            if self.overlay is not None:
+                self.overlay.push_hide()
+            return
         log.info("transcribing %.2fs (reason=%s)", duration, seg.reason)
         t0 = time.monotonic()
         raw = self.transcriber.transcribe(seg.samples, seg.sample_rate)
@@ -840,7 +872,9 @@ class App:
             if self._last_transcription_time is not None:
                 seg_duration = len(seg.samples) / seg.sample_rate
                 recording_started_at = now - seg_duration
-                elapsed_ms = (recording_started_at - self._last_transcription_time) * 1000.0
+                elapsed_ms = (
+                    recording_started_at - self._last_transcription_time
+                ) * 1000.0
                 if elapsed_ms <= auto_space_ms:
                     log.debug(
                         "auto-space: elapsed=%.0fms ≤ timeout=%dms — prepending space",
@@ -914,6 +948,7 @@ class App:
         app.hold()
         self.gtk_app = app
         if not self.no_overlay:
+
             def _on_overlay_abort() -> None:
                 if self.engine is not None:
                     self.engine.abort()
@@ -997,9 +1032,11 @@ def _write_default_config(force: bool = False, backend: str | None = None) -> No
         print(f"wrote {cfg_path}")
 
     cleanup_path, fun_path, openai_path = ensure_default_profiles()
+    dynamic_context_path = ensure_dynamic_context_script()
     print(f"postprocess profile: {cleanup_path}  (recommended)")
     print(f"postprocess profile: {fun_path}      (emoji-heavy variant)")
     print(f"postprocess profile: {openai_path}   (OpenAI-compatible endpoint)")
+    print(f"dynamic-context script: {dynamic_context_path}")
 
     filters_pre_existed = filters_path.exists()
     if filters_pre_existed and force:
@@ -1018,7 +1055,9 @@ def _download_models_only() -> int:
     if cfg.model.backend == "openai":
         vad = ensure_vad(cfg, force=False)
         print(f"openai backend — VAD model ready: {vad}")
-        print(f"  (transcription served by {cfg.model.openai_endpoint or '<unset endpoint>'})")
+        print(
+            f"  (transcription served by {cfg.model.openai_endpoint or '<unset endpoint>'})"
+        )
     elif cfg.model.backend == "whisper":
         vad = ensure_vad(cfg, force=False)
         print(f"whisper backend — VAD model ready: {vad}")
@@ -1034,6 +1073,7 @@ def _download_models_only() -> int:
                 print(f"LLM endpoint: {profile.endpoint} (model={profile.model!r})")
             elif profile.hf_repo and profile.hf_filename:
                 from justsayit.postprocess import LLMPostprocessor
+
                 pp = LLMPostprocessor(profile)
                 model_path = pp._resolved_model_path()
                 print(f"LLM model ready: {model_path}")
@@ -1110,16 +1150,20 @@ def _ensure_llama_cpp(vulkan: bool = True) -> bool:
     # script (not as an env var) and therefore invisible to a fresh subprocess.
     try:
         import llama_cpp  # noqa: F401
+
         return True
     except ImportError:
         pass
 
     # Fallback subprocess check for uv / pip managed installs where the
     # package may be installed into a venv that sys.executable can reach.
-    if subprocess.run(
-        [sys.executable, "-c", "import llama_cpp"],
-        capture_output=True,
-    ).returncode == 0:
+    if (
+        subprocess.run(
+            [sys.executable, "-c", "import llama_cpp"],
+            capture_output=True,
+        ).returncode
+        == 0
+    ):
         return True
 
     print("\nllama-cpp-python is not installed — installing now.")
@@ -1132,9 +1176,12 @@ def _ensure_llama_cpp(vulkan: bool = True) -> bool:
                 file=sys.stderr,
             )
             return False
-        vulkan_ok = subprocess.run(
-            ["pkg-config", "--exists", "vulkan"], capture_output=True
-        ).returncode == 0
+        vulkan_ok = (
+            subprocess.run(
+                ["pkg-config", "--exists", "vulkan"], capture_output=True
+            ).returncode
+            == 0
+        )
         if not vulkan_ok:
             print(
                 "warning: Vulkan headers not found — falling back to CPU-only build.\n"
@@ -1319,9 +1366,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="disable VAD; record only on hotkey (overrides config)",
     )
-    ap.add_argument(
-        "--config", type=Path, help="override path to config.toml"
-    )
+    ap.add_argument("--config", type=Path, help="override path to config.toml")
     sub = ap.add_subparsers(dest="subcommand")
     init_sub = sub.add_parser("init", help="write default config + example filters")
     init_sub.add_argument(
@@ -1330,7 +1375,10 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="transcription backend to set in config (default: parakeet)",
     )
-    sub.add_parser("download-models", help="pre-download models (Parakeet + VAD, or VAD only for whisper backend)")
+    sub.add_parser(
+        "download-models",
+        help="pre-download models (Parakeet + VAD, or VAD only for whisper backend)",
+    )
     setup_llm_sub = sub.add_parser(
         "setup-llm",
         help="interactively select and download a GGUF LLM for postprocessing",
@@ -1375,16 +1423,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.subcommand == "download-models":
         return _download_models_only()
     if args.subcommand == "setup-llm":
-        return _run_setup_llm(getattr(args, "model", None), cpu=getattr(args, "cpu", False))
+        return _run_setup_llm(
+            getattr(args, "model", None), cpu=getattr(args, "cpu", False)
+        )
     if args.subcommand == "show-defaults":
         if args.kind == "config":
             sys.stdout.write(default_config_toml())
         elif args.kind == "filters":
             import json
 
-            sys.stdout.write(
-                json.dumps(_default_filter_chain(), indent=2) + "\n"
-            )
+            sys.stdout.write(json.dumps(_default_filter_chain(), indent=2) + "\n")
         elif args.kind == "context":
             sys.stdout.write(_CONTEXT_SIDECAR_TEMPLATE)
         elif args.kind == "profile-cleanup":
