@@ -9,7 +9,8 @@ from unittest.mock import patch
 
 import pytest
 
-from justsayit import update_check
+from justsayit import __version__, update_check
+from justsayit.cli import App
 from justsayit.update_check import (
     UpdateInfo,
     check_for_update,
@@ -30,9 +31,7 @@ def test_parse_version_first_match_wins():
     # The Build [tool.hatch.build.targets.wheel] section can also have a
     # version field in some packaging setups; we want the [project] one,
     # which is always first.
-    body = (
-        '[project]\nversion = "0.7.2"\n[tool.foo]\nversion = "9.9.9"\n'
-    )
+    body = '[project]\nversion = "0.7.2"\n[tool.foo]\nversion = "9.9.9"\n'
     assert parse_version_from_pyproject(body) == "0.7.2"
 
 
@@ -89,13 +88,13 @@ def test_check_for_update_returns_none_on_fetch_failure(tmp_path: Path):
 
 def test_check_for_update_uses_cache_within_interval(tmp_path: Path):
     cache = tmp_path / "cache.json"
-    cache.write_text(
-        json.dumps({"checked_at": int(time.time()), "latest": "9.9.9"})
-    )
+    cache.write_text(json.dumps({"checked_at": int(time.time()), "latest": "9.9.9"}))
     # Mocking _fetch_latest to a sentinel ensures we DON'T hit the network.
-    with patch.object(update_check, "_fetch_latest", side_effect=AssertionError(
-        "should not have fetched — cache is fresh"
-    )):
+    with patch.object(
+        update_check,
+        "_fetch_latest",
+        side_effect=AssertionError("should not have fetched — cache is fresh"),
+    ):
         info = check_for_update("0.7.2", cache_path=cache)
     assert info is not None
     assert info.latest == "9.9.9"
@@ -103,9 +102,7 @@ def test_check_for_update_uses_cache_within_interval(tmp_path: Path):
 
 def test_check_for_update_force_bypasses_cache(tmp_path: Path):
     cache = tmp_path / "cache.json"
-    cache.write_text(
-        json.dumps({"checked_at": int(time.time()), "latest": "0.7.2"})
-    )
+    cache.write_text(json.dumps({"checked_at": int(time.time()), "latest": "0.7.2"}))
     with patch.object(update_check, "_fetch_latest", return_value="9.9.9"):
         info = check_for_update("0.7.2", cache_path=cache, force=True)
     assert info is not None and info.latest == "9.9.9"
@@ -117,7 +114,9 @@ def test_check_for_update_expired_cache_refetches(tmp_path: Path):
     cache.write_text(
         json.dumps(
             {
-                "checked_at": int(time.time()) - update_check.CHECK_INTERVAL_SECONDS - 10,
+                "checked_at": int(time.time())
+                - update_check.CHECK_INTERVAL_SECONDS
+                - 10,
                 "latest": "0.7.2",
             }
         )
@@ -133,3 +132,30 @@ def test_check_for_update_corrupt_cache_is_ignored(tmp_path: Path):
     with patch.object(update_check, "_fetch_latest", return_value="1.0.0"):
         info = check_for_update("0.7.2", cache_path=cache)
     assert info is not None and info.latest == "1.0.0"
+
+
+def test_kick_off_update_check_logs_startup_message_and_starts_async(caplog):
+    app = object.__new__(App)
+    app.gtk_app = object()
+    app.overlay = None
+
+    captured: dict[str, object] = {}
+
+    def fake_check_async(current_version, on_result, *, timeout=5.0):
+        captured["current_version"] = current_version
+        captured["on_result"] = on_result
+        captured["timeout"] = timeout
+        return object()
+
+    caplog.set_level("INFO", logger="justsayit")
+
+    with (
+        patch("justsayit.update_check.check_async", side_effect=fake_check_async),
+        patch("justsayit.update_check.detect_install_dir", return_value=None),
+    ):
+        app._kick_off_update_check()
+
+    assert "checking for updates on GitHub..." in caplog.text
+    assert captured["current_version"] == __version__
+    assert callable(captured["on_result"])
+    assert captured["timeout"] == 5.0

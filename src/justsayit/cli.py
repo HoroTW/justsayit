@@ -510,6 +510,7 @@ class App:
             return
         from justsayit.update_check import UpdateInfo, check_async, detect_install_dir
 
+        log.info("checking for updates on GitHub...")
         install_dir = detect_install_dir()
 
         def _on_result(info: UpdateInfo | None) -> None:
