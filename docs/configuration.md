@@ -209,6 +209,9 @@ prepends it before the normal system prompt in a `# STATE (DYNAMIC CONTEXT):`
 block. The shipped script uses only local heuristics and prints local
 time, date, timezone, and a locale hint when available.
 
+Set `postprocess.dynamic_context_script = ""` to disable dynamic
+context entirely.
+
 See [docs/postprocessing.md](postprocessing.md).
 
 ## Logging

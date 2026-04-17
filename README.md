@@ -39,12 +39,13 @@ Local Parakeet v3 voice dictation for Wayland.
   a snippet of code, … without leaving the keyboard. See
   [docs/postprocessing.md#hey-computer--inline-assistant-mode](docs/postprocessing.md#hey-computer--inline-assistant-mode).
 - **Optional LLM cleanup pass** with shipped profiles (cleanup, emoji,
-  OpenAI-compatible endpoint) and **fully customisable system prompts**
-  for emojification, translation, summarisation, or your own style.
-  Runs locally via `llama-cpp-python` or remotely against any
-  **OpenAI-compatible `/chat/completions` endpoint** (OpenAI,
-  OpenRouter, Groq, vLLM, Ollama, LM Studio, …). API keys can live in
-  a shared `~/.config/justsayit/.env`. See [docs/postprocessing.md](docs/postprocessing.md).
+  OpenAI-compatible endpoint), a per-request dynamic-context script, and
+  **fully customisable system prompts** for emojification,
+  translation, summarisation, or your own style. Runs locally via
+  `llama-cpp-python` or remotely against any **OpenAI-compatible
+  `/chat/completions` endpoint** (OpenAI, OpenRouter, Groq, vLLM,
+  Ollama, LM Studio, …). API keys can live in a shared
+  `~/.config/justsayit/.env`. See [docs/postprocessing.md](docs/postprocessing.md).
 - **JSON regex post-processing** with capture groups (default chain
   handles dictated punctuation in DE+EN — works without an LLM)
 - **Personal context sidecar** (`~/.config/justsayit/context.toml`) so
@@ -107,10 +108,11 @@ justsayit setup-llm       # interactive LLM model setup
 ```
 
 See [docs/configuration.md](docs/configuration.md) for activation modes,
-ASR backends (Parakeet / Whisper / OpenAI), overlay, sounds, tray, and
-regex filters. LLM cleanup — shipped profiles, custom prompts (emoji /
-translate / summarise / your own style), OpenAI-compatible endpoints,
-personal-context sidecar — is in [docs/postprocessing.md](docs/postprocessing.md).
+including short-segment skipping, ASR backends (Parakeet / Whisper /
+OpenAI), overlay, sounds, tray, and regex filters. LLM cleanup — shipped
+profiles, custom prompts (emoji / translate / summarise / your own
+style), OpenAI-compatible endpoints, dynamic context, personal-context
+sidecar — is in [docs/postprocessing.md](docs/postprocessing.md).
 
 ## Known gotchas
 
