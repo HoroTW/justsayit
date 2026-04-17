@@ -114,6 +114,26 @@ profiles, custom prompts (emoji / translate / summarise / your own
 style), OpenAI-compatible endpoints, dynamic context, personal-context
 sidecar — is in [docs/postprocessing.md](docs/postprocessing.md).
 
+
+## Update
+
+You can check the [CHANGELOG.md](CHANGELOG.md) for new features and fixes.
+To update, pull the latest changes and run the update command:
+
+```sh
+justsayit --update
+
+# To check for the new feature config flags in the config use:
+diff -u --color <(justsayit show-defaults config) ~/.config/justsayit/config.toml
+# or your favorite diff tool, e.g. meld
+```
+
+
+# for a harder reset + all new config options (but loosing your current):
+justsayit init
+
+```
+
 ## Known gotchas
 
 - **GNOME Mutter** doesn't implement `zwlr_layer_shell_v1`. Run with
