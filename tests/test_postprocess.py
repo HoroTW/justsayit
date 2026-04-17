@@ -10,7 +10,6 @@ import pytest
 
 from justsayit.config import (
     Config,
-    defaults_baseline_path,
     load_config,
     render_config_toml,
 )
@@ -437,49 +436,51 @@ def test_load_profile_context_field_overrides_sidecar(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Profile-TOML defaults baselines
+# Commented-defaults form: fresh write, legacy migration, post-migration noop
 # ---------------------------------------------------------------------------
 
 
-def test_ensure_default_profile_writes_baseline_on_fresh_install(tmp_path: Path):
+def test_ensure_default_profile_writes_commented_template_on_fresh_install(tmp_path: Path):
     p = tmp_path / "gemma4-cleanup.toml"
     ensure_default_profile(p)
-    baseline = defaults_baseline_path(p)
-    assert baseline.exists(), (
-        "profile baseline should be snapshotted under .baseline/ on first write"
-    )
-    assert baseline.parent.name == ".baseline"
-    assert baseline.read_text(encoding="utf-8") == _CLEANUP_PROFILE_TOML
+    assert p.read_text(encoding="utf-8") == _CLEANUP_PROFILE_TOML
 
 
-def test_ensure_fun_profile_writes_baseline_on_fresh_install(tmp_path: Path):
+def test_ensure_fun_profile_writes_commented_template_on_fresh_install(tmp_path: Path):
     p = tmp_path / "gemma4-fun.toml"
     ensure_fun_profile(p)
-    baseline = defaults_baseline_path(p)
-    assert baseline.exists()
-    assert baseline.read_text(encoding="utf-8") == _FUN_PROFILE_TOML
+    assert p.read_text(encoding="utf-8") == _FUN_PROFILE_TOML
 
 
-def test_ensure_default_profile_heals_baseline_when_user_in_sync(tmp_path: Path):
-    """Pre-baseline install: the user's profile TOML happens to match the
-    current shipped default verbatim. Next app start should snapshot the
-    baseline silently so future install.sh --update lands in Case 1/2,
-    not Case 5."""
+def test_ensure_default_profile_migrates_legacy_fully_populated_file(tmp_path: Path):
+    """A legacy profile in the old fully-populated form (uncommented
+    key=value lines, no commented-form marker) gets backed up exactly
+    once and rewritten in commented-defaults form."""
     p = tmp_path / "gemma4-cleanup.toml"
-    p.write_text(_CLEANUP_PROFILE_TOML, encoding="utf-8")
-    assert not defaults_baseline_path(p).exists()
+    legacy = '# my custom profile\nmodel_path = "/tmp/x.gguf"\ntemperature = 0.5\n'
+    p.write_text(legacy, encoding="utf-8")
     ensure_default_profile(p)
-    assert defaults_baseline_path(p).exists()
+    backup = p.with_name(p.name + ".bak-pre-commented-form")
+    assert backup.exists()
+    assert backup.read_text(encoding="utf-8") == legacy
+    assert p.read_text(encoding="utf-8") == _CLEANUP_PROFILE_TOML
 
 
-def test_ensure_default_profile_does_not_heal_when_user_customised(tmp_path: Path):
-    """If the on-disk profile diverges from the shipped default, no
-    auto-baseline. The first --update will then land in Case 5 (plain
-    diff prompt) and write the baseline only after the user accepts."""
+def test_ensure_default_profile_preserves_user_overrides_post_migration(tmp_path: Path):
+    """After migration the file carries the commented-form marker. Even
+    if the user uncomments and edits a key, subsequent ensure_*() calls
+    must NOT back up + reset (that would discard their override) — the
+    marker tells us we're already in the new form."""
     p = tmp_path / "gemma4-cleanup.toml"
-    p.write_text("# my custom profile\nmodel_path = \"/tmp/x.gguf\"\n", encoding="utf-8")
+    user_edited = (
+        _CLEANUP_PROFILE_TOML.rstrip()
+        + "\n\n# user override\ntemperature = 0.42\n"
+    )
+    p.write_text(user_edited, encoding="utf-8")
     ensure_default_profile(p)
-    assert not defaults_baseline_path(p).exists()
+    assert p.read_text(encoding="utf-8") == user_edited
+    backup = p.with_name(p.name + ".bak-pre-commented-form")
+    assert not backup.exists()
 
 
 # ---------------------------------------------------------------------------

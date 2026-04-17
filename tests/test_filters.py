@@ -9,7 +9,6 @@ import pytest
 
 from justsayit.config import (
     _default_filter_chain,
-    defaults_baseline_path,
     ensure_filters_file,
 )
 from justsayit.filters import (
@@ -376,64 +375,9 @@ def test_ensure_filters_file_does_not_overwrite(tmp_path: Path):
     assert p.read_text(encoding="utf-8") == "[]"
 
 
-def test_defaults_baseline_path_format(tmp_path: Path):
-    # Convention is "<dir>/.baseline/<name>" — keeps the snapshots out of
-    # the visible config tree. install.sh's baseline_path_for() derives
-    # the same path with shell parameter expansion.
-    assert defaults_baseline_path(tmp_path / "filters.json") == (
-        tmp_path / ".baseline" / "filters.json"
-    )
-    assert defaults_baseline_path(tmp_path / "config.toml") == (
-        tmp_path / ".baseline" / "config.toml"
-    )
-    # Nested dirs (postprocess profiles): each dir gets its own .baseline/.
-    sub = tmp_path / "postprocess"
-    assert defaults_baseline_path(sub / "gemma4-cleanup.toml") == (
-        sub / ".baseline" / "gemma4-cleanup.toml"
-    )
-
-
-def test_ensure_filters_file_writes_baseline_on_fresh_install(tmp_path: Path):
+def test_ensure_filters_file_writes_default_chain_on_fresh_install(tmp_path: Path):
     p = tmp_path / "filters.json"
+    assert not p.exists()
     ensure_filters_file(p)
-    baseline = defaults_baseline_path(p)
-    assert baseline.exists(), "baseline sidecar should be written alongside filters.json"
-    assert baseline.read_text(encoding="utf-8") == p.read_text(encoding="utf-8")
-
-
-def test_ensure_filters_file_heals_baseline_when_user_in_sync(tmp_path: Path):
-    # Pre-baseline install: user has the current shipped defaults verbatim
-    # but no baseline file. Next app start should snapshot one silently.
-    p = tmp_path / "filters.json"
-    p.write_text(
-        json.dumps(_default_filter_chain(), indent=2) + "\n", encoding="utf-8"
-    )
-    ensure_filters_file(p)
-    assert defaults_baseline_path(p).exists()
-
-
-def test_ensure_filters_file_does_not_heal_when_user_customised(tmp_path: Path):
-    # Pre-baseline install with a customised file: no auto-baseline. The
-    # update path will degrade to a plain diff prompt and write the
-    # baseline only after the user accepts/rejects.
-    p = tmp_path / "filters.json"
-    p.write_text("[]", encoding="utf-8")
-    ensure_filters_file(p)
-    assert not defaults_baseline_path(p).exists()
-
-
-def test_ensure_filters_file_migrates_legacy_baseline(tmp_path: Path):
-    # Pre-0.8.7 layout had the sidecar next to the user file as
-    # "<stem>.defaults-baseline.<ext>". On next app start the helper
-    # should move it into the new ".baseline/" subdir transparently and
-    # delete the legacy file. User file content is irrelevant — this is
-    # purely a migration of the baseline snapshot.
-    p = tmp_path / "filters.json"
-    p.write_text("[]", encoding="utf-8")
-    legacy = tmp_path / "filters.defaults-baseline.json"
-    legacy.write_text("legacy snapshot", encoding="utf-8")
-    ensure_filters_file(p)
-    new = defaults_baseline_path(p)
-    assert new.exists(), "baseline should have moved into .baseline/"
-    assert new.read_text(encoding="utf-8") == "legacy snapshot"
-    assert not legacy.exists(), "legacy sidecar should be gone after migration"
+    assert p.exists()
+    assert json.loads(p.read_text(encoding="utf-8")) == _default_filter_chain()

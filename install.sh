@@ -269,143 +269,37 @@ fi
 
 # --- update mode: prompt to refresh user config files ---------------------
 
-# Baseline path matching defaults_baseline_path() in config.py:
-# <dir>/foo.ext -> <dir>/.baseline/foo.ext. Each directory holds its
-# own .baseline/ subdir so the snapshots don't clutter the visible
-# config tree.
-#
-# Side effect: if a pre-0.8.7 sidecar exists at the legacy location
-# (<dir>/foo.defaults-baseline.ext), it's moved into the new layout
-# transparently. Idempotent.
-baseline_path_for() {
-    _f=$1
-    _dir=$(dirname "$_f")
-    _base=$(basename "$_f")
-    _new="$_dir/.baseline/$_base"
-    case "$_base" in
-        *.*)
-            _stem=${_base%.*}
-            _ext=${_base##*.}
-            _legacy="$_dir/$_stem.defaults-baseline.$_ext"
-            ;;
-        *)
-            _legacy="$_dir/$_base.defaults-baseline"
-            ;;
-    esac
-    if [ -f "$_legacy" ]; then
-        if [ -f "$_new" ]; then
-            rm -f "$_legacy"
-        else
-            mkdir -p "$_dir/.baseline" 2>/dev/null && mv "$_legacy" "$_new" 2>/dev/null
-        fi
-    fi
-    echo "$_new"
-}
-
-# Reconcile the user's $1 against the freshly-rendered defaults from
-# `BIN show-defaults $2`. Five cases. Default action across all
-# decision-prompt cases is "take the shipped defaults" — we ship them
-# to be used, and the previous file is always saved as .bak.<ts> so
-# users can re-apply any customisations from there.
-#   1. user == new                   → in sync, no-op (catch up baseline)
-#   2. user == baseline, baseline != new → never customised, defaults moved → [Y/n]
-#   3. baseline == new, user != new  → user customised, defaults didn't move → no-op
-#   4. all three differ              → 3-way: show two diffs, [Y/n]
-#   5. baseline missing              → migration: plain diff + [Y/n]
-# Backups always go to $_USER_FILE.bak.<ts> before any overwrite.
+# Simple "diff and prompt" reconcile for files that have no commented-
+# defaults form (filters.json, since JSON has no comment syntax). For
+# config.toml + the two postprocess profile TOMLs we ship the commented-
+# defaults form: every key is a commented default, only the user's
+# uncommented overrides matter, and shipped-default drift never
+# collides with their settings — so those files don't need reconciling
+# at all.
 maybe_update_user_file() {
     _USER_FILE=$1
     _KIND=$2
     [ -f "$_USER_FILE" ] || return 0
-    _BASELINE=$(baseline_path_for "$_USER_FILE")
-    # Ensure the .baseline/ subdir exists before any cp into $_BASELINE.
-    # Best-effort — if the mkdir fails the cp will too and the function
-    # will still complete (baseline tracking is non-essential).
-    mkdir -p "$(dirname "$_BASELINE")" 2>/dev/null || true
-
     _NEW=$(mktemp -t justsayit-defaults.XXXXXX)
     if ! "$BIN" show-defaults "$_KIND" >"$_NEW" 2>/dev/null; then
         echo "  could not render defaults for $_KIND — skipping." >&2
         rm -f "$_NEW"
         return 0
     fi
-
-    # Case 1: already in sync. Refresh baseline if missing/stale and exit.
     if cmp -s "$_USER_FILE" "$_NEW"; then
-        if [ ! -f "$_BASELINE" ] || ! cmp -s "$_BASELINE" "$_NEW"; then
-            cp "$_NEW" "$_BASELINE"
-        fi
         rm -f "$_NEW"
         return 0
     fi
-
-    if [ -f "$_BASELINE" ]; then
-        # Case 3: defaults haven't moved, user customised — leave alone.
-        if cmp -s "$_BASELINE" "$_NEW"; then
-            rm -f "$_NEW"
-            return 0
-        fi
-        # Case 2: never customised, just stale shipped defaults.
-        if cmp -s "$_USER_FILE" "$_BASELINE"; then
-            echo
-            echo "==> $_KIND: shipped defaults have changed and your file"
-            echo "    matches the previous shipped defaults exactly (you"
-            echo "    never customised it)."
-            echo "    ($_USER_FILE)"
-            if command -v diff >/dev/null 2>&1; then
-                echo "    diff (your current file -> new shipped defaults), first 60 lines:"
-                diff -u "$_USER_FILE" "$_NEW" | sed 's/^/      /' | head -60
-            fi
-            if [ -t 0 ]; then
-                printf "Update to new shipped defaults? [Y/n] "
-                read -r _REPLY
-            else
-                _REPLY="y"
-            fi
-            case "$_REPLY" in
-                [Nn]*)
-                    rm -f "$_NEW"
-                    echo "  kept current $_USER_FILE."
-                    return 0
-                    ;;
-            esac
-            _TS=$(date +%Y%m%d-%H%M%S)
-            cp -v "$_USER_FILE" "$_USER_FILE.bak.$_TS"
-            mv "$_NEW" "$_USER_FILE"
-            cp "$_USER_FILE" "$_BASELINE"
-            echo "  updated. Old file kept at $_USER_FILE.bak.$_TS"
-            return 0
-        fi
-        # Case 4: both diverged. Two diffs make the situation clear.
-        echo
-        echo "==> $_KIND: shipped defaults have moved AND you customised the file."
-        echo "    ($_USER_FILE)"
-        if command -v diff >/dev/null 2>&1; then
-            echo
-            echo "    Changes in shipped defaults since you installed (first 60 lines):"
-            diff -u "$_BASELINE" "$_NEW" | sed 's/^/      /' | head -60
-            echo
-            echo "    Your local customisations vs the previous defaults (first 60 lines):"
-            diff -u "$_BASELINE" "$_USER_FILE" | sed 's/^/      /' | head -60
-        fi
-        echo
-        echo "    Replacing will discard your customisations (kept as .bak —"
-        echo "    re-apply your edits from there)."
-    else
-        # Case 5: pre-baseline migration. Can't tell stale from customised.
-        echo
-        echo "==> $_KIND differs from current shipped defaults."
-        echo "    (no baseline on disk — can't tell new defaults from your edits.)"
-        echo "    ($_USER_FILE)"
-        if command -v diff >/dev/null 2>&1; then
-            echo "    diff (your current file -> new shipped defaults), first 60 lines:"
-            diff -u "$_USER_FILE" "$_NEW" | sed 's/^/      /' | head -60
-        fi
-        echo
-        echo "    Replacing will overwrite the file (kept as .bak — re-apply"
-        echo "    any local edits from there)."
+    echo
+    echo "==> $_KIND differs from the latest shipped defaults."
+    echo "    ($_USER_FILE)"
+    if command -v diff >/dev/null 2>&1; then
+        echo "    diff (your current file -> shipped defaults), first 60 lines:"
+        diff -u "$_USER_FILE" "$_NEW" | sed 's/^/      /' | head -60
     fi
-
+    echo
+    echo "    Replacing will overwrite the file (kept as .bak — re-apply"
+    echo "    any local edits from there)."
     if [ -t 0 ]; then
         printf "Replace with new shipped defaults? Current file will be backed up. [Y/n] "
         read -r _REPLY
@@ -421,7 +315,6 @@ maybe_update_user_file() {
             _TS=$(date +%Y%m%d-%H%M%S)
             cp -v "$_USER_FILE" "$_USER_FILE.bak.$_TS"
             mv "$_NEW" "$_USER_FILE"
-            cp "$_USER_FILE" "$_BASELINE"
             echo "  updated. Old file kept at $_USER_FILE.bak.$_TS"
             ;;
     esac
@@ -429,27 +322,19 @@ maybe_update_user_file() {
 
 if [ "$UPDATE" -eq 1 ]; then
     _CFG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}/$CONFIG_DIR_NAME
-    # config.toml and state.toml are intentionally NOT reconciled.
-    # config.toml is the user's authored settings; the app never
-    # rewrites it (since 0.8.8 the runtime-mutable subset —
-    # vad.enabled, postprocess.enabled, postprocess.profile — lives in
-    # state.toml instead so toggles don't nuke comments). New config
-    # keys we add inherit dataclass defaults in src/justsayit/config.py
-    # for old user configs; no overwrite needed. Power users can diff
-    # with `justsayit show-defaults config`.
+    # config.toml + postprocess profile TOMLs ship in commented-defaults
+    # form (every key is a commented default; uncommented lines are the
+    # user's overrides). New shipped defaults change only the comments,
+    # never colliding with overrides, so no reconcile is needed for
+    # those. context.toml is pure user data and never reconciled.
     if [ -f "$_CFG_HOME/config.toml" ]; then
         echo
-        echo "==> config.toml left untouched (it's your settings, not a"
-        echo "    shipped template). Run \`justsayit show-defaults config\`"
-        echo "    to compare against the latest shipped defaults if you"
-        echo "    want to discover new knobs."
+        echo "==> config.toml left untouched (commented-defaults form —"
+        echo "    your uncommented overrides keep working as defaults"
+        echo "    drift). Run \`justsayit show-defaults config\` to see"
+        echo "    the current shipped values."
     fi
     maybe_update_user_file "$_CFG_HOME/filters.json" "filters"
-    # Shipped postprocess profiles. context.toml lives elsewhere (it's
-    # pure user data, never overwritten — created by the app on first
-    # run via ensure_context_file()).
-    maybe_update_user_file "$_CFG_HOME/postprocess/gemma4-cleanup.toml" "profile-cleanup"
-    maybe_update_user_file "$_CFG_HOME/postprocess/gemma4-fun.toml" "profile-fun"
 
     # Defense-in-depth: catch the case where the venv was rebuilt by an
     # older install.sh (or by the user manually) and llama-cpp-python

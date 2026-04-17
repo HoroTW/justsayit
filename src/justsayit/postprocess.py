@@ -25,7 +25,7 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
 
-from justsayit.config import config_dir, write_or_heal_baseline
+from justsayit.config import config_dir, ensure_commented_form_file
 
 log = logging.getLogger(__name__)
 
@@ -115,145 +115,135 @@ Emojify the transcript as much as possible. Keep the original wording and order,
 """
 
 
-# Written to disk on first ``justsayit init`` so the user can inspect and
-# customise it without having to know the TOML schema.  Embed the system
-# prompt in a TOML triple-quoted basic string ("""…""") so newlines stay
-# real and the file is readable; this requires the Python literal itself
-# to use single-quoted '''…''' delimiters so the embedded """ aren't
+# Distinctive header line embedded in commented-defaults profile files.
+# Used by ``ensure_default_profile`` / ``ensure_fun_profile`` to recognise
+# files we've already migrated to the commented form (so we don't keep
+# backing them up on each install). Mirrors the marker in config.py.
+_PROFILE_COMMENTED_FORM_MARKER = (
+    "# justsayit postprocess profile (commented-defaults form)."
+)
+
+
+# Written to disk on first ``justsayit init``. Uses the "commented
+# defaults" convention: every value line is commented out so the file
+# acts as in-place documentation. Users uncomment + edit only the keys
+# they actually want to override; everything else tracks the dataclass
+# default. Embedded with single-quoted '''…''' so embedded """ aren't
 # parsed as the closing delimiter.
 _CLEANUP_PROFILE_TOML = f'''\
-# justsayit postprocessing profile — gemma4-cleanup (recommended default)
+{_PROFILE_COMMENTED_FORM_MARKER}
+# Profile: gemma4-cleanup (recommended everyday default).
 #
-# Enable this profile in config.toml:
+# Every key below is commented out — that means "use the shipped default".
+# Uncomment a line and change the value to override it for this profile.
+# Lines you don't touch keep tracking the shipped defaults, so future
+# updates that tweak a default just work.
+#
+# Activate this profile from the tray's LLM submenu, or set in
+# ~/.config/justsayit/state.toml:
 #   [postprocess]
 #   enabled = true
 #   profile = "gemma4-cleanup"
 #
-# Then install the inference backend (with Vulkan GPU support):
-#   CMAKE_ARGS="-DGGML_VULKAN=1" uv pip install llama-cpp-python
+# (See gemma4-fun.toml for an example with overrides uncommented.)
 #
-# And download a GGUF model.  Example (adjust to your preferred quant):
-#   wget -P ~/.cache/justsayit/models/llm/ \\
-#     https://huggingface.co/<repo>/resolve/main/<model>.gguf
+# Inference backend setup (with Vulkan GPU support):
+#   CMAKE_ARGS="-DGGML_VULKAN=1" uv pip install llama-cpp-python
+# Then run `justsayit setup-llm` to download a GGUF model.
 
-# Path to the GGUF model file.  ~ is expanded.
-model_path = "~/.cache/justsayit/models/llm/gemma-4-E4B-it-Q4_K_M.gguf"
+# Path to the GGUF model file. ~ is expanded.
+# model_path = "~/.cache/justsayit/models/llm/gemma-4-E4B-it-Q4_K_M.gguf"
 
-# Optional: HuggingFace repo + filename for auto-download via
-#   justsayit download-models
-# Set both to enable; leave empty to manage the file yourself.
-hf_repo = "unsloth/gemma-4-E4B-it-GGUF"
-hf_filename = "gemma-4-E4B-it-Q4_K_M.gguf"
+# HuggingFace source for auto-download via `justsayit setup-llm`.
+# hf_repo = "unsloth/gemma-4-E4B-it-GGUF"
+# hf_filename = "gemma-4-E4B-it-Q4_K_M.gguf"
 
-# GPU layer offloading.  -1 = all layers on GPU (fastest).  0 = CPU only.
-n_gpu_layers = -1
+# GPU layer offloading. -1 = all layers on GPU (fastest). 0 = CPU only.
+# n_gpu_layers = -1
 
 # Context window size in tokens.
-n_ctx = 4096
+# n_ctx = 4096
 
-# Temperature.  Keep very low (≤ 0.1) for deterministic cleanup.
-temperature = 0.08
+# Temperature. Keep very low (≤ 0.1) for deterministic cleanup.
+# temperature = 0.08
 
 # Hard cap on generated tokens.
-max_tokens = 4096
+# max_tokens = 4096
 
-# System prompt.  Edit freely — the model reads this before every request.
-#
-# The default prompt enables Gemma's "thinking" channel (the `<|think|>`
-# token makes the model emit a `<|channel>...<channel|>` reasoning block
-# before its real reply).  This usually improves quality on ambiguous
-# "Hey Computer" requests but adds latency and produces extra text that
-# has to be stripped before pasting (see `paste_strip_regex` below).
-#
-# To disable thinking entirely: remove the `<|think|>` marker from the
-# prompt.  The model will then reply directly with the cleaned text and
-# you can also clear `paste_strip_regex` since there is no channel block
-# to strip.
-system_prompt = """
-{_DEFAULT_SYSTEM_PROMPT}"""
+# User message template. {{text}} is replaced with the raw transcription.
+# user_template = "{{text}}"
 
-# User message template.  {{text}} is replaced with the raw transcription.
-user_template = "{{text}}"
+# Regex (re.DOTALL) applied to the LLM output before paste, but NOT
+# before display in the overlay. Default strips Gemma's thinking-channel
+# block. Set to "" if you remove `<|think|>` from system_prompt.
+# paste_strip_regex = '<\\|channel>thought(.*?)<channel\\|>'
 
-# Optional regex (re.DOTALL) applied to the LLM output before it is pasted
-# but NOT before it is shown in the overlay. Useful for "thinking" models
-# whose output contains a reasoning preamble that should not land in the
-# focused window. Empty = no stripping.
-#
-# The default below matches Gemma's channel block — note the tags are
-# ASYMMETRIC: the opening is `<|channel>` (one pipe, before `channel`)
-# and the closing is `<channel|>` (one pipe, after).  Don't add a second
-# pipe to the opening — the model never emits `<|channel|>`.
-#
-# Wrap the parts you want SHOWN in the overlay in a capture group `(…)` —
-# the whole match is still stripped from the paste, but only the captured
-# content is displayed as the "thought". Without a capture group, the
-# entire match (including the framing tokens) is shown.
-#
-# Examples:
-#   # Gemma thinking channel — drops the literal `thought` label too:
-#   paste_strip_regex = '<\\|channel>thought(.*?)<channel\\|>'
-#   # Generic <think>…</think> — show only inner content:
-#   paste_strip_regex = '<think>(.*?)</think>'
-#   # Strip everything before the final answer — nothing to show:
-#   paste_strip_regex = '(?s)^.*?</think>'
-paste_strip_regex = '<\\|channel>thought(.*?)<channel\\|>'
+# System prompt — the cleanup prompt is the dataclass default. Uncomment
+# to override it for this profile. The default enables Gemma's "thinking"
+# channel (the `<|think|>` token in the prompt makes the model emit a
+# `<|channel>...<channel|>` reasoning block); pair changes here with
+# `paste_strip_regex` above.
+# system_prompt = """
+# {_DEFAULT_SYSTEM_PROMPT}"""
 
 # User-context lives in a shared sidecar so it's preserved across
-# profile updates: ~/.config/justsayit/context.toml. To set per-profile
-# context that overrides the sidecar, uncomment and fill in:
-#
-#   context = """
-#   Name: Jane Doe
-#   ...
-#   """
+# profile updates: ~/.config/justsayit/context.toml. Uncomment to set
+# per-profile context that overrides the sidecar:
+# context = """
+# Name: Jane Doe
+# ...
+# """
 '''
 
 
-# Companion "fun" profile — a tiny stub that emojifies the transcript.
-# Written alongside gemma4-cleanup so users can flip via the `profile`
-# config field without composing a prompt themselves. The header
-# explicitly points back at the recommended cleanup profile so anyone
-# who lands here by accident knows where to go for serious dictation.
+# Companion "fun" profile — emojifies the transcript. Demonstrates what
+# the commented-defaults form looks like with actual overrides: the
+# three keys that DEFINE the fun flavor (system_prompt, temperature,
+# paste_strip_regex) stay uncommented, everything else falls through to
+# the dataclass default.
 _FUN_PROFILE_TOML = f'''\
-# justsayit postprocessing profile — gemma4-fun
+{_PROFILE_COMMENTED_FORM_MARKER}
+# Profile: gemma4-fun (playful sibling of gemma4-cleanup).
 #
-# Playful sibling of `gemma4-cleanup`: keeps the wording but sprinkles
-# in plenty of emojis. Use it when you want a chatty, expressive tone
-# in messages or social posts.
+# Same commented-defaults convention as gemma4-cleanup.toml: comment =
+# uses default, uncommented line = override. The three uncommented keys
+# below (system_prompt, temperature, paste_strip_regex) are what makes
+# this the "fun" profile — leave them as-is unless you want to customise
+# the playful flavor.
 #
 # For everyday cleanup, switch back to the recommended default:
 #   profile = "gemma4-cleanup"
 #
-# Activate this one in config.toml:
+# Activate from the tray's LLM submenu, or set in
+# ~/.config/justsayit/state.toml:
 #   [postprocess]
 #   enabled = true
 #   profile = "gemma4-fun"
 
 # Same model file as gemma4-cleanup — if you ran `setup-llm` once you
 # already have it on disk and no extra download happens.
-model_path = "~/.cache/justsayit/models/llm/gemma-4-E4B-it-Q4_K_M.gguf"
-hf_repo = "unsloth/gemma-4-E4B-it-GGUF"
-hf_filename = "gemma-4-E4B-it-Q4_K_M.gguf"
+# model_path = "~/.cache/justsayit/models/llm/gemma-4-E4B-it-Q4_K_M.gguf"
+# hf_repo = "unsloth/gemma-4-E4B-it-GGUF"
+# hf_filename = "gemma-4-E4B-it-Q4_K_M.gguf"
 
-n_gpu_layers = -1
-n_ctx = 4096
+# n_gpu_layers = -1
+# n_ctx = 4096
+# max_tokens = 4096
+# user_template = "{{text}}"
 
 # Slightly higher temperature so emoji choice has some variety.
 temperature = 0.4
-max_tokens = 4096
-
-system_prompt = """
-{_FUN_SYSTEM_PROMPT}"""
-
-user_template = "{{text}}"
 
 # No `<|think|>` in the prompt → no channel block to strip.
 paste_strip_regex = ""
 
+# Override: this is the "fun" prompt. Edit freely.
+system_prompt = """
+{_FUN_SYSTEM_PROMPT}"""
+
 # User-context lives in ~/.config/justsayit/context.toml (shared across
-# profiles). Set `context = """..."""` here only to override the sidecar
-# for this specific profile.
+# profiles). Uncomment to override the sidecar for this profile only:
+# context = ""
 '''
 
 
@@ -363,17 +353,16 @@ def load_context_sidecar(path: Path | None = None) -> str:
 def ensure_default_profile(path: Path | None = None) -> Path:
     """Write the recommended ``gemma4-cleanup.toml`` profile if it's missing.
 
-    Writes the cleanup-style template (the conservative everyday default).
-    Used both by ``justsayit init`` and by ``setup-llm`` when seeding a
-    per-model profile.
+    Writes the cleanup-style template in commented-defaults form. Used
+    both by ``justsayit init`` and by ``setup-llm`` when seeding a
+    per-model profile. Pre-existing legacy fully-populated profile
+    files get backed up + rewritten once (see ``ensure_commented_form_file``).
     """
     if path is None:
         path = profiles_dir() / "gemma4-cleanup.toml"
-    just_written = not path.exists()
-    if just_written:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(_CLEANUP_PROFILE_TOML, encoding="utf-8")
-    write_or_heal_baseline(path, _CLEANUP_PROFILE_TOML, just_written=just_written)
+    ensure_commented_form_file(
+        path, _CLEANUP_PROFILE_TOML, _PROFILE_COMMENTED_FORM_MARKER
+    )
     return path
 
 
@@ -383,14 +372,13 @@ def ensure_fun_profile(path: Path | None = None) -> Path:
     A tiny emoji-heavy variant of the cleanup profile, written alongside
     it on first ``init`` so users discover the schema and have an obvious
     second profile to switch to via the ``profile`` config field.
+    Same migration treatment as ``ensure_default_profile``.
     """
     if path is None:
         path = profiles_dir() / "gemma4-fun.toml"
-    just_written = not path.exists()
-    if just_written:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(_FUN_PROFILE_TOML, encoding="utf-8")
-    write_or_heal_baseline(path, _FUN_PROFILE_TOML, just_written=just_written)
+    ensure_commented_form_file(
+        path, _FUN_PROFILE_TOML, _PROFILE_COMMENTED_FORM_MARKER
+    )
     return path
 
 

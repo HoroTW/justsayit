@@ -182,11 +182,9 @@ from justsayit import __version__
 from justsayit.audio import AudioEngine, Segment, State
 from justsayit.config import (
     Config,
-    _default_filter_chain,
     cache_dir,
     config_dir,
     default_config_toml,
-    defaults_baseline_path,
     ensure_config_file,
     ensure_dirs,
     ensure_filters_file,
@@ -975,33 +973,34 @@ def _write_default_config(force: bool = False, backend: str | None = None) -> No
     cfg_path = config_dir() / "config.toml"
     filters_path = config_dir() / "filters.json"
 
-    if cfg_path.exists() and not force:
+    cfg_pre_existed = cfg_path.exists()
+    if cfg_pre_existed and force:
+        cfg_path.unlink()
+        cfg_pre_existed = False
+    ensure_config_file(cfg_path)
+    if cfg_pre_existed:
         print(f"config already exists: {cfg_path}", file=sys.stderr)
     else:
-        cfg = Config()
-        if backend is not None:
-            cfg.model.backend = backend
-        rendered = render_config_toml(cfg)
-        cfg_path.write_text(rendered, encoding="utf-8")
-        # Snapshot the defaults baseline so future install.sh --update
-        # runs can tell stale shipped defaults apart from user edits.
-        defaults_baseline_path(cfg_path).write_text(rendered, encoding="utf-8")
+        if backend is not None and backend != Config().model.backend:
+            # Append an uncommented [model] override so the user's
+            # explicit --backend choice survives the commented-defaults
+            # form. TOML allows reopening a section.
+            with cfg_path.open("a", encoding="utf-8") as f:
+                f.write(f'\n[model]\nbackend = "{backend}"\n')
         print(f"wrote {cfg_path}")
 
     cleanup_path, fun_path = ensure_default_profiles()
     print(f"postprocess profile: {cleanup_path}  (recommended)")
     print(f"postprocess profile: {fun_path}      (emoji-heavy variant)")
 
-    if filters_path.exists() and not force:
+    filters_pre_existed = filters_path.exists()
+    if filters_pre_existed and force:
+        filters_path.unlink()
+        filters_pre_existed = False
+    ensure_filters_file(filters_path)
+    if filters_pre_existed:
         print(f"filters already exist: {filters_path}", file=sys.stderr)
     else:
-        import json
-
-        rendered_filters = json.dumps(_default_filter_chain(), indent=2) + "\n"
-        filters_path.write_text(rendered_filters, encoding="utf-8")
-        defaults_baseline_path(filters_path).write_text(
-            rendered_filters, encoding="utf-8"
-        )
         print(f"wrote {filters_path}")
 
 

@@ -16,6 +16,13 @@ from platformdirs import user_cache_dir, user_config_dir
 
 APP_NAME = "justsayit"
 
+# Distinctive header line written into commented-defaults files. Used as
+# a stable marker so ``ensure_config_file`` can tell "already in
+# commented form" apart from "still on the legacy fully-populated form"
+# without re-checking content equality (which would re-trigger every
+# time we ship a new default value).
+_COMMENTED_FORM_MARKER = "# justsayit configuration (commented-defaults form)."
+
 
 def config_dir() -> Path:
     return Path(user_config_dir(APP_NAME))
@@ -371,24 +378,44 @@ def ensure_dirs(cfg: Config | None = None) -> None:
     models_dir().mkdir(parents=True, exist_ok=True)
 
 
-def render_config_toml(cfg: Config | None = None) -> str:
-    """Render ``cfg`` (or the dataclass defaults) as a commented TOML
-    document with every setting present — good for explorability and for
-    round-tripping a runtime-modified config back to disk."""
+def render_config_toml(cfg: Config | None = None, *, commented: bool = False) -> str:
+    """Render ``cfg`` (or the dataclass defaults) as a TOML document.
+
+    Default mode emits every setting with its current value (good for
+    ``show-defaults`` output and for inspecting a runtime config).
+
+    With ``commented=True`` every value line is prefixed with ``# ``,
+    leaving section headers uncommented. This is the "commented-defaults"
+    form shipped on fresh install: only knobs the user explicitly cares
+    about live in the file as uncommented lines, so future updates that
+    move a default never collide with their settings.
+    """
     if cfg is None:
         cfg = Config()
-    lines = [
-        "# justsayit configuration. Every setting is listed with its",
-        "# current value. Delete or comment a line to fall back to the",
-        "# built-in default (the app will not rewrite unchanged sections).",
-        "",
-    ]
+    if commented:
+        lines = [
+            _COMMENTED_FORM_MARKER,
+            "# Every key below is the shipped default, commented out.",
+            "# Uncomment a line and change the value to override it.",
+            "# Lines you don't touch keep tracking the shipped defaults,",
+            "# so future updates that tweak a default just work.",
+            "",
+        ]
+    else:
+        lines = [
+            "# justsayit configuration. Every setting is listed with its",
+            "# current value. Delete or comment a line to fall back to the",
+            "# built-in default (the app will not rewrite unchanged sections).",
+            "",
+        ]
+    prefix = "# " if commented else ""
     for section_name in ("audio", "vad", "shortcut", "paste", "model", "overlay", "sound", "log", "postprocess"):
         section = getattr(cfg, section_name)
         lines.append(f"[{section_name}]")
         for f in fields(section):
             val = getattr(section, f.name)
             if val is None:
+                # Already commented (Optional/None default). No extra prefix.
                 lines.append(f'# {f.name} = ""')
                 continue
             if isinstance(val, bool):
@@ -397,9 +424,9 @@ def render_config_toml(cfg: Config | None = None) -> str:
                 rendered = f'"{val}"'
             else:
                 rendered = repr(val)
-            lines.append(f"{f.name} = {rendered}")
+            lines.append(f"{prefix}{f.name} = {rendered}")
         lines.append("")
-    lines.append(f'filters_path = "{cfg.filters_path}"')
+    lines.append(f'{prefix}filters_path = "{cfg.filters_path}"')
     return "\n".join(lines) + "\n"
 
 
@@ -425,120 +452,76 @@ def save_config(cfg: Config, path: Path | None = None) -> None:
     save_state(cfg, _state_path_for(path))
 
 
-def defaults_baseline_path(user_path: Path) -> Path:
-    """Sidecar that records the shipped defaults the user file derives from.
+def _has_uncommented_assignment(text: str) -> bool:
+    """True if *text* contains at least one ``key = value`` line that
+    isn't commented out — the heuristic for "still on legacy fully-
+    populated form"."""
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if not stripped or stripped.startswith("#") or stripped.startswith("["):
+            continue
+        if "=" in stripped:
+            return True
+    return False
 
-    ``install.sh --update`` reads this to tell three cases apart that
-    otherwise look identical:
-      1. user file == baseline (never customised, defaults moved → safe to update)
-      2. user file != baseline, baseline == new defaults (user customised, defaults didn't move → leave alone)
-      3. both diverged (true 3-way: show what changed in defaults vs what user customised)
 
-    Layout: each directory gets a hidden ``.baseline/`` subdir holding
-    snapshots that share the user-file's name verbatim. So
-    ``~/.config/justsayit/filters.json`` →
-    ``~/.config/justsayit/.baseline/filters.json`` and
-    ``~/.config/justsayit/postprocess/gemma4-cleanup.toml`` →
-    ``~/.config/justsayit/postprocess/.baseline/gemma4-cleanup.toml``.
-    install.sh derives the same path with shell parameter expansion.
+def ensure_commented_form_file(
+    path: Path, commented: str, marker: str, *, suffix: str = ".bak-pre-commented-form"
+) -> bool:
+    """Ensure *path* exists in commented-defaults form, migrating from
+    legacy fully-populated form once if necessary.
 
-    Best-effort state — if the baseline goes missing, install.sh degrades
-    cleanly to a plain diff prompt, then writes a fresh baseline.
+    The marker is a stable header line embedded in *commented*; finding
+    it in the user file means migration already happened, so we leave
+    the file alone (the user may have uncommented overrides). For files
+    that lack the marker AND contain uncommented ``key = value`` lines
+    (legacy form), the existing file is backed up to
+    ``<path><suffix>`` (if no backup exists yet) and overwritten with
+    *commented*. Pure-comment / empty files get the commented template
+    written without backup.
+
+    Returns ``True`` if the file was just written / migrated, ``False``
+    if it was found already in commented form.
     """
-    return user_path.parent / ".baseline" / user_path.name
-
-
-def _legacy_baseline_path(user_path: Path) -> Path:
-    """Pre-0.8.7 sidecar layout: ``foo.json`` → ``foo.defaults-baseline.json``
-    in the same directory. Kept for one-shot migration."""
-    return user_path.with_name(
-        f"{user_path.stem}.defaults-baseline{user_path.suffix}"
-    )
-
-
-def _migrate_legacy_baseline(user_path: Path) -> None:
-    """Move a pre-0.8.7 sidecar (``foo.defaults-baseline.json``) into the
-    new ``.baseline/`` subdir if present. Best-effort, idempotent — a
-    no-op if the legacy file is missing or the new-layout file already
-    exists. Called lazily from baseline read/write paths so users who
-    never re-run ``install.sh --update`` still get migrated on next app
-    start."""
-    legacy = _legacy_baseline_path(user_path)
-    if not legacy.exists():
-        return
-    new = defaults_baseline_path(user_path)
-    if new.exists():
-        try:
-            legacy.unlink()
-        except OSError:
-            pass
-        return
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(commented, encoding="utf-8")
+        return True
     try:
-        new.parent.mkdir(parents=True, exist_ok=True)
-        legacy.rename(new)
+        head = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    if marker in head[:8192]:
+        return False
+    if _has_uncommented_assignment(head):
+        backup = path.with_name(path.name + suffix)
+        if not backup.exists():
+            try:
+                backup.write_bytes(path.read_bytes())
+            except OSError:
+                pass
+    try:
+        path.write_text(commented, encoding="utf-8")
     except OSError:
         pass
-
-
-def _write_baseline(user_path: Path, content: str) -> None:
-    """Write the defaults baseline next to *user_path*. Best-effort —
-    OSError is swallowed since baseline-tracking is non-essential."""
-    _migrate_legacy_baseline(user_path)
-    try:
-        target = defaults_baseline_path(user_path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
-    except OSError:
-        pass
-
-
-def _heal_baseline(user_path: Path, current_defaults: str) -> None:
-    """Migration helper: if the user file matches current shipped
-    defaults verbatim and no baseline exists yet, snapshot one. Lets
-    pre-baseline installs auto-upgrade silently for users who never
-    customised."""
-    _migrate_legacy_baseline(user_path)
-    baseline = defaults_baseline_path(user_path)
-    if baseline.exists():
-        return
-    try:
-        if user_path.read_text(encoding="utf-8") == current_defaults:
-            _write_baseline(user_path, current_defaults)
-    except OSError:
-        pass
-
-
-def write_or_heal_baseline(
-    user_path: Path, current_defaults: str, *, just_written: bool
-) -> None:
-    """Public wrapper used by every ``ensure_<file>()`` to keep the
-    ``.baseline/<name>`` snapshot in sync.
-
-    - *just_written=True* → caller created the file in this call; snapshot
-      the baseline unconditionally (it's known to match defaults).
-    - *just_written=False* → caller found the file already present; heal
-      only if it matches the current defaults verbatim, so pre-baseline
-      installs auto-upgrade silently for users who never customised.
-    Best-effort: errors are swallowed (baseline tracking is non-essential).
-    """
-    if just_written:
-        _write_baseline(user_path, current_defaults)
-    else:
-        _heal_baseline(user_path, current_defaults)
+    return True
 
 
 def ensure_config_file(path: Path | None = None) -> Path:
-    """Write the fully-populated default ``config.toml`` if it doesn't
-    exist yet, so the file is always available for inspection / editing.
-    Returns the resolved path."""
+    """Write the commented-defaults ``config.toml`` if it doesn't
+    exist yet, so the file is always available for inspection /
+    editing. Returns the resolved path.
+
+    One-shot migration: a pre-existing ``config.toml`` in the legacy
+    fully-populated form (every key uncommented) is backed up to
+    ``config.toml.bak-pre-commented-form`` and rewritten in the new
+    commented form. Files that are already in the new form (marker
+    present) or that have only commented content are left alone.
+    """
     if path is None:
         path = config_dir() / "config.toml"
-    rendered = render_config_toml(None)
-    just_written = not path.exists()
-    if just_written:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(rendered, encoding="utf-8")
-    write_or_heal_baseline(path, rendered, just_written=just_written)
+    commented = render_config_toml(None, commented=True)
+    ensure_commented_form_file(path, commented, _COMMENTED_FORM_MARKER)
     return path
 
 
@@ -555,12 +538,12 @@ def ensure_filters_file(path: Path | None = None) -> Path:
 
     if path is None:
         path = config_dir() / "filters.json"
-    rendered = json.dumps(_default_filter_chain(), indent=2) + "\n"
-    just_written = not path.exists()
-    if just_written:
+    if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(rendered, encoding="utf-8")
-    write_or_heal_baseline(path, rendered, just_written=just_written)
+        path.write_text(
+            json.dumps(_default_filter_chain(), indent=2) + "\n",
+            encoding="utf-8",
+        )
     return path
 
 

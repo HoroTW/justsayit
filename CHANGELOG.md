@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-04-17
+
+### Changed
+
+- **`config.toml` and the shipped postprocess profile TOMLs now use a
+  "commented-defaults" form**. Every key in the shipped file is the
+  default value, commented out. The user uncomments + edits only the
+  knobs they actually want to override; everything else tracks the
+  shipped default automatically. Defaults can drift in future releases
+  without ever colliding with user overrides — the only thing that
+  changes between versions is the value embedded in the comment.
+- **One-shot migration**: pre-existing `config.toml` and profile TOMLs
+  in the legacy fully-populated form (every key uncommented) are
+  backed up to `<file>.bak-pre-commented-form` and rewritten in the
+  new commented form on next app start / install. A header marker line
+  embedded in the new templates makes the migration idempotent — once
+  a file carries the marker, subsequent runs leave it alone (so the
+  user's later overrides are preserved).
+- **`gemma4-fun.toml` template trimmed to its actual overrides**. Only
+  the three keys that define the "fun" flavor (`system_prompt`,
+  `temperature`, `paste_strip_regex`) stay uncommented; the rest fall
+  through to the dataclass defaults. Demonstrates the commented-form
+  convention with a real override pattern.
+
+### Removed
+
+- **Defaults-baseline machinery is gone**. The old `.baseline/<name>`
+  sidecar (and its pre-0.8.7 `<stem>.defaults-baseline.<ext>` fallback)
+  earned its keep when `config.toml` was fully-populated and we needed
+  3-way reconciliation to tell "you never customised" apart from "you
+  customised". With commented-defaults form, comments and overrides
+  live in different layers of the file and never collide, so the
+  baseline became vestigial. Removed: `defaults_baseline_path`,
+  `_legacy_baseline_path`, `_migrate_legacy_baseline`,
+  `_write_baseline`, `_heal_baseline`, `write_or_heal_baseline` from
+  `config.py`; `baseline_path_for` and the 5-case reconcile from
+  `install.sh`. Existing `.baseline/` directories under
+  `~/.config/justsayit/` are now orphan and can be deleted by hand
+  (they are not referenced by anything anymore).
+- **`maybe_update_user_file` reduced to a simple "diff & prompt"**.
+  Previously a 5-case state machine (in-sync / never-customised /
+  defaults-static / both-diverged / no-baseline). Now: read user file,
+  compare to shipped, if different show the diff and prompt with
+  default `Y`. Used only for `filters.json` (JSON has no commented-
+  defaults form, so it's the only file left that needs reconciling).
+
 ## [0.8.13] - 2026-04-17
 
 ### Changed
