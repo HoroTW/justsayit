@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.9] - 2026-04-17
+
+### Fixed
+
+- **Abort × is now pinned to the overlay's top-right** in the expanded
+  result view. Previously it was packed in a horizontal Box next to the
+  state label and only had `halign=END`; once the state label was hidden
+  in result mode its allocation collapsed and the × ended up rendering
+  at the start of the row. Switched the top row to `Gtk.CenterBox` with
+  start/end widgets, which anchor independently regardless of which is
+  visible.
+
 ## [0.6.8] - 2026-04-17
 
 ### Changed

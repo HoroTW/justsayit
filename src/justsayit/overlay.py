@@ -173,14 +173,19 @@ class OverlayWindow(Gtk.ApplicationWindow):
         root.set_opacity(max(0.0, min(1.0, cfg.overlay.opacity)))
 
         # ── Top row: state label (left) + abort × button (right) ─────────────
-        top_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        # CenterBox anchors start/end widgets to the row's left/right edges
+        # regardless of which is visible — so when the state label is hidden
+        # in the expanded result view the × stays pinned top-right (a plain
+        # HBox would collapse the hidden label's allocation and the button,
+        # which only sets halign=END, would render at the row's start).
+        top_row = Gtk.CenterBox()
         top_row.set_hexpand(True)
 
         self._state_label = Gtk.Label(label=_STATE_STYLE[State.IDLE][0])
         self._state_label.add_css_class("justsayit-overlay-label")
         self._state_label.set_xalign(0.0)
-        self._state_label.set_hexpand(True)
-        top_row.append(self._state_label)
+        self._state_label.set_halign(Gtk.Align.START)
+        top_row.set_start_widget(self._state_label)
 
         self._abort_button = Gtk.Button(label="×")
         self._abort_button.add_css_class("justsayit-abort-button")
@@ -188,10 +193,7 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._abort_button.set_halign(Gtk.Align.END)
         self._abort_button.set_tooltip_text("Abort recording (discard, no paste)")
         self._abort_button.connect("clicked", self._on_abort_clicked)
-        # Layer-shell windows need explicit keyboard mode to receive input;
-        # pointer events work without it as long as Gtk reports an
-        # interactive surface (which any Button does).
-        top_row.append(self._abort_button)
+        top_row.set_end_widget(self._abort_button)
 
         root.append(top_row)
 
