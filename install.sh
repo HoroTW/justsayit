@@ -34,10 +34,11 @@ MODEL=""        # "" = parakeet (default), "whisper" = faster-whisper
 POSTPROCESS=0   # 1 = install llama-cpp-python with Vulkan for LLM cleanup
 NIX=0           # 1 = Nix-built binary; skip venv/pip, just do desktop + models
 NIX_BIN=""      # path to the Nix-built binary (default: ./result/bin/justsayit)
+UPDATE=0        # 1 = git pull + refresh deps + interactively update user config files
 
 usage() {
     cat <<'EOF'
-Usage: install.sh [--uninstall] [--autostart] [--skip-models]
+Usage: install.sh [--uninstall] [--autostart] [--skip-models] [--update]
                   [--model parakeet|whisper] [--postprocess]
                   [--nix [BINARY]]
 
@@ -60,6 +61,13 @@ Usage: install.sh [--uninstall] [--autostart] [--skip-models]
                          ./result/bin/justsayit. Pairs with:
                            nix build .#with-llm-vulkan
                            ./install.sh --nix --postprocess
+  --update               Pull latest commits (git pull), refresh the venv +
+                         dependencies, refresh the .desktop entry, and
+                         interactively offer to replace your config.toml
+                         and filters.json with the new shipped defaults.
+                         The current files are backed up to *.bak.<ts>
+                         before they're overwritten. Implies --skip-models
+                         and skips the postprocess prompt.
 EOF
 }
 
@@ -69,6 +77,7 @@ while [ $# -gt 0 ]; do
         --autostart) AUTOSTART=1 ;;
         --skip-models) SKIP_MODELS=1 ;;
         --postprocess) POSTPROCESS=1 ;;
+        --update) UPDATE=1; SKIP_MODELS=1 ;;
         --nix)
             NIX=1
             # Optional next argument: path to the binary (not a flag)
@@ -99,6 +108,19 @@ if [ "$UNINSTALL" -eq 1 ]; then
     [ -f "$LEGACY_AUTOSTART_FILE" ] && rm -v "$LEGACY_AUTOSTART_FILE"
     echo "uninstalled desktop integration. Venv at $VENV_DIR was NOT removed."
     exit 0
+fi
+
+if [ "$UPDATE" -eq 1 ]; then
+    if [ ! -d "$PROJECT_DIR/.git" ]; then
+        echo "error: --update requires a git checkout, but $PROJECT_DIR is not one." >&2
+        echo "       (Re)clone with: git clone https://github.com/HoroTW/justsayit" >&2
+        exit 1
+    fi
+    echo "==> pulling latest commits in $PROJECT_DIR"
+    (cd "$PROJECT_DIR" && git pull --ff-only) || {
+        echo "error: git pull failed (uncommitted changes? non-fast-forward?). Resolve and re-run." >&2
+        exit 1
+    }
 fi
 
 if [ "$NIX" -eq 1 ]; then
@@ -229,9 +251,63 @@ if [ -f "$LEGACY_AUTOSTART_FILE" ]; then
     rm -v "$LEGACY_AUTOSTART_FILE"
 fi
 
+# --- update mode: prompt to refresh user config files ---------------------
+
+# Replaces the user's $1 with the freshly-rendered defaults from `BIN
+# show-defaults $2`, after backing up the current file. No-op if the
+# user file is already byte-identical to the new defaults.
+maybe_update_user_file() {
+    _USER_FILE=$1
+    _KIND=$2
+    [ -f "$_USER_FILE" ] || return 0
+    _TMP=$(mktemp -t justsayit-defaults.XXXXXX)
+    if ! "$BIN" show-defaults "$_KIND" >"$_TMP" 2>/dev/null; then
+        echo "  could not render defaults for $_KIND — skipping." >&2
+        rm -f "$_TMP"
+        return 0
+    fi
+    if cmp -s "$_USER_FILE" "$_TMP"; then
+        rm -f "$_TMP"
+        return 0
+    fi
+    echo
+    echo "==> $_KIND file has new shipped defaults"
+    echo "    ($_USER_FILE)"
+    if command -v diff >/dev/null 2>&1; then
+        echo "    diff (current -> new), first 60 lines:"
+        diff -u "$_USER_FILE" "$_TMP" | sed 's/^/      /' | head -60
+    fi
+    if [ -t 0 ]; then
+        printf "Replace with new defaults? Current file will be backed up. [y/N] "
+        read -r _REPLY
+    else
+        _REPLY="n"
+    fi
+    case "$_REPLY" in
+        [Yy]*)
+            _TS=$(date +%Y%m%d-%H%M%S)
+            cp -v "$_USER_FILE" "$_USER_FILE.bak.$_TS"
+            mv "$_TMP" "$_USER_FILE"
+            echo "  updated. Old file kept at $_USER_FILE.bak.$_TS"
+            ;;
+        *)
+            rm -f "$_TMP"
+            echo "  kept current $_USER_FILE."
+            ;;
+    esac
+}
+
+if [ "$UPDATE" -eq 1 ]; then
+    _CFG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}/$APP_ID
+    maybe_update_user_file "$_CFG_HOME/config.toml" "config"
+    maybe_update_user_file "$_CFG_HOME/filters.json" "filters"
+fi
+
 # --- LLM postprocessing (optional) ----------------------------------------
 
-if [ "$POSTPROCESS" -eq 0 ] && [ -t 0 ]; then
+# In --update mode the user already chose their LLM setup on the original
+# install; don't pester them again — they can re-run setup-llm by hand.
+if [ "$UPDATE" -eq 0 ] && [ "$POSTPROCESS" -eq 0 ] && [ -t 0 ]; then
     printf "\nSet up LLM postprocessing (fixes grammar/filler words after dictation)? [y/N] "
     read -r _REPLY
     case "$_REPLY" in

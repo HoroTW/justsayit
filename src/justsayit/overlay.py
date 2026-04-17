@@ -84,6 +84,13 @@ window.justsayit-overlay {
 .justsayit-abort-button:hover {
     color: rgba(255, 120, 120, 0.95);
 }
+.justsayit-update-badge {
+    color: rgba(255, 215, 90, 0.95);
+    font-family: "Inter", "Cantarell", "Noto Sans", sans-serif;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 0 4px;
+}
 """
 
 
@@ -186,13 +193,25 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._state_label.set_halign(Gtk.Align.START)
         top_row.set_start_widget(self._state_label)
 
+        # Right-anchored cluster: [update badge?] [× button]. The badge
+        # is hidden until the GitHub version check finds something newer
+        # (see push_update_available); the button is always present.
+        end_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        end_box.set_valign(Gtk.Align.START)
+        end_box.set_halign(Gtk.Align.END)
+
+        self._update_badge = Gtk.Label(label="update available")
+        self._update_badge.add_css_class("justsayit-update-badge")
+        self._update_badge.set_visible(False)
+        end_box.append(self._update_badge)
+
         self._abort_button = Gtk.Button(label="×")
         self._abort_button.add_css_class("justsayit-abort-button")
-        self._abort_button.set_valign(Gtk.Align.START)
-        self._abort_button.set_halign(Gtk.Align.END)
         self._abort_button.set_tooltip_text("Abort recording (discard, no paste)")
         self._abort_button.connect("clicked", self._on_abort_clicked)
-        top_row.set_end_widget(self._abort_button)
+        end_box.append(self._abort_button)
+
+        top_row.set_end_widget(end_box)
 
         root.append(top_row)
 
@@ -296,6 +315,14 @@ class OverlayWindow(Gtk.ApplicationWindow):
     def push_hide(self) -> None:
         GLib.idle_add(self._force_hide, priority=GLib.PRIORITY_DEFAULT)
 
+    def push_update_available(self, latest_version: str) -> None:
+        """Show the small yellow "update available" badge to the left of
+        the × button. Safe to call from any thread; idempotent."""
+        GLib.idle_add(
+            self._apply_update_available, latest_version,
+            priority=GLib.PRIORITY_DEFAULT,
+        )
+
     # ── User actions ─────────────────────────────────────────────────────────
 
     def _on_abort_clicked(self, _button: Gtk.Button) -> None:
@@ -394,6 +421,13 @@ class OverlayWindow(Gtk.ApplicationWindow):
         if not self._llm_label.get_visible():
             self._sep2.set_visible(True)
             self._llm_label.set_visible(True)
+        return False
+
+    def _apply_update_available(self, latest_version: str) -> bool:
+        self._update_badge.set_tooltip_text(
+            f"Update available: v{latest_version} — see GitHub releases"
+        )
+        self._update_badge.set_visible(True)
         return False
 
     def _start_linger(self) -> bool:

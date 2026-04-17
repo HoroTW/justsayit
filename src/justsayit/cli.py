@@ -151,6 +151,7 @@ from justsayit import __version__
 from justsayit.audio import AudioEngine, Segment, State
 from justsayit.config import (
     Config,
+    _default_filter_chain,
     cache_dir,
     config_dir,
     default_config_toml,
@@ -199,19 +200,6 @@ MID_QUIT = 6
 MID_LLM_PROFILE_BASE = 100
 
 log = logging.getLogger("justsayit")
-
-DEFAULT_FILTERS = [
-    {
-        "name": "trim whitespace",
-        "pattern": r"^\s+|\s+$",
-        "replacement": "",
-    },
-    {
-        "name": "collapse whitespace",
-        "pattern": r"\s{2,}",
-        "replacement": " ",
-    },
-]
 
 
 class App:
@@ -469,6 +457,59 @@ class App:
             log.info("sent 'shortcut unbound' notification (reason=%s)", reason)
         except Exception:
             log.exception("could not send shortcut-unbound notification")
+
+    def _kick_off_update_check(self) -> None:
+        """Best-effort GitHub version check (24h cached). When a newer
+        version exists, post a desktop notification AND show the small
+        yellow "update available" badge in the overlay."""
+        if self.gtk_app is None:
+            return
+        from justsayit.update_check import UpdateInfo, check_async, detect_install_dir
+
+        install_dir = detect_install_dir()
+
+        def _on_result(info: UpdateInfo | None) -> None:
+            if info is None:
+                return
+
+            def _apply() -> bool:
+                log.info(
+                    "update available: v%s -> v%s", info.current, info.latest
+                )
+                if self.overlay is not None:
+                    self.overlay.push_update_available(info.latest)
+                self._notify_update_available(info, install_dir)
+                return False
+
+            GLib.idle_add(_apply)
+
+        check_async(__version__, _on_result)
+
+    def _notify_update_available(
+        self, info, install_dir: Path | None
+    ) -> None:
+        if self.gtk_app is None:
+            return
+        title = f"justsayit update available: v{info.latest}"
+        if install_dir is not None:
+            body = (
+                f"You're running v{info.current}. v{info.latest} is on GitHub.\n"
+                f"Update with:\n  cd {install_dir} && ./install.sh --update"
+            )
+        else:
+            body = (
+                f"You're running v{info.current}. v{info.latest} is on GitHub.\n"
+                f"See {info.url}"
+            )
+        try:
+            note = Gio.Notification.new(title)
+            note.set_body(body)
+            note.set_priority(Gio.NotificationPriority.LOW)
+            # Stable id so re-checks within the day update one notification
+            # rather than spawning a new one each launch.
+            self.gtk_app.send_notification("justsayit-update-available", note)
+        except Exception:
+            log.exception("could not send update-available notification")
 
     def _notify_space_config_conflict(self) -> None:
         """Warn the user when both auto_space_timeout_ms and
@@ -864,6 +905,7 @@ class App:
                     and self.cfg.paste.append_trailing_space
                 ):
                     self._notify_space_config_conflict()
+                self._kick_off_update_check()
                 log.info("justsayit ready")
             except Exception:
                 log.exception("startup failed")
@@ -917,7 +959,8 @@ def _write_default_config(force: bool = False, backend: str | None = None) -> No
         import json
 
         filters_path.write_text(
-            json.dumps(DEFAULT_FILTERS, indent=2) + "\n", encoding="utf-8"
+            json.dumps(_default_filter_chain(), indent=2) + "\n",
+            encoding="utf-8",
         )
         print(f"wrote {filters_path}")
 
@@ -1235,6 +1278,13 @@ def _build_parser() -> argparse.ArgumentParser:
         default=False,
         help="install CPU-only llama-cpp-python (skip Vulkan GPU compilation)",
     )
+
+    show_sub = sub.add_parser(
+        "show-defaults",
+        help="print the default config.toml or filters.json to stdout "
+        "(used by install.sh --update to diff against the user's file)",
+    )
+    show_sub.add_argument("kind", choices=["config", "filters"])
     return ap
 
 
@@ -1254,6 +1304,16 @@ def main(argv: list[str] | None = None) -> int:
         return _download_models_only()
     if args.subcommand == "setup-llm":
         return _run_setup_llm(getattr(args, "model", None), cpu=getattr(args, "cpu", False))
+    if args.subcommand == "show-defaults":
+        if args.kind == "config":
+            sys.stdout.write(default_config_toml())
+        else:
+            import json
+
+            sys.stdout.write(
+                json.dumps(_default_filter_chain(), indent=2) + "\n"
+            )
+        return 0
 
     ensure_dirs()
     # Seed defaults on first run so `Open config file…` in the tray always

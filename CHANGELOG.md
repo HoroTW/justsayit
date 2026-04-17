@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-04-17
+
+### Added
+
+- **GitHub update check on startup.** A best-effort background fetch
+  reads `pyproject.toml` from `main` on GitHub, parses the `version`
+  field, and compares against the running `__version__`. When a newer
+  version is available:
+  - the overlay shows a small yellow `update available` badge to the
+    left of the × button (tooltip carries the new version number);
+  - a low-priority desktop notification fires once per launch (stable
+    notification id, so re-checks update one entry rather than spamming);
+  - if the running install is a git checkout (detected by `install.sh`
+    + `.git` next to the package source), the notification body tells
+    the user how to update: `cd <install dir> && ./install.sh --update`.
+  Result is cached in `~/.cache/justsayit/update_check.json` for 24h so
+  repeated launches don't hammer the API. Network errors / malformed
+  responses are silently ignored — startup never blocks.
+- **`install.sh --update`** mode: pulls latest commits (fast-forward
+  only), refreshes the venv + dependencies, refreshes the `.desktop`
+  entry, and interactively offers to replace `config.toml` /
+  `filters.json` with the freshly-rendered shipped defaults — current
+  files are backed up to `*.bak.<timestamp>` before being overwritten.
+  Implies `--skip-models` and skips the postprocess prompt (already
+  configured on the original install).
+- **`justsayit show-defaults config|filters`** subcommand prints the
+  current shipped defaults to stdout. Used by `install.sh --update` to
+  diff against the user's file and offer the update prompt.
+
+### Fixed
+
+- `justsayit init` now writes the new spoken-punctuation filter chain
+  introduced in 0.7.2. Was still writing the stale two-rule starter
+  list because of a separate hardcoded copy in `cli.py`. The full
+  chain is now sourced from `_default_filter_chain()` in `config.py`,
+  so `init` and `ensure_filters_file` can never drift again.
+
 ## [0.7.2] - 2026-04-17
 
 ### Added
