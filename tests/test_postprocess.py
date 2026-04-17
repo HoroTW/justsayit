@@ -483,6 +483,37 @@ def test_ensure_default_profile_preserves_user_overrides_post_migration(tmp_path
     assert not backup.exists()
 
 
+def test_shipped_profile_templates_parse_as_valid_toml():
+    """Both templates in the source must parse with tomllib — regression
+    guard for the f-string bug where a multi-line default leaked raw
+    lines into the file at column 1, breaking TOML parsing and making
+    the profile silently disappear from the tray menu."""
+    import tomllib
+    tomllib.loads(_CLEANUP_PROFILE_TOML)
+    tomllib.loads(_FUN_PROFILE_TOML)
+
+
+def test_ensure_default_profile_re_migrates_marker_carrying_corrupt_file(tmp_path: Path):
+    """A file that bears the commented-form marker but fails TOML parse
+    (i.e. was written by an earlier buggy template) must be backed up
+    and rewritten — otherwise the user is stuck with a broken file that
+    the tray will silently skip."""
+    from justsayit.postprocess import _PROFILE_COMMENTED_FORM_MARKER
+
+    p = tmp_path / "gemma4-cleanup.toml"
+    corrupt = (
+        f"{_PROFILE_COMMENTED_FORM_MARKER}\n"
+        "# leading comments\n"
+        "<|think|> stray uncommented junk that breaks TOML parsing\n"
+    )
+    p.write_text(corrupt, encoding="utf-8")
+    ensure_default_profile(p)
+    backup = p.with_name(p.name + ".bak-pre-commented-form")
+    assert backup.exists()
+    assert backup.read_text(encoding="utf-8") == corrupt
+    assert p.read_text(encoding="utf-8") == _CLEANUP_PROFILE_TOML
+
+
 # ---------------------------------------------------------------------------
 # Network: verify each built-in model repo exposes a Q4_K_M GGUF
 # ---------------------------------------------------------------------------

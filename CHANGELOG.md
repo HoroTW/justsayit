@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-04-17
+
+### Fixed
+
+- **Tray LLM submenu silently dropped most profiles** because the
+  shipped `gemma4-cleanup.toml` template generated invalid TOML.
+  The commented-defaults template embedded the multi-line default
+  system prompt via an f-string ``# {_DEFAULT_SYSTEM_PROMPT}"""``,
+  which only commented out the *first* line — every subsequent
+  line of the prompt landed at column 1 and broke `tomllib.loads`.
+  The tray's `load_profile` swallowed the parse error and skipped
+  the profile, so users only saw the one profile (`gemma4-fun`)
+  whose template happened to be well-formed. The same template is
+  reused for `qwen3-*` profiles, so `setup-llm` users with multiple
+  models saw only their `gemma4-fun` entry.
+  - Added `_comment_block` helper in `postprocess.py` that prefixes
+    every embedded line with `# ` so multi-line defaults can be
+    safely included in a commented-form file.
+  - `ensure_commented_form_file` now accepts an optional `validator`
+    callable. `ensure_default_profile` / `ensure_fun_profile` pass
+    `tomllib.loads`, so any profile that bears the commented-form
+    marker but fails TOML parsing (i.e. was written by the buggy
+    template) is automatically backed up to `.bak-pre-commented-form`
+    and rewritten with the fixed template on next `init` /
+    `setup-llm` run. No manual intervention required.
+  - Regression test: `test_shipped_profile_templates_parse_as_valid_toml`
+    asserts `tomllib.loads(_CLEANUP_PROFILE_TOML)` and the fun
+    template both succeed, so this can never re-ship.
+
 ## [0.9.0] - 2026-04-17
 
 ### Changed

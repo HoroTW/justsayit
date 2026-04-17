@@ -10,7 +10,7 @@ import re
 import tomllib
 from dataclasses import dataclass, field, fields, is_dataclass, MISSING
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from platformdirs import user_cache_dir, user_config_dir
 
@@ -466,7 +466,12 @@ def _has_uncommented_assignment(text: str) -> bool:
 
 
 def ensure_commented_form_file(
-    path: Path, commented: str, marker: str, *, suffix: str = ".bak-pre-commented-form"
+    path: Path,
+    commented: str,
+    marker: str,
+    *,
+    suffix: str = ".bak-pre-commented-form",
+    validator: Callable[[str], None] | None = None,
 ) -> bool:
     """Ensure *path* exists in commented-defaults form, migrating from
     legacy fully-populated form once if necessary.
@@ -480,6 +485,12 @@ def ensure_commented_form_file(
     *commented*. Pure-comment / empty files get the commented template
     written without backup.
 
+    If *validator* is given, it is called on the existing file content
+    even when the marker is present; raising any exception means "this
+    file is corrupt despite the marker" and triggers re-migration. This
+    rescues files written by an earlier buggy template that happened to
+    embed the marker.
+
     Returns ``True`` if the file was just written / migrated, ``False``
     if it was found already in commented form.
     """
@@ -491,9 +502,16 @@ def ensure_commented_form_file(
         head = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return False
+    was_marked_but_corrupt = False
     if marker in head[:8192]:
-        return False
-    if _has_uncommented_assignment(head):
+        if validator is None:
+            return False
+        try:
+            validator(head)
+            return False
+        except Exception:
+            was_marked_but_corrupt = True
+    if was_marked_but_corrupt or _has_uncommented_assignment(head):
         backup = path.with_name(path.name + suffix)
         if not backup.exists():
             try:

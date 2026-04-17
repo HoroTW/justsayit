@@ -124,6 +124,14 @@ _PROFILE_COMMENTED_FORM_MARKER = (
 )
 
 
+def _comment_block(text: str) -> str:
+    """Return *text* with every line prefixed by ``# `` (or ``#`` for
+    empties).  Used to safely embed multi-line defaults (system prompts,
+    code samples) inside a commented-defaults TOML file without leaking
+    raw lines that would otherwise break TOML parsing."""
+    return "\n".join(f"# {line}" if line else "#" for line in text.splitlines())
+
+
 # Written to disk on first ``justsayit init``. Uses the "commented
 # defaults" convention: every value line is commented out so the file
 # acts as in-place documentation. Users uncomment + edit only the keys
@@ -179,12 +187,13 @@ _CLEANUP_PROFILE_TOML = f'''\
 # paste_strip_regex = '<\\|channel>thought(.*?)<channel\\|>'
 
 # System prompt — the cleanup prompt is the dataclass default. Uncomment
-# to override it for this profile. The default enables Gemma's "thinking"
-# channel (the `<|think|>` token in the prompt makes the model emit a
-# `<|channel>...<channel|>` reasoning block); pair changes here with
+# the block below to override it for this profile. The default enables
+# Gemma's "thinking" channel (the `<|think|>` token makes the model emit
+# a `<|channel>...<channel|>` reasoning block); pair changes here with
 # `paste_strip_regex` above.
 # system_prompt = """
-# {_DEFAULT_SYSTEM_PROMPT}"""
+{_comment_block(_DEFAULT_SYSTEM_PROMPT.rstrip())}
+# """
 
 # User-context lives in a shared sidecar so it's preserved across
 # profile updates: ~/.config/justsayit/context.toml. Uncomment to set
@@ -350,6 +359,10 @@ def load_context_sidecar(path: Path | None = None) -> str:
     return val if isinstance(val, str) else ""
 
 
+def _toml_validator(text: str) -> None:
+    tomllib.loads(text)
+
+
 def ensure_default_profile(path: Path | None = None) -> Path:
     """Write the recommended ``gemma4-cleanup.toml`` profile if it's missing.
 
@@ -357,11 +370,16 @@ def ensure_default_profile(path: Path | None = None) -> Path:
     both by ``justsayit init`` and by ``setup-llm`` when seeding a
     per-model profile. Pre-existing legacy fully-populated profile
     files get backed up + rewritten once (see ``ensure_commented_form_file``).
+    Files that carry the marker but fail TOML parsing (i.e. were written
+    by an earlier buggy template) are also re-migrated.
     """
     if path is None:
         path = profiles_dir() / "gemma4-cleanup.toml"
     ensure_commented_form_file(
-        path, _CLEANUP_PROFILE_TOML, _PROFILE_COMMENTED_FORM_MARKER
+        path,
+        _CLEANUP_PROFILE_TOML,
+        _PROFILE_COMMENTED_FORM_MARKER,
+        validator=_toml_validator,
     )
     return path
 
@@ -377,7 +395,10 @@ def ensure_fun_profile(path: Path | None = None) -> Path:
     if path is None:
         path = profiles_dir() / "gemma4-fun.toml"
     ensure_commented_form_file(
-        path, _FUN_PROFILE_TOML, _PROFILE_COMMENTED_FORM_MARKER
+        path,
+        _FUN_PROFILE_TOML,
+        _PROFILE_COMMENTED_FORM_MARKER,
+        validator=_toml_validator,
     )
     return path
 
