@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-04-17
+
+### Changed
+
+- **`install.sh --update` now defaults to "yes" when offering to
+  replace a stale user config file** (Cases 4 and 5 — the customised
+  3-way drift, and the pre-baseline migration where we can't tell new
+  defaults from user edits). Both prompts flip from `[y/N]` to
+  `[Y/n]`, and the non-interactive default flips from `n` to `y`.
+  Rationale: shipped defaults exist to be used (the assistant-trigger
+  tightening, filter-chain improvements, profile-prompt updates), and
+  the previous file is always saved as `.bak.<ts>` so users can
+  re-apply any customisations from there. Stale-defaults users were
+  silently keeping outdated files because Enter at the prompt meant
+  "no". Case 2 (never customised, just stale defaults) was already
+  `[Y/n]` and is unchanged.
+
 ## [0.8.3] - 2026-04-17
 
 ### Changed

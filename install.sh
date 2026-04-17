@@ -272,14 +272,15 @@ baseline_path_for() {
 }
 
 # Reconcile the user's $1 against the freshly-rendered defaults from
-# `BIN show-defaults $2`. Five cases, all of which preserve user data
-# (nothing is overwritten without either a [Y/n] prompt or — in the
-# safe stale-defaults case — a clearly announced .bak):
+# `BIN show-defaults $2`. Five cases. Default action across all
+# decision-prompt cases is "take the shipped defaults" — we ship them
+# to be used, and the previous file is always saved as .bak.<ts> so
+# users can re-apply any customisations from there.
 #   1. user == new                   → in sync, no-op (catch up baseline)
 #   2. user == baseline, baseline != new → never customised, defaults moved → [Y/n]
 #   3. baseline == new, user != new  → user customised, defaults didn't move → no-op
-#   4. all three differ              → 3-way: show two diffs, [y/N]
-#   5. baseline missing              → migration: plain diff + [y/N]
+#   4. all three differ              → 3-way: show two diffs, [Y/n]
+#   5. baseline missing              → migration: plain diff + [Y/n]
 # Backups always go to $_USER_FILE.bak.<ts> before any overwrite.
 maybe_update_user_file() {
     _USER_FILE=$1
@@ -353,7 +354,8 @@ maybe_update_user_file() {
             diff -u "$_BASELINE" "$_USER_FILE" | sed 's/^/      /' | head -60
         fi
         echo
-        echo "    Replacing will discard your customisations (kept as .bak)."
+        echo "    Replacing will discard your customisations (kept as .bak —"
+        echo "    re-apply your edits from there)."
     else
         # Case 5: pre-baseline migration. Can't tell stale from customised.
         echo
@@ -364,25 +366,28 @@ maybe_update_user_file() {
             echo "    diff (your current file -> new shipped defaults), first 60 lines:"
             diff -u "$_USER_FILE" "$_NEW" | sed 's/^/      /' | head -60
         fi
+        echo
+        echo "    Replacing will overwrite the file (kept as .bak — re-apply"
+        echo "    any local edits from there)."
     fi
 
     if [ -t 0 ]; then
-        printf "Replace with new shipped defaults? Current file will be backed up. [y/N] "
+        printf "Replace with new shipped defaults? Current file will be backed up. [Y/n] "
         read -r _REPLY
     else
-        _REPLY="n"
+        _REPLY="y"
     fi
     case "$_REPLY" in
-        [Yy]*)
+        [Nn]*)
+            rm -f "$_NEW"
+            echo "  kept current $_USER_FILE."
+            ;;
+        *)
             _TS=$(date +%Y%m%d-%H%M%S)
             cp -v "$_USER_FILE" "$_USER_FILE.bak.$_TS"
             mv "$_NEW" "$_USER_FILE"
             cp "$_USER_FILE" "$_BASELINE"
             echo "  updated. Old file kept at $_USER_FILE.bak.$_TS"
-            ;;
-        *)
-            rm -f "$_NEW"
-            echo "  kept current $_USER_FILE."
             ;;
     esac
 }
