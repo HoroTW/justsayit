@@ -382,7 +382,12 @@ class OverlayWindow(Gtk.ApplicationWindow):
     def _apply_llm_text(self, text: str, thought: str = "") -> bool:
         if thought:
             from html import escape
-            markup = f"<i>{escape(thought)}</i>\n{escape(text)}"
+            # Blue-green / teal italic for the thought, then a newline and
+            # the normal-weight body that will actually be pasted.
+            markup = (
+                f'<span foreground="#5ed1c4"><i>{escape(thought)}</i></span>'
+                f"\n{escape(text)}"
+            )
             self._llm_label.set_markup(markup)
         else:
             self._llm_label.set_label(text)

@@ -216,6 +216,50 @@ def test_strip_for_paste_invalid_regex_disabled(caplog):
     assert pp.strip_for_paste("anything") == "anything"
 
 
+def test_find_strip_matches_no_group_returns_full_match():
+    profile = PostprocessProfile(
+        model_path="/fake/model.gguf",
+        paste_strip_regex=r"<\|channel>.*?<channel\|>",
+    )
+    pp = LLMPostprocessor(profile)
+    raw = "<|channel>thinking<channel|>real reply"
+    assert pp.find_strip_matches(raw) == ["<|channel>thinking<channel|>"]
+    # strip still removes the whole match
+    assert pp.strip_for_paste(raw) == "real reply"
+
+
+def test_find_strip_matches_capture_group_returns_inner():
+    profile = PostprocessProfile(
+        model_path="/fake/model.gguf",
+        paste_strip_regex=r"<\|channel>(.*?)<channel\|>",
+    )
+    pp = LLMPostprocessor(profile)
+    raw = "<|channel>thinking<channel|>real reply"
+    # group(1) = inner content, framing tags stripped from display
+    assert pp.find_strip_matches(raw) == ["thinking"]
+    # strip still removes the whole match (tags + content)
+    assert pp.strip_for_paste(raw) == "real reply"
+
+
+def test_find_strip_matches_multiple_blocks():
+    profile = PostprocessProfile(
+        model_path="/fake/model.gguf",
+        paste_strip_regex=r"<\|channel>(.*?)<channel\|>",
+    )
+    pp = LLMPostprocessor(profile)
+    raw = "<|channel>first<channel|>body<|channel>second<channel|>more"
+    assert pp.find_strip_matches(raw) == ["first", "second"]
+
+
+def test_find_strip_matches_empty_when_unset():
+    profile = PostprocessProfile(
+        model_path="/fake/model.gguf",
+        paste_strip_regex="",
+    )
+    pp = LLMPostprocessor(profile)
+    assert pp.find_strip_matches("anything") == []
+
+
 def test_context_appended_to_system_prompt():
     profile = PostprocessProfile(
         model_path="/fake/model.gguf",

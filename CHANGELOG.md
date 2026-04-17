@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.13] - 2026-04-17
+
+### Changed
+
+- **`paste_strip_regex` now honours an optional capture group** to control
+  what is shown as the "thought" in the overlay. If the pattern contains
+  one or more capture groups, group 1 is rendered (so users can wrap the
+  inner content with `(…)` and hide the framing tokens). Without a group,
+  the entire match is shown — same as before. The strip-from-paste
+  behaviour is unchanged in both cases: the full match is always removed
+  from the text that goes to the focused window.
+- **Default `paste_strip_regex` now wraps the channel content in a
+  capture group**: `<\|channel>(.*?)<channel\|>`. Fresh installs see the
+  reasoning text without the surrounding `<|channel>` / `<channel|>`
+  tags cluttering the overlay.
+- **Overlay "thought" line is now blue-green** (`#5ed1c4`) and italic,
+  visually separating it from the green LLM reply body. Implemented via
+  Pango span markup so no extra CSS class was needed.
+
+### Added
+
+- Tests covering `find_strip_matches` with no group, with one group, and
+  with multiple matches in the same text.
+
 ## [0.6.12] - 2026-04-17
 
 ### Changed
