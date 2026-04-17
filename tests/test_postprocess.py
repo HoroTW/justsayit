@@ -19,7 +19,6 @@ from justsayit.postprocess import (
     PostprocessProfile,
     _CLEANUP_PROFILE_TOML,
     _FUN_PROFILE_TOML,
-    _normalise_assistant_input,
     context_file_path,
     ensure_context_file,
     ensure_default_profile,
@@ -243,52 +242,6 @@ def test_build_messages_keeps_leading_hey_computer_request_as_is():
 
     user_msg = next(m for m in messages if m["role"] == "user")
     assert user_msg["content"] == "Hey Computer, make this sound more formal"
-
-
-def test_normalise_assistant_input_rewrites_supported_trailing_request():
-    text = "this is my rough note for the client hey computer please clean this up and make this sound more formal"
-
-    result = _normalise_assistant_input(text)
-
-    assert result.startswith(
-        "Hey Computer, apply the request to the dictated text below."
-    )
-    assert "Dictated text:\nthis is my rough note for the client" in result
-    assert "Request:\nplease clean this up and make this sound more formal" in result
-
-
-def test_build_messages_normalises_supported_trailing_request():
-    profile = PostprocessProfile(model_path="/fake/model.gguf")
-    pp = LLMPostprocessor(profile)
-
-    messages = pp._build_messages(
-        "Please review the attached proposal draft. Hey Computer, make this sound more formal"
-    )
-
-    user_msg = next(m for m in messages if m["role"] == "user")
-    assert user_msg["content"].startswith(
-        "Hey Computer, apply the request to the dictated text below."
-    )
-    assert (
-        "Dictated text:\nPlease review the attached proposal draft."
-        in user_msg["content"]
-    )
-    assert "Request:\nmake this sound more formal" in user_msg["content"]
-
-
-def test_normalise_assistant_input_ignores_trailing_non_meta_request():
-    text = "and then I told him hey computer remind me tomorrow"
-    assert _normalise_assistant_input(text) == text
-
-
-def test_normalise_assistant_input_ignores_bare_computer_request():
-    text = "this is my rough note computer please clean this up"
-    assert _normalise_assistant_input(text) == text
-
-
-def test_normalise_assistant_input_ignores_trailing_request_without_text_reference():
-    text = "this is my rough note hey computer translate to German"
-    assert _normalise_assistant_input(text) == text
 
 
 def test_warmup_loads_model(tmp_path):

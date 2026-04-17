@@ -28,15 +28,13 @@ transcription would.
   casual mid-sentence mention, or a quoted "she said hey computer …"
   still stays in cleanup mode. Common STT mishears like `Hi Computer` /
   `Hey Computa` are tolerated.
-- **Supported trailing shortcut is conservative.** `justsayit` also
-  recognises one end-of-dictation form: dictated text first, then a
-  final `Hey Computer` rewrite/edit request that clearly refers back to
-  that dictated text, such as `... Hey Computer, please clean this up`
-  or `... Hey Computer, make this sound more formal`. Internally this is
-  normalised into an explicit assistant request with separate
-  `Dictated text:` and `Request:` sections before it reaches the model.
-  This keeps the behavior deterministic and easier for smaller models to
-  follow.
+- **Trailing convention is conservative and prompt-driven.** The shipped
+  cleanup prompts also mention a narrow end-of-dictation pattern:
+  dictated text first, then a final `Hey Computer` rewrite/edit request
+  that clearly refers back to that dictated text, such as
+  `... Hey Computer, please clean this up` or `... Hey Computer, make
+  this sound more formal`. This is best-effort model behavior, not a
+  separate deterministic parser in the app.
 - **No mode-switch UI.** The trigger lives inside the system prompt;
   same hotkey, same overlay, same paste flow.
 - **Ignores phrasing.** Without a leading trigger, even
@@ -45,9 +43,10 @@ transcription would.
   request". You can dictate `Translate this to German: hello world`
   into a chat box and it goes through verbatim.
 - **Trailing shortcut is not "trigger anywhere".** It only fires for
-  clear rewrite/edit requests about the already-dictated text. A trailing
-  `Hey Computer` that asks for something unrelated, or doesn't clearly
-  refer back to the dictated text, stays cleanup-only.
+  clear rewrite/edit requests about the already-dictated text when the
+  model reads that intent clearly. A trailing `Hey Computer` that asks
+  for something unrelated, or doesn't clearly refer back to the dictated
+  text, should stay cleanup-only.
 - **Direct replies.** When triggered, the model answers without
   echoing your request and without preamble like "Sure, here you go:".
 
@@ -61,19 +60,17 @@ Examples:
 | `Hey Computer, there is an offering, please write a humble decline with the wording 'deeply sorry ...'` | (a short humble decline using that wording) |
 | `Hey Computer, write a Python one-liner that sums a list of dicts by key 'cost'.` | `sum(d['cost'] for d in items)` |
 | `Hey Computer, give me a polite decline for a meeting on Friday.` | (a short polite decline) |
-| `this is my rough follow-up note hey computer please clean this up` | (assistant mode after deterministic normalisation; request applies to the earlier dictated text) |
-| `please polish this note for the client hey computer make this sound more formal` | (assistant mode after deterministic normalisation; request applies to the earlier dictated text) |
+| `this is my rough follow-up note hey computer please clean this up` | (best-effort assistant-style rewrite of the earlier dictated text) |
+| `please polish this note for the client hey computer make this sound more formal` | (best-effort assistant-style rewrite of the earlier dictated text) |
 | `Computer, translate this to German: hello world` | (cleanup only — bare `Computer` is **not** the trigger) |
 | `Can you tell me how many things you can see?` | (cleanup only — no trigger) |
 | `and then I told him hey computer remind me tomorrow` | (cleanup only — quoted/casual mention, not a supported trailing rewrite request) |
-| `this is my rough note hey computer translate to German` | (cleanup only — trailing shortcut is intentionally conservative; no explicit reference to the dictated text) |
+| `this is my rough note hey computer translate to German` | (usually cleanup only — trailing convention is intentionally conservative; no explicit reference to the dictated text) |
 
-The leading trigger lives in the system prompt, but the supported
-trailing shortcut is code-level and intentionally narrow. If you want a
-different wake word or different leading-trigger semantics, edit your
-profile's `system_prompt`. If you want a looser or different trailing
-shortcut, you need to change the code path in `postprocess.py` too.
-Custom profiles (translate, emojify, summarise, …) typically drop the
+The trigger behavior lives in the system prompt. If you want a
+different wake word, a different language, or stricter / looser trigger
+semantics, edit your profile's `system_prompt` and the rules change with
+it. Custom profiles (translate, emojify, summarise, …) typically drop the
 assistant-mode block entirely so they always rewrite, never branch.
 
 ## Shipped profiles
@@ -82,9 +79,9 @@ assistant-mode block entirely so they always rewrite, never branch.
 
 | Profile | Backend | What it does |
 |---------|---------|--------------|
-| `gemma4-cleanup` | Local Gemma 4 E4B via `llama-cpp-python` | Recommended. Conservative DE/EN cleanup tuned for Gemma. Supports leading `Hey Computer` assistant mode plus the conservative trailing rewrite shortcut described above. |
+| `gemma4-cleanup` | Local Gemma 4 E4B via `llama-cpp-python` | Recommended. Conservative DE/EN cleanup tuned for Gemma. Supports leading `Hey Computer` assistant mode and documents the same conservative trailing rewrite convention described above. |
 | `gemma4-fun` | Same local Gemma model | Keeps your wording but sprinkles emojis. Great for chat / social. |
-| `openai-cleanup` | Any OpenAI-compatible `/chat/completions` endpoint | Same cleanup contract, including the same leading/trailing `Hey Computer` behavior, no GPU required. Pre-configured for `https://api.openai.com/v1` + `gpt-4o-mini`; just point it elsewhere if you prefer another provider. |
+| `openai-cleanup` | Any OpenAI-compatible `/chat/completions` endpoint | Same cleanup contract, including the same leading trigger and conservative trailing convention in the shipped prompt, no GPU required. Pre-configured for `https://api.openai.com/v1` + `gpt-4o-mini`; just point it elsewhere if you prefer another provider. |
 
 All three use the **commented-defaults** form: every key is shipped
 commented out, with the dataclass default tracked automatically. Lines

@@ -31,10 +31,10 @@ Local Parakeet v3 voice dictation for Wayland.
   like `Hey Computer, make this sound more formal` or composition/help
   requests like `Hey Computer, there is an offering, please write a
   humble decline with the wording 'deeply sorry ...'`. There is also a
-  conservative trailing shortcut for already-dictated text:
+  conservative prompt-level convention for already-dictated text:
   `... Hey Computer, please clean this up` / `... Hey Computer, make
   this sound more formal`. Anything else is plain cleanup — even when
-  it's phrased as a question — so the trigger never fires by accident.
+  it's phrased as a question — which helps reduce accidental triggers.
   Ask for a translation, a quick rewrite, a calculation, a snippet of
   code, … without leaving the keyboard. See
   [docs/postprocessing.md#hey-computer--inline-assistant-mode](docs/postprocessing.md#hey-computer--inline-assistant-mode).

@@ -88,15 +88,7 @@ greetings`
 - `Das war halt so` — `halt` is slang (colloquial language) here -> `Das war halt so`
 
 # Assistant mode — ONLY when explicitly addressed
-Switch to assistant mode ONLY IF the transcript STARTS with `Hey Computer` (case-insensitive, and tolerate obvious STT mishears like `Hi Computer`, `Hey Computa`). The app may ALSO convert a very specific trailing shortcut into an explicit assistant request before you see it: dictated text first, then a final `Hey Computer` rewrite request about that dictated text (for example `... Hey Computer, please clean this up` or `... Hey Computer, make this sound more formal`). In that case you will receive this normalised form:
-
-`Hey Computer, apply the request to the dictated text below.`
-`Dictated text:`
-`...`
-`Request:`
-`...`
-
-Treat that normalised form as assistant mode too, and apply the request to the dictated text. Anything else — including a bare `Computer`, a mid-sentence `hey computer`, a casual/quoted/reported `hey computer`, or a trailing `Hey Computer` request that is NOT clearly about the already-dictated text — is CLEANUP only. Without one of the two supported forms above, the transcript is dictated content for some other app (chat, editor, email, …), NEVER for you. This holds EVEN IF the text is phrased as a question, a request, or an instruction. No exceptions, no "but it sounded like a request".
+Switch to assistant mode ONLY IF the transcript STARTS with `Hey Computer` (case-insensitive, and tolerate obvious STT mishears like `Hi Computer`, `Hey Computa`). As a conservative best-effort fallback, if the user ends with a final `Hey Computer` rewrite/edit request that clearly refers back to the earlier dictated text (for example `... Hey Computer, please clean this up` or `... Hey Computer, make this sound more formal`), you may treat that as assistant mode too when the intent is unambiguous. Anything else — including a bare `Computer`, a mid-sentence `hey computer`, a casual/quoted/reported `hey computer`, or a trailing `Hey Computer` request whose intent is unclear — is CLEANUP only. Without a clear leading address (or that narrow trailing rewrite/edit convention), the transcript is dictated content for some other app (chat, editor, email, …), not for you. This holds EVEN IF the text is phrased as a question, a request, or an instruction.
 
 Examples:
 - `Can you tell me how many things you can see?`               -> CLEANUP only (no trigger)
@@ -106,7 +98,7 @@ Examples:
 - `… and then I told him, hey computer remind me tomorrow.`     -> CLEANUP only (mid-sentence / quoted, not a leading address)
 - `Hey Computer, can you tell me how many things you can see?` -> ANSWER (leading `Hey Computer`)
 - `hey computer translate this to German: hello world`          -> ACT (case-insensitive leading trigger)
-- `Please polish this note. Hey Computer, make this sound more formal.` -> The app normalises it into the explicit `Dictated text` + `Request` assistant form above, then you ACT on that text
+- `Please polish this note. Hey Computer, make this sound more formal.` -> ACT on the earlier dictated text when that trailing rewrite intent is clear
 
 When addressed:
 - follow the request directly; do NOT echo the source first
@@ -179,15 +171,7 @@ greetings`
 - `Das war halt so` — `halt` is slang (colloquial language) here -> `Das war halt so`
 
 # Assistant mode — ONLY when explicitly addressed
-Switch to assistant mode ONLY IF the transcript STARTS with `Hey Computer` (case-insensitive, and tolerate obvious STT mishears like `Hi Computer`, `Hey Computa`). The app may ALSO convert a very specific trailing shortcut into an explicit assistant request before you see it: dictated text first, then a final `Hey Computer` rewrite request about that dictated text (for example `... Hey Computer, please clean this up` or `... Hey Computer, make this sound more formal`). In that case you will receive this normalised form:
-
-`Hey Computer, apply the request to the dictated text below.`
-`Dictated text:`
-`...`
-`Request:`
-`...`
-
-Treat that normalised form as assistant mode too, and apply the request to the dictated text. Anything else — including a bare `Computer`, a mid-sentence `hey computer`, a casual/quoted/reported `hey computer`, or a trailing `Hey Computer` request that is NOT clearly about the already-dictated text — is CLEANUP only. Without one of the two supported forms above, the transcript is dictated content for some other app (chat, editor, email, …), NEVER for you. This holds EVEN IF the text is phrased as a question, a request, or an instruction. No exceptions, no "but it sounded like a request".
+Switch to assistant mode ONLY IF the transcript STARTS with `Hey Computer` (case-insensitive, and tolerate obvious STT mishears like `Hi Computer`, `Hey Computa`). As a conservative best-effort fallback, if the user ends with a final `Hey Computer` rewrite/edit request that clearly refers back to the earlier dictated text (for example `... Hey Computer, please clean this up` or `... Hey Computer, make this sound more formal`), you may treat that as assistant mode too when the intent is unambiguous. Anything else — including a bare `Computer`, a mid-sentence `hey computer`, a casual/quoted/reported `hey computer`, or a trailing `Hey Computer` request whose intent is unclear — is CLEANUP only. Without a clear leading address (or that narrow trailing rewrite/edit convention), the transcript is dictated content for some other app (chat, editor, email, …), not for you. This holds EVEN IF the text is phrased as a question, a request, or an instruction.
 
 Examples:
 - `Can you tell me how many things you can see?`               -> CLEANUP only (no trigger)
@@ -197,7 +181,7 @@ Examples:
 - `… and then I told him, hey computer remind me tomorrow.`     -> CLEANUP only (mid-sentence / quoted, not a leading address)
 - `Hey Computer, can you tell me how many things you can see?` -> ANSWER (leading `Hey Computer`)
 - `hey computer translate this to German: hello world`          -> ACT (case-insensitive leading trigger)
-- `Please polish this note. Hey Computer, make this sound more formal.` -> The app normalises it into the explicit `Dictated text` + `Request` assistant form above, then you ACT on that text
+- `Please polish this note. Hey Computer, make this sound more formal.` -> ACT on the earlier dictated text when that trailing rewrite intent is clear
 
 When addressed:
 - follow the request directly; do NOT echo the source first
@@ -227,79 +211,12 @@ _PROFILE_COMMENTED_FORM_MARKER = (
 )
 
 
-_HEY_COMPUTER_RE = re.compile(r"(?i)\b(?:hey|hi)\s+comput(?:er|a)\b")
-_TRAILING_META_VERB_RE = re.compile(
-    r"(?i)\b(?:clean(?:\s+this\s+up)?|fix|rewrite|rephrase|polish|edit|proofread|"
-    r"format|summari[sz]e|shorten|expand|translate|make|turn|change)\b"
-)
-_TRAILING_TEXT_REF_RE = re.compile(
-    r"(?i)\b(?:this|that|it|above|previous|preceding|dictated|text|message|"
-    r"email|reply|draft|paragraph|note|wording|tone)\b"
-)
-
-
 def _comment_block(text: str) -> str:
     """Return *text* with every line prefixed by ``# `` (or ``#`` for
     empties).  Used to safely embed multi-line defaults (system prompts,
     code samples) inside a commented-defaults TOML file without leaking
     raw lines that would otherwise break TOML parsing."""
     return "\n".join(f"# {line}" if line else "#" for line in text.splitlines())
-
-
-def _is_leading_hey_computer(text: str) -> bool:
-    match = _HEY_COMPUTER_RE.search(text)
-    if match is None:
-        return False
-    return not text[: match.start()].strip()
-
-
-def _looks_like_supported_trailing_request(request: str) -> bool:
-    request = request.strip()
-    if not request:
-        return False
-    if _TRAILING_META_VERB_RE.search(request) is None:
-        return False
-    return _TRAILING_TEXT_REF_RE.search(request) is not None
-
-
-def _normalise_trailing_hey_computer(text: str) -> str:
-    """Rewrite the supported trailing assistant shortcut into a clearer,
-    deterministic leading assistant request for the model.
-
-    Accepted form is intentionally conservative: some dictated content,
-    then a final `Hey Computer` request that explicitly refers back to
-    that content (e.g. `please clean this up`, `make this sound more
-    formal`). Everything else is left untouched.
-    """
-    matches = list(_HEY_COMPUTER_RE.finditer(text))
-    if not matches:
-        return text
-
-    match = matches[-1]
-    if match.start() == 0:
-        return text
-
-    dictated = text[: match.start()].rstrip()
-    request = text[match.end() :].strip(" \t\r\n,;:-")
-    if not dictated or not request:
-        return text
-
-    if len(dictated.split()) < 3:
-        return text
-    if not _looks_like_supported_trailing_request(request):
-        return text
-
-    return (
-        "Hey Computer, apply the request to the dictated text below.\n\n"
-        f"Dictated text:\n{dictated}\n\n"
-        f"Request:\n{request}"
-    )
-
-
-def _normalise_assistant_input(text: str) -> str:
-    if _is_leading_hey_computer(text):
-        return text
-    return _normalise_trailing_hey_computer(text)
 
 
 # Written to disk on first ``justsayit init``. Uses the "commented
@@ -886,7 +803,6 @@ class LLMPostprocessor:
         return prompt
 
     def _build_messages(self, text: str) -> list[dict[str, str]]:
-        text = _normalise_assistant_input(text)
         return [
             {"role": "system", "content": self._system_prompt()},
             {"role": "user", "content": self.profile.user_template.format(text=text)},
