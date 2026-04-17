@@ -12,37 +12,52 @@ import pytest
 from justsayit import __version__, update_check
 from justsayit.cli import App
 from justsayit.update_check import (
+    LatestRelease,
     UpdateInfo,
     check_for_update,
     is_newer,
-    parse_version_from_pyproject,
+    parse_latest_release,
+    parse_release_version,
 )
 
 
 # --- pure helpers -----------------------------------------------------------
 
 
-def test_parse_version_from_pyproject():
-    body = '[project]\nname = "x"\nversion = "1.2.3"\n'
-    assert parse_version_from_pyproject(body) == "1.2.3"
+def test_parse_release_version_supports_leading_v():
+    assert parse_release_version("v1.2.3") == "1.2.3"
 
 
-def test_parse_version_first_match_wins():
-    # The Build [tool.hatch.build.targets.wheel] section can also have a
-    # version field in some packaging setups; we want the [project] one,
-    # which is always first.
-    body = '[project]\nversion = "0.7.2"\n[tool.foo]\nversion = "9.9.9"\n'
-    assert parse_version_from_pyproject(body) == "0.7.2"
+def test_parse_release_version_supports_bare_semver():
+    assert parse_release_version("1.2.3") == "1.2.3"
 
 
-def test_parse_version_missing_returns_none():
-    assert parse_version_from_pyproject("[project]\nname = 'x'\n") is None
+def test_parse_release_version_rejects_malformed_tag():
+    assert parse_release_version("release-1.2.3") is None
+
+
+def test_parse_latest_release_supports_leading_v_tag():
+    body = '{"tag_name": "v1.2.3", "html_url": "https://example.com/release"}'
+    latest = parse_latest_release(body)
+
+    assert latest == LatestRelease(
+        tag="v1.2.3",
+        version="1.2.3",
+        url="https://example.com/release",
+    )
+
+
+def test_parse_latest_release_missing_or_malformed_tag_returns_none():
+    assert parse_latest_release('{"html_url": "https://example.com/release"}') is None
+    assert parse_latest_release('{"tag_name": "release-1.2.3"}') is None
+    assert parse_latest_release('["not", "an", "object"]') is None
 
 
 @pytest.mark.parametrize(
     "latest,current,expected",
     [
         ("1.0.0", "0.9.0", True),
+        ("v1.0.0", "0.9.0", True),
         ("0.7.2", "0.7.1", True),
         ("1.0.0", "1.0.0", False),
         ("0.9.0", "1.0.0", False),
@@ -60,7 +75,11 @@ def test_is_newer(latest: str, current: str, expected: bool):
 
 def test_check_for_update_returns_info_when_newer(tmp_path: Path):
     cache = tmp_path / "cache.json"
-    with patch.object(update_check, "_fetch_latest", return_value="1.0.0"):
+    with patch.object(
+        update_check,
+        "_fetch_latest",
+        return_value=LatestRelease("v1.0.0", "1.0.0", "https://example.com/v1.0.0"),
+    ):
         info = check_for_update("0.7.2", cache_path=cache)
     assert isinstance(info, UpdateInfo)
     assert info.current == "0.7.2"
@@ -73,7 +92,11 @@ def test_check_for_update_returns_info_when_newer(tmp_path: Path):
 
 def test_check_for_update_returns_none_when_same(tmp_path: Path):
     cache = tmp_path / "cache.json"
-    with patch.object(update_check, "_fetch_latest", return_value="0.7.2"):
+    with patch.object(
+        update_check,
+        "_fetch_latest",
+        return_value=LatestRelease("v0.7.2", "0.7.2", "https://example.com/v0.7.2"),
+    ):
         assert check_for_update("0.7.2", cache_path=cache) is None
 
 
@@ -82,8 +105,32 @@ def test_check_for_update_returns_none_on_fetch_failure(tmp_path: Path):
     with patch.object(update_check, "_fetch_latest", return_value=None):
         assert check_for_update("0.7.2", cache_path=cache) is None
     # No cache write on failure (so we retry sooner instead of the
-    # 24h-cached "no update" response).
+    # 3h-cached "no update" response).
     assert not cache.exists()
+
+
+def test_fetch_latest_logs_remote_tag_and_version(caplog):
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+        def read(self):
+            return b'{"tag_name": "v1.2.3", "html_url": "https://example.com/v1.2.3"}'
+
+    caplog.set_level("DEBUG", logger="justsayit.update_check")
+
+    with patch("urllib.request.urlopen", return_value=FakeResponse()):
+        latest = update_check._fetch_latest(5.0)
+
+    assert latest == LatestRelease(
+        tag="v1.2.3",
+        version="1.2.3",
+        url="https://example.com/v1.2.3",
+    )
+    assert "update check: latest release tag=v1.2.3 version=1.2.3" in caplog.text
 
 
 def test_check_for_update_uses_cache_within_interval(tmp_path: Path):
@@ -100,10 +147,31 @@ def test_check_for_update_uses_cache_within_interval(tmp_path: Path):
     assert info.latest == "9.9.9"
 
 
+def test_check_for_update_logs_cached_result(tmp_path: Path, caplog):
+    cache = tmp_path / "cache.json"
+    cache.write_text(json.dumps({"checked_at": int(time.time()), "latest": "9.9.9"}))
+    caplog.set_level("DEBUG", logger="justsayit.update_check")
+
+    with patch.object(
+        update_check,
+        "_fetch_latest",
+        side_effect=AssertionError("should not have fetched - cache is fresh"),
+    ):
+        info = check_for_update("0.7.2", cache_path=cache)
+
+    assert info is not None
+    assert "update check: using cached latest=9.9.9" in caplog.text
+    assert "update check: decision=update source=cache" in caplog.text
+
+
 def test_check_for_update_force_bypasses_cache(tmp_path: Path):
     cache = tmp_path / "cache.json"
     cache.write_text(json.dumps({"checked_at": int(time.time()), "latest": "0.7.2"}))
-    with patch.object(update_check, "_fetch_latest", return_value="9.9.9"):
+    with patch.object(
+        update_check,
+        "_fetch_latest",
+        return_value=LatestRelease("v9.9.9", "9.9.9", "https://example.com/v9.9.9"),
+    ):
         info = check_for_update("0.7.2", cache_path=cache, force=True)
     assert info is not None and info.latest == "9.9.9"
 
@@ -121,7 +189,11 @@ def test_check_for_update_expired_cache_refetches(tmp_path: Path):
             }
         )
     )
-    with patch.object(update_check, "_fetch_latest", return_value="0.8.0"):
+    with patch.object(
+        update_check,
+        "_fetch_latest",
+        return_value=LatestRelease("v0.8.0", "0.8.0", "https://example.com/v0.8.0"),
+    ):
         info = check_for_update("0.7.2", cache_path=cache)
     assert info is not None and info.latest == "0.8.0"
 
@@ -129,9 +201,40 @@ def test_check_for_update_expired_cache_refetches(tmp_path: Path):
 def test_check_for_update_corrupt_cache_is_ignored(tmp_path: Path):
     cache = tmp_path / "cache.json"
     cache.write_text("{not valid json")
-    with patch.object(update_check, "_fetch_latest", return_value="1.0.0"):
+    with patch.object(
+        update_check,
+        "_fetch_latest",
+        return_value=LatestRelease("v1.0.0", "1.0.0", "https://example.com/v1.0.0"),
+    ):
         info = check_for_update("0.7.2", cache_path=cache)
     assert info is not None and info.latest == "1.0.0"
+
+
+def test_check_for_update_logs_fetched_release_and_no_update(tmp_path: Path, caplog):
+    cache = tmp_path / "cache.json"
+    caplog.set_level("DEBUG", logger="justsayit.update_check")
+
+    with patch.object(
+        update_check,
+        "_fetch_latest",
+        return_value=LatestRelease("v0.7.2", "0.7.2", "https://example.com/v0.7.2"),
+    ):
+        assert check_for_update("0.7.2", cache_path=cache) is None
+
+    assert (
+        "update check: decision=no-update source=network current=0.7.2 latest=0.7.2"
+        in caplog.text
+    )
+
+
+def test_check_for_update_logs_fetch_failure(tmp_path: Path, caplog):
+    cache = tmp_path / "cache.json"
+    caplog.set_level("DEBUG", logger="justsayit.update_check")
+
+    with patch.object(update_check, "_fetch_latest", return_value=None):
+        assert check_for_update("0.7.2", cache_path=cache) is None
+
+    assert "update check: decision=fetch-failed" in caplog.text
 
 
 def test_kick_off_update_check_logs_startup_message_and_starts_async(caplog):

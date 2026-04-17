@@ -503,7 +503,7 @@ class App:
             log.exception("could not send shortcut-unbound notification")
 
     def _kick_off_update_check(self) -> None:
-        """Best-effort GitHub version check (24h cached). When a newer
+        """Best-effort GitHub version check (3h cached). When a newer
         version exists, post a desktop notification AND show the small
         yellow "update available" badge in the overlay."""
         if self.gtk_app is None:

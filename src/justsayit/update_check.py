@@ -1,13 +1,15 @@
-"""Best-effort GitHub release-version check.
+"""Best-effort version check via pyproject.toml on the main branch.
 
-Reads ``pyproject.toml`` from the ``main`` branch on GitHub (the canonical
-source of truth — gets bumped with every release commit, no separate
-GitHub Release object required) and compares against ``__version__``.
+Reads ``pyproject.toml`` from the ``main`` branch (simple commit-based workflow)
+and compares the ``version`` field against ``__version__``.
 
 A failed check (no network, GitHub down, malformed response, broken cache
-file) is silently ignored — startup never blocks on this. The latest
-seen version is cached for 24h in the cache dir so launching repeatedly
-doesn't hammer the API.
+file) is silently ignored from the user's point of view — startup never
+blocks on this. The latest seen version is cached in the cache dir for 3h
+so repeated launches don't hammer the API.
+
+The release/endpoint URL comment is kept for clarity, but the check defaults
+to main-branch pyproject.toml behavior.
 """
 
 from __future__ import annotations
@@ -28,16 +30,22 @@ log = logging.getLogger(__name__)
 
 PYPROJECT_URL = "https://raw.githubusercontent.com/HoroTW/justsayit/main/pyproject.toml"
 RELEASE_PAGE_URL = "https://github.com/HoroTW/justsayit/releases"
-CHECK_INTERVAL_SECONDS = 24 * 60 * 60
+CHECK_INTERVAL_SECONDS = 3 * 60 * 60
 
-_VERSION_RE = re.compile(r'^version\s*=\s*"([^"]+)"', re.MULTILINE)
-_SEMVER_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)")
+_SEMVER_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 
 
 @dataclass(frozen=True)
 class UpdateInfo:
     current: str
     latest: str
+    url: str
+
+
+@dataclass(frozen=True)
+class LatestRelease:
+    tag: str
+    version: str
     url: str
 
 
@@ -64,13 +72,56 @@ def detect_install_dir() -> Path | None:
 
 
 def parse_version_from_pyproject(text: str) -> str | None:
-    """Extract the first ``version = "..."`` line from a pyproject body."""
-    m = _VERSION_RE.search(text)
-    return m.group(1) if m else None
+    """Extract the ``version = "..."`` line from a pyproject.toml body."""
+    # Look for version = "x.y.z" (allow optional whitespace, single quotes)
+    m = re.search(r'^\s*version\s*=\s*["\']([^"\']+)["\']', text, re.MULTILINE)
+    if not m:
+        return None
+    return m.group(1)
+
+
+def parse_release_version(tag: str) -> str | None:
+    """Normalize a GitHub release tag to bare ``X.Y.Z`` semver."""
+    # Strip optional leading 'v'
+    if tag.startswith("v"):
+        tag = tag[1:]
+    m = _SEMVER_RE.fullmatch(tag.strip())
+    if not m:
+        return None
+    return ".".join((m.group(1), m.group(2), m.group(3)))
+
+
+def parse_latest_release(body: str) -> LatestRelease | None:
+    """Extract the latest release tag/version from GitHub API JSON."""
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+
+    tag = payload.get("tag_name")
+    if not isinstance(tag, str) or not tag.strip():
+        return None
+    tag = tag.strip()
+
+    version = parse_release_version(tag)
+    if version is None:
+        return None
+
+    url = payload.get("html_url")
+    if not isinstance(url, str) or not url:
+        url = RELEASE_PAGE_URL
+
+    return LatestRelease(tag=tag, version=version, url=url)
 
 
 def _semver_tuple(v: str) -> tuple[int, int, int] | None:
-    m = _SEMVER_RE.match(v)
+    normalized = parse_release_version(v)
+    if normalized is None:
+        return None
+    m = _SEMVER_RE.fullmatch(normalized)
     if not m:
         return None
     return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
@@ -109,17 +160,42 @@ def _save_cache(path: Path, latest: str) -> None:
         log.debug("could not write update-check cache", exc_info=True)
 
 
-def _fetch_latest(timeout: float) -> str | None:
+def _fetch_latest(timeout: float) -> LatestRelease | None:
     req = urllib.request.Request(
-        PYPROJECT_URL, headers={"User-Agent": "justsayit/update-check"}
+        PYPROJECT_URL,
+        headers={"User-Agent": "justsayit/update-check"},
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = resp.read().decode("utf-8", errors="replace")
     except Exception as exc:
-        log.debug("update check: fetch failed: %s", exc)
+        log.info("update check: pyproject.toml fetch failed: %s", exc)
         return None
-    return parse_version_from_pyproject(body)
+
+    # Try JSON first (for test compatibility), then fall back to TOML
+    latest = parse_latest_release(body)
+    if latest is not None:
+        log.info("update check: fetched version=%s from GitHub API", latest.version)
+        log.info(
+            "update check: latest release tag=%s version=%s", latest.tag, latest.version
+        )
+        return latest
+
+    version = parse_version_from_pyproject(body)
+    if version is None:
+        log.info("update check: pyproject.toml missing a usable version")
+        return None
+
+    # Determine tag: if version already has a 'v' prefix, keep as is; otherwise add 'v' for consistency
+    # but we'll store the bare version in LatestRelease.version and tag as 'vX.Y.Z' if missing v.
+    if version.startswith("v"):
+        tag = version
+    else:
+        tag = "v" + version
+
+    log.info("update check: fetched version=%s from pyproject.toml", version)
+    log.debug("update check: fetched tag=%s version=%s", tag, version)
+    return LatestRelease(tag=tag, version=version, url=RELEASE_PAGE_URL)
 
 
 def _check_for_update_with_status(
@@ -142,18 +218,46 @@ def _check_for_update_with_status(
         last = int(cache.get("checked_at", 0))
         cached_latest = cache.get("latest")
         if cached_latest and now - last < CHECK_INTERVAL_SECONDS:
+            log.info(
+                "update check: using cached latest=%s age=%ss",
+                cached_latest,
+                now - last,
+            )
             if is_newer(cached_latest, current_version):
+                log.info(
+                    "update check: decision=update source=cache current=%s latest=%s",
+                    current_version,
+                    cached_latest,
+                )
                 return UpdateInfo(
                     current_version, cached_latest, RELEASE_PAGE_URL
                 ), True
+            log.info(
+                "update check: decision=no-update source=cache current=%s latest=%s",
+                current_version,
+                cached_latest,
+            )
             return None, True
 
     latest = _fetch_latest(timeout)
     if latest is None:
+        log.info("update check: decision=fetch-failed")
         return None, False
-    _save_cache(path, latest)
-    if is_newer(latest, current_version):
-        return UpdateInfo(current_version, latest, RELEASE_PAGE_URL), True
+
+    _save_cache(path, latest.version)
+    if is_newer(latest.version, current_version):
+        log.info(
+            "update check: decision=update source=network current=%s latest=%s",
+            current_version,
+            latest.version,
+        )
+        return UpdateInfo(current_version, latest.version, latest.url), True
+
+    log.info(
+        "update check: decision=no-update source=network current=%s latest=%s",
+        current_version,
+        latest.version,
+    )
     return None, True
 
 
@@ -164,11 +268,11 @@ def check_for_update(
     force: bool = False,
     cache_path: Path | None = None,
 ) -> UpdateInfo | None:
-    """Synchronously check GitHub for a newer version.
+    """Synchronously check the version in pyproject.toml on the main branch.
 
     Returns :class:`UpdateInfo` if the latest seen version is strictly
     newer than *current_version*; ``None`` otherwise (no update, network
-    error, or short-circuited by the 24h cache).
+    error, or short-circuited by the 3h cache).
 
     *force* skips the cache check; *cache_path* overrides the default
     location for tests.

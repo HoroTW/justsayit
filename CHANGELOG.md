@@ -564,8 +564,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **GitHub update check on startup.** A best-effort background fetch
-  reads `pyproject.toml` from `main` on GitHub, parses the `version`
-  field, and compares against the running `__version__`. When a newer
+  reads the latest GitHub release metadata, parses the release tag
+  (`v0.11.6` or `0.11.6`), and compares against the running `__version__`.
+  When a newer
   version is available:
   - the overlay shows a small yellow `update available` badge to the
     left of the × button (tooltip carries the new version number);
@@ -574,7 +575,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - if the running install is a git checkout (detected by `install.sh`
     + `.git` next to the package source), the notification body tells
     the user how to update: `cd <install dir> && ./install.sh --update`.
-  Result is cached in `~/.cache/justsayit/update_check.json` for 24h so
+  Result is cached in `~/.cache/justsayit/update_check.json` for 3h so
   repeated launches don't hammer the API. Network errors / malformed
   responses are silently ignored — startup never blocks.
 - **`install.sh --update`** mode: pulls latest commits (fast-forward
