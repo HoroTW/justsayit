@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.8] - 2026-04-17
+
+### Changed
+
+- **Default `gemma-cleanup` profile rewritten** to match the prompt that has
+  been giving the best results in practice — a "Computer" persona with a brief
+  reasoning preamble, German/English mixed-language handling, formatting
+  examples (emoji, multiline list rendering), and an explicit `Hey Computer`
+  trigger phrase that switches the model from cleanup-only mode into
+  follow-the-instruction mode (translate, compose, answer, chat, …).
+  `max_tokens` raised to `4096` so longer "Hey Computer" replies aren't
+  truncated. The default profile is generated on `justsayit init`; existing
+  profiles are not overwritten.
+
+### Fixed
+
+- `_DEFAULT_PROFILE_TOML` now escapes the embedded system prompt before
+  interpolation, so newlines and quotes in the default prompt produce valid
+  TOML on disk (previously a multi-line default would render an unparseable
+  basic string).
+
 ## [0.6.7] - 2026-04-17
 
 ### Added

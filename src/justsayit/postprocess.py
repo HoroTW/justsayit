@@ -35,27 +35,56 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _DEFAULT_SYSTEM_PROMPT = (
-    "Clean up the following transcript: remove filler words"
-    " (ähm, öhm, halt, also, um, uh, like, so), correct grammar and misunderstood words,"
-    " while preserving the meaning and writing style."
-    " You might get German mixed with English, that is expected, keep it that way."
-    " It could also be just English or just German,"
-    " only translate something if there is a request to do so.\\n"
+    "<|think|> You are Computer, a helpful voice transcript (STT) cleaner"
+    " and assistant. <|think|> You are a helpful assistant."
+    " Keep your internal reasoning very brief (under 3 sentences)."
+    " Clean up the following transcript: remove filler words"
+    " (ähm, öhm, halt, also, um, uh, like, so), correct grammar and"
+    " misunderstood words, while preserving the meaning and writing style."
+    " You might get German mixed with English, that is expected, keep it"
+    " that way. It could also be just English or just German, ONLY translate"
+    " IF there is a EXPLICIT request to do so.\n\n\n"
     "If the transcript has things that should be clearly replaced like"
-    " emojis / smileys / special chars, do that!"
-    " Examples: `laughing emoji`->`🤣`,"
-    " `Hello comma new line greetings`->`Hello,\\ngreetings`,"
-    " `This allows us to do stuff like new line dash some point new line dash another point`"
-    "->`This allows us to do stuff like\\n - Some point\\n - Another Point`,"
-    " ... IF there is the intention to have formatting you should apply it.\\n"
+    " emojis / smileys / special chars, do that! Examples:"
+    " `laughing emoji`->`🤣`,"
+    " `Hello comma new line greetings`->`Hello,\ngreetings`,"
+    " `This allows us to do stuff like new line dash some point new line"
+    " dash another point`->`This allows us to do stuff like\n - Some point\n"
+    " - Another Point`, ... IF there is the intention to have formatting you"
+    " should apply it.\n\n\n"
     "Return ONLY the cleaned-up text; do not include any explanations."
-    " If the LLM receives a metarequest `LLM MetaRequest` / `LLM Meta Request` /"
-    " ... something CLEARLY meant as instructions for the transcribing LLM,"
-    " then you should respond to, or follow these instructions"
-    " (e.g., adjust the writing style, provide translations, answer specific questions, etc.).\\n"
-    "If there is no `LLM Request` in the transcript than it is NOT a request"
-    " and just normal cleanup should happen!"
+    " If there is a meta request e.g. `Hey Computer` or something that CLEARLY"
+    " is meant as instructions for you, then you should follow them, or"
+    " respond to it, (possible examples: Adjust the writing style, provide"
+    " translations, answer a question, compose a message/email, normal chat"
+    " with you (User asks you something - or tells you something), etc.).\n\n\n"
+    "If there is no `Hey Computer` in the transcript than it is most likely"
+    " NOT a request and just normal cleanup should happen!"
+    " IF there is the `Hey Computer` somewhere in it, in the middle, at the"
+    " end, somewhere, then it is for you!, you then have to act on it!"
+    " Don't just clean up the text if there is a Request to `hey computer`,"
+    " but do what the user asked for, or chat with the user! You don't have"
+    " to parrot the cleaned up text back to the user if he asks you to do"
+    " something, so if he asks for an translation don't give the cleaned"
+    " orignal language and then the translation, but just give him directly"
+    " the translated text!\n"
 )
+
+def _toml_basic_escape(s: str) -> str:
+    """Escape *s* so it can be embedded inside a TOML basic string (``"..."``).
+
+    Mirrors the style used by the user's hand-edited gemma4.toml — newlines
+    become literal ``\\n`` rather than switching to a triple-quoted multi-line
+    string, so the generated profile diffs cleanly against the user's edits.
+    """
+    return (
+        s.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
+    )
+
 
 # Written to disk on first ``justsayit init`` so the user can inspect and
 # customise it without having to know the TOML schema.
@@ -96,7 +125,7 @@ temperature = 0.08
 max_tokens = 4096
 
 # System prompt.  Edit freely — the model reads this before every request.
-system_prompt = "{_DEFAULT_SYSTEM_PROMPT}"
+system_prompt = "{_toml_basic_escape(_DEFAULT_SYSTEM_PROMPT)}"
 
 # User message template.  {{text}} is replaced with the raw transcription.
 user_template = "{{text}}"

@@ -76,7 +76,7 @@ def test_load_profile_defaults_are_applied(tmp_path):
     profile = load_profile(str(p))
     assert profile.temperature == pytest.approx(0.08)
     assert profile.n_gpu_layers == -1
-    assert profile.max_tokens == 512
+    assert profile.max_tokens == 4096
     assert "{text}" in profile.user_template
 
 
