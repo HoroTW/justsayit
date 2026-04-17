@@ -366,6 +366,81 @@ system_prompt = """
 '''
 
 
+# Companion "openai" profile — same cleanup contract as gemma4-cleanup
+# but routed through an OpenAI-compatible HTTP endpoint instead of a
+# local GGUF.  Ships with `endpoint` and `model` uncommented (the keys
+# that DEFINE the variant) and a sensible OpenAI default; everything
+# else falls through to the dataclass default.  The cleanup prompt is
+# left commented out: with `endpoint` set, `_system_prompt()` auto-swaps
+# the Gemma `<|think|>`-channel default for `_REMOTE_CLEANUP_SYSTEM_PROMPT`,
+# the channel-free variant generic LLMs need.
+_OPENAI_PROFILE_TOML = f'''\
+{_PROFILE_COMMENTED_FORM_MARKER}
+# Profile: openai-cleanup (OpenAI-compatible /chat/completions backend).
+#
+# Same commented-defaults convention as gemma4-cleanup.toml: comment =
+# uses default, uncommented line = override. The two uncommented keys
+# below (endpoint, model) are what makes this the "openai" profile —
+# point them at your provider, drop your API key into
+# ~/.config/justsayit/.env (KEY=VALUE format), and activate this
+# profile from the tray's LLM submenu.
+#
+# Works with anything that speaks the OpenAI chat-completions schema:
+# OpenAI, OpenRouter, Groq, Together, vLLM, Ollama (`/v1`), LM Studio,
+# llama.cpp's bundled server, etc.
+#
+# Because `endpoint` is set AND `system_prompt` is left at the dataclass
+# default (commented-out below), justsayit auto-swaps the Gemma
+# `<|think|>`-channel cleanup prompt for a channel-free variant —
+# generic OpenAI-compatible models don't have that channel and would
+# otherwise reply literally `No changes.` or leak reasoning.
+
+# Endpoint base URL (no trailing /chat/completions — that's appended).
+endpoint = "https://api.openai.com/v1"
+
+# Model name. Pick whatever your provider supports.
+model = "gpt-4o-mini"
+
+# API key — three places to put it, in priority order:
+#   1. Inline below (lowest friction; commit risk).
+#   2. The env var named by `api_key_env` (default OPENAI_API_KEY).
+#   3. ~/.config/justsayit/.env (same KEY=VALUE format as python-dotenv).
+# api_key = "sk-..."
+# api_key_env = "OPENAI_API_KEY"
+
+# HTTP timeout (seconds) for the chat-completions request.
+# request_timeout = 60.0
+
+# Cleanup tuning. Defaults are tuned for deterministic STT cleanup —
+# raise temperature for more creative output.
+# temperature = 0.08
+# max_tokens = 4096
+
+# User message template. {{text}} is replaced with the raw transcription.
+# user_template = "{{text}}"
+
+# Regex (re.DOTALL) applied to the LLM output before paste, but NOT
+# before display in the overlay. Default strips Gemma's thinking-channel
+# block — a no-op against generic LLM responses, harmless to leave on.
+# paste_strip_regex = '<\\|channel>thought(.*?)<channel\\|>'
+
+# System prompt — left at the dataclass default. Because `endpoint` is
+# set above, justsayit auto-swaps in a channel-free variant of the
+# cleanup prompt. Uncomment the block below to override it for this
+# profile. The shipped default is mirrored here for reference.
+# system_prompt = """
+{_comment_block(_DEFAULT_SYSTEM_PROMPT.rstrip())}
+# """
+
+# User-context lives in ~/.config/justsayit/context.toml (shared across
+# profiles). Uncomment to override the sidecar for this profile only:
+# context = """
+# Name: Jane Doe
+# ...
+# """
+'''
+
+
 @dataclass
 class PostprocessProfile:
     model_path: str = "~/.cache/justsayit/models/llm/gemma-4-E4B-it-Q4_K_M.gguf"
@@ -531,10 +606,37 @@ def ensure_fun_profile(path: Path | None = None) -> Path:
     return path
 
 
-def ensure_default_profiles() -> tuple[Path, Path]:
-    """Write both the cleanup and fun default profiles. Returns (cleanup, fun)."""
+def ensure_openai_profile(path: Path | None = None) -> Path:
+    """Write the ``openai-cleanup.toml`` profile if it's missing.
+
+    Same commented-defaults convention as ``gemma4-cleanup.toml`` but
+    with ``endpoint`` and ``model`` uncommented as the keys that DEFINE
+    the OpenAI-compatible variant. The cleanup prompt itself stays
+    commented out so it tracks the dataclass default — which auto-swaps
+    to a channel-free variant when ``endpoint`` is set.
+    """
+    if path is None:
+        path = profiles_dir() / "openai-cleanup.toml"
+    ensure_commented_form_file(
+        path,
+        _OPENAI_PROFILE_TOML,
+        _PROFILE_COMMENTED_FORM_MARKER,
+        validator=_toml_validator,
+    )
+    return path
+
+
+def ensure_default_profiles() -> tuple[Path, Path, Path]:
+    """Write the cleanup, fun, and openai default profiles.
+
+    Returns ``(cleanup, fun, openai)``.
+    """
     ensure_context_file()
-    return ensure_default_profile(), ensure_fun_profile()
+    return (
+        ensure_default_profile(),
+        ensure_fun_profile(),
+        ensure_openai_profile(),
+    )
 
 
 def load_profile(name_or_path: str) -> PostprocessProfile:

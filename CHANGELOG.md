@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-04-17
+
+### Added
+
+- Ship a third default postprocess profile, `openai-cleanup.toml`,
+  alongside `gemma4-cleanup.toml` and `gemma4-fun.toml`. Same
+  commented-defaults convention, but with `endpoint`
+  (`https://api.openai.com/v1`) and `model` (`gpt-4o-mini`) uncommented
+  as the keys that DEFINE the OpenAI-compatible variant. The cleanup
+  prompt stays commented so it tracks the dataclass default — which
+  auto-swaps to the channel-free `_REMOTE_CLEANUP_SYSTEM_PROMPT` when
+  `endpoint` is set. Discoverable from the tray's LLM submenu after
+  `init`; users only need to drop their key into
+  `~/.config/justsayit/.env` (or export `OPENAI_API_KEY`) to use it.
+- New helper `ensure_openai_profile()` and a third entry in the
+  `ensure_default_profiles()` tuple (now `(cleanup, fun, openai)`).
+
 ## [0.10.3] - 2026-04-17
 
 ### Changed

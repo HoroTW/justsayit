@@ -103,20 +103,52 @@ def test_ensure_default_profile_creates_file(tmp_path, monkeypatch):
     assert "modal particles" in content
 
 
-def test_ensure_default_profiles_writes_both(tmp_path, monkeypatch):
+def test_ensure_default_profiles_writes_all_three(tmp_path, monkeypatch):
+    """`init` ships three profiles side-by-side: the recommended local
+    Gemma cleanup profile, the playful emoji sibling, and the OpenAI-
+    compatible endpoint variant.  All three must exist after a single
+    call so the tray menu has them to offer."""
     monkeypatch.setattr("justsayit.postprocess.config_dir", lambda: tmp_path)
     from justsayit.postprocess import ensure_default_profiles
 
-    cleanup, fun = ensure_default_profiles()
+    cleanup, fun, openai = ensure_default_profiles()
     assert cleanup.name == "gemma4-cleanup.toml"
     assert fun.name == "gemma4-fun.toml"
-    assert cleanup.exists() and fun.exists()
+    assert openai.name == "openai-cleanup.toml"
+    assert cleanup.exists() and fun.exists() and openai.exists()
     fun_text = fun.read_text(encoding="utf-8")
     # Fun profile is the emojify stub and points users back at cleanup.
     assert "Emojify" in fun_text
     assert "gemma4-cleanup" in fun_text
     # No <|think|> in fun → no strip regex needed.
     assert 'paste_strip_regex = ""' in fun_text
+
+
+def test_openai_profile_template_has_endpoint_and_model_uncommented(tmp_path, monkeypatch):
+    """The openai-cleanup.toml ships with `endpoint` + `model` already
+    uncommented (they're what makes this the openai variant); everything
+    else stays commented so users only override what they need.  The
+    cleanup prompt must remain commented out — that's how the auto-swap
+    to the channel-free remote variant kicks in."""
+    monkeypatch.setattr("justsayit.postprocess.config_dir", lambda: tmp_path)
+    from justsayit.postprocess import ensure_openai_profile, load_profile
+
+    p = ensure_openai_profile()
+    text = p.read_text(encoding="utf-8")
+    # Defining keys live as bare assignments at the top of the file.
+    assert '\nendpoint = "https://api.openai.com/v1"' in text
+    assert '\nmodel = "gpt-4o-mini"' in text
+    # System prompt stays commented; the auto-swap handles the rest.
+    assert "# system_prompt = " in text
+    assert "\nsystem_prompt =" not in text
+    # Loads cleanly + carries the right backend marker fields.
+    profile = load_profile("openai-cleanup")
+    assert profile.endpoint == "https://api.openai.com/v1"
+    assert profile.model == "gpt-4o-mini"
+    assert profile.api_key == ""  # falls through to env / .env
+    # System prompt = dataclass default → triggers the remote auto-swap.
+    from justsayit.postprocess import _DEFAULT_SYSTEM_PROMPT
+    assert profile.system_prompt == _DEFAULT_SYSTEM_PROMPT
 
 
 def test_ensure_default_profile_idempotent(tmp_path, monkeypatch):
