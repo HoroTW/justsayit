@@ -198,18 +198,14 @@ user_template = "{{text}}"
 #   paste_strip_regex = '(?s)^.*?</think>'
 paste_strip_regex = '<\\|channel>thought(.*?)<channel\\|>'
 
-# Optional free-form context about the user — appended to the system prompt
-# under a "User context" heading, so the model can correctly spell your name,
-# pick the right register, etc. Use a TOML multi-line string ("""…""").
-# Leave empty to send no context. Example:
+# User-context lives in a shared sidecar so it's preserved across
+# profile updates: ~/.config/justsayit/context.toml. To set per-profile
+# context that overrides the sidecar, uncomment and fill in:
 #
 #   context = """
 #   Name: Jane Doe
-#   Country: Germany
-#   Languages: German (native), English (fluent)
-#   Notes: works in software, often dictates code-related text
+#   ...
 #   """
-context = ""
 '''
 
 
@@ -254,7 +250,9 @@ user_template = "{{text}}"
 # No `<|think|>` in the prompt → no channel block to strip.
 paste_strip_regex = ""
 
-context = ""
+# User-context lives in ~/.config/justsayit/context.toml (shared across
+# profiles). Set `context = """..."""` here only to override the sidecar
+# for this specific profile.
 '''
 
 
@@ -297,6 +295,70 @@ def profiles_dir() -> Path:
     return config_dir() / "postprocess"
 
 
+# Personal context lives in its own sidecar file rather than per-profile
+# so updates to shipped profile TOMLs (system prompt, model paths,
+# regexes) can be replaced without clobbering anything the user wrote.
+# Profile-level context still works (load_profile honors a non-empty
+# `context` field in the profile) and takes precedence over the sidecar.
+_CONTEXT_SIDECAR_TEMPLATE = '''\
+# Personal context for the LLM postprocessor.
+#
+# The string assigned to `context` below is appended to every postprocess
+# profile's system prompt under a "User context" heading on every
+# transcription.  Comments (lines starting with `#`) are NOT sent to the
+# model — only the value of `context`.
+#
+# Tips:
+# - Be concise; this is sent on every dictation.
+# - Spell out your name (so the model gets it right), country/languages,
+#   and any project / proper-noun spellings the model gets wrong.
+# - Don't put secrets here.
+#
+# Example:
+#   context = """
+#   Name: Jane Doe
+#   Country: Germany
+#   Languages: German (native), English (fluent), Python
+#   Notes: software engineer; often dictates code-related text.
+#   """
+
+context = ""
+'''
+
+
+def context_file_path() -> Path:
+    return config_dir() / "context.toml"
+
+
+def ensure_context_file(path: Path | None = None) -> Path:
+    """Write the personal-context sidecar with a documented empty template
+    if it doesn't exist.  This file is purely user-data — it is never
+    overwritten by ``install.sh --update`` and has no defaults baseline."""
+    if path is None:
+        path = context_file_path()
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_CONTEXT_SIDECAR_TEMPLATE, encoding="utf-8")
+    return path
+
+
+def load_context_sidecar(path: Path | None = None) -> str:
+    """Return the ``context`` string from ``context.toml`` (or "" if the
+    file is missing or unreadable)."""
+    if path is None:
+        path = context_file_path()
+    if not path.exists():
+        return ""
+    try:
+        with path.open("rb") as f:
+            raw = tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        log.warning("could not read context sidecar %s: %s", path, exc)
+        return ""
+    val = raw.get("context", "")
+    return val if isinstance(val, str) else ""
+
+
 def ensure_default_profile(path: Path | None = None) -> Path:
     """Write the recommended ``gemma4-cleanup.toml`` profile if it's missing.
 
@@ -329,6 +391,7 @@ def ensure_fun_profile(path: Path | None = None) -> Path:
 
 def ensure_default_profiles() -> tuple[Path, Path]:
     """Write both the cleanup and fun default profiles. Returns (cleanup, fun)."""
+    ensure_context_file()
     return ensure_default_profile(), ensure_fun_profile()
 
 
@@ -338,6 +401,10 @@ def load_profile(name_or_path: str) -> PostprocessProfile:
     If the argument looks like a file path (contains a separator or ends
     with ``.toml``) it is used directly; otherwise it is resolved to
     ``config_dir()/postprocess/<name>.toml``.
+
+    If the loaded profile's ``context`` field is empty, the personal-context
+    sidecar (``~/.config/justsayit/context.toml``) is consulted so updates
+    to shipped profile TOMLs don't wipe user-written context.
     """
     p = Path(name_or_path).expanduser()
     is_explicit = p.suffix == ".toml" or "/" in name_or_path or "\\" in name_or_path
@@ -352,7 +419,12 @@ def load_profile(name_or_path: str) -> PostprocessProfile:
         raw: dict[str, Any] = tomllib.load(f)
     valid = {fld.name for fld in fields(PostprocessProfile)}
     kwargs = {k: v for k, v in raw.items() if k in valid}
-    return PostprocessProfile(**kwargs)
+    profile = PostprocessProfile(**kwargs)
+    # Profile-level `context` (if non-empty) wins over the sidecar so
+    # users with per-profile overrides keep working unchanged.
+    if not profile.context.strip():
+        profile.context = load_context_sidecar()
+    return profile
 
 
 # ---------------------------------------------------------------------------

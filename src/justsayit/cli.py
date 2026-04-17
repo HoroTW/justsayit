@@ -168,6 +168,9 @@ from justsayit.model import ensure_models, ensure_vad
 from justsayit.postprocess import (
     KNOWN_LLM_MODELS,
     LLMPostprocessor,
+    _CLEANUP_PROFILE_TOML,
+    _CONTEXT_SIDECAR_TEMPLATE,
+    _FUN_PROFILE_TOML,
     download_llm_model,
     ensure_default_profile,
     ensure_default_profiles,
@@ -1287,10 +1290,13 @@ def _build_parser() -> argparse.ArgumentParser:
 
     show_sub = sub.add_parser(
         "show-defaults",
-        help="print the default config.toml or filters.json to stdout "
+        help="print the shipped default for a user-managed file to stdout "
         "(used by install.sh --update to diff against the user's file)",
     )
-    show_sub.add_argument("kind", choices=["config", "filters"])
+    show_sub.add_argument(
+        "kind",
+        choices=["config", "filters", "context", "profile-cleanup", "profile-fun"],
+    )
     return ap
 
 
@@ -1313,12 +1319,18 @@ def main(argv: list[str] | None = None) -> int:
     if args.subcommand == "show-defaults":
         if args.kind == "config":
             sys.stdout.write(default_config_toml())
-        else:
+        elif args.kind == "filters":
             import json
 
             sys.stdout.write(
                 json.dumps(_default_filter_chain(), indent=2) + "\n"
             )
+        elif args.kind == "context":
+            sys.stdout.write(_CONTEXT_SIDECAR_TEMPLATE)
+        elif args.kind == "profile-cleanup":
+            sys.stdout.write(_CLEANUP_PROFILE_TOML)
+        elif args.kind == "profile-fun":
+            sys.stdout.write(_FUN_PROFILE_TOML)
         return 0
 
     ensure_dirs()

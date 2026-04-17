@@ -391,6 +391,11 @@ if [ "$UPDATE" -eq 1 ]; then
     _CFG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}/$APP_ID
     maybe_update_user_file "$_CFG_HOME/config.toml" "config"
     maybe_update_user_file "$_CFG_HOME/filters.json" "filters"
+    # Shipped postprocess profiles. context.toml lives elsewhere (it's
+    # pure user data, never overwritten — created by the app on first
+    # run via ensure_context_file()).
+    maybe_update_user_file "$_CFG_HOME/postprocess/gemma4-cleanup.toml" "profile-cleanup"
+    maybe_update_user_file "$_CFG_HOME/postprocess/gemma4-fun.toml" "profile-fun"
 fi
 
 # --- LLM postprocessing (optional) ----------------------------------------

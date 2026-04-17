@@ -13,8 +13,11 @@ from justsayit.postprocess import (
     KNOWN_LLM_MODELS,
     LLMPostprocessor,
     PostprocessProfile,
+    context_file_path,
+    ensure_context_file,
     ensure_default_profile,
     find_hf_q4_filename,
+    load_context_sidecar,
     load_profile,
     profiles_dir,
 )
@@ -346,6 +349,83 @@ def test_load_config_postprocess_settings(tmp_path):
     cfg = load_config(p)
     assert cfg.postprocess.enabled is True
     assert cfg.postprocess.profile == "my-model"
+
+
+# ---------------------------------------------------------------------------
+# Personal-context sidecar
+# ---------------------------------------------------------------------------
+
+
+def test_ensure_context_file_writes_template(tmp_path, monkeypatch):
+    monkeypatch.setattr("justsayit.postprocess.config_dir", lambda: tmp_path)
+    p = ensure_context_file()
+    assert p.exists()
+    body = p.read_text(encoding="utf-8")
+    assert 'context = ""' in body, "template must define an empty context value"
+    assert "User context" not in body or "appended" in body, "template should explain the field"
+
+
+def test_ensure_context_file_does_not_overwrite(tmp_path, monkeypatch):
+    monkeypatch.setattr("justsayit.postprocess.config_dir", lambda: tmp_path)
+    target = context_file_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text('context = "my notes"\n', encoding="utf-8")
+    ensure_context_file()
+    assert target.read_text(encoding="utf-8") == 'context = "my notes"\n'
+
+
+def test_load_context_sidecar_returns_value(tmp_path, monkeypatch):
+    monkeypatch.setattr("justsayit.postprocess.config_dir", lambda: tmp_path)
+    target = context_file_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text('context = "Name: Jane"\n', encoding="utf-8")
+    assert load_context_sidecar() == "Name: Jane"
+
+
+def test_load_context_sidecar_missing_returns_empty(tmp_path, monkeypatch):
+    monkeypatch.setattr("justsayit.postprocess.config_dir", lambda: tmp_path)
+    assert load_context_sidecar() == ""
+
+
+def test_load_context_sidecar_malformed_returns_empty(tmp_path, monkeypatch):
+    monkeypatch.setattr("justsayit.postprocess.config_dir", lambda: tmp_path)
+    target = context_file_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("not = valid = toml = at all", encoding="utf-8")
+    # Must not raise — returns "" so the LLM call still works.
+    assert load_context_sidecar() == ""
+
+
+def test_load_profile_falls_back_to_sidecar(tmp_path, monkeypatch):
+    monkeypatch.setattr("justsayit.postprocess.config_dir", lambda: tmp_path)
+    # Profile with no context field
+    pdir = tmp_path / "postprocess"
+    pdir.mkdir()
+    (pdir / "demo.toml").write_text(
+        'model_path = "/fake/model.gguf"\nsystem_prompt = "x"\n',
+        encoding="utf-8",
+    )
+    # Sidecar with context
+    target = context_file_path()
+    target.write_text('context = "Name: Sidecar"\n', encoding="utf-8")
+    profile = load_profile("demo")
+    assert profile.context == "Name: Sidecar"
+
+
+def test_load_profile_context_field_overrides_sidecar(tmp_path, monkeypatch):
+    """Per-profile `context = "..."` wins over the sidecar — backward
+    compat for users who already have context inline in their profile."""
+    monkeypatch.setattr("justsayit.postprocess.config_dir", lambda: tmp_path)
+    pdir = tmp_path / "postprocess"
+    pdir.mkdir()
+    (pdir / "demo.toml").write_text(
+        'model_path = "/fake/model.gguf"\ncontext = "Profile-level"\n',
+        encoding="utf-8",
+    )
+    target = context_file_path()
+    target.write_text('context = "Sidecar-level"\n', encoding="utf-8")
+    profile = load_profile("demo")
+    assert profile.context == "Profile-level"
 
 
 # ---------------------------------------------------------------------------

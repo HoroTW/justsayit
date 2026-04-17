@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-04-17
+
+### Added
+
+- **Personal-context sidecar:** `~/.config/justsayit/context.toml`, a
+  TOML file with a single `context = "..."` field appended to every
+  postprocess profile's system prompt under a "User context" heading on
+  every dictation. Lives separately from profile TOMLs so updates to
+  shipped profiles (system prompt, model paths, regexes) never wipe
+  user-written personal context. Comments in the file are not sent to
+  the LLM — only the string value of `context` is. Created on first
+  `init` (or first profile setup) with a documented empty template; the
+  install update flow never touches it (it's pure user data, not
+  shipped defaults).
+- **`install.sh --update` now reconciles postprocess profile TOMLs**
+  too (`gemma4-cleanup.toml` and `gemma4-fun.toml`), using the same
+  baseline-aware diff/.bak machinery as `config.toml` and
+  `filters.json`. Shipped-default changes (system prompt tweaks, model
+  bumps, paste-strip regex updates) are surfaced cleanly without
+  clobbering user customisations.
+- **`show-defaults` subcommand** gained three new kinds: `context`
+  (sidecar template), `profile-cleanup`, and `profile-fun` (the two
+  shipped profile TOML templates). Used by `install.sh --update` to
+  diff against the user's on-disk copies.
+
+### Changed
+
+- **Profile-level `context = "..."` is now optional** in profile TOMLs.
+  When missing or empty, `load_profile()` falls back to the shared
+  `context.toml` sidecar. A non-empty profile-level `context` still
+  wins, preserving backward compatibility for users who already have
+  context inline in their profile.
+- New shipped profile templates (`gemma4-cleanup.toml`,
+  `gemma4-fun.toml`) drop the `context = ""` field and instead carry a
+  short comment pointing at the sidecar. Existing user profiles with
+  `context = "..."` are not auto-migrated — they keep working as-is.
+
 ## [0.8.1] - 2026-04-17
 
 ### Changed
