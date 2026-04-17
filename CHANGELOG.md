@@ -7,7 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.6.11] - 2026-04-17
+## [0.6.12] - 2026-04-17
+
+### Changed
+
+- **Default profile now writes `system_prompt` as a TOML triple-quoted
+  multi-line string** instead of an escaped single-line basic string.
+  The prompt is long enough that the previous form was unreadable on
+  disk and discouraged customisation. The Python literal switched from
+  `f"""…"""` to `f'''…'''` so the embedded `"""…"""` TOML delimiters are
+  not parsed as the closing of the Python string.
+- **Default `system_prompt` synced with the in-the-wild tuned version**:
+  single `<|think|>` placement (was repeated), refined formatting
+  examples for emojis / newlines / bullet lists / backticks, clearer
+  `Hey Computer` instructions about not parroting the cleaned source
+  back when the request was a translation/answer.
+- Removed the now-unused `_toml_basic_escape()` helper — TOML
+  triple-quoted basic strings need no escaping for the prompt content.
+
+### Added
+
+- New `context = ""` field with a commented example block in the
+  default profile, mirroring the live `gemma4.toml` schema.
 
 ### Changed
 

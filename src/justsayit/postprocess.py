@@ -34,61 +34,34 @@ log = logging.getLogger(__name__)
 # Profile dataclass + loader
 # ---------------------------------------------------------------------------
 
-_DEFAULT_SYSTEM_PROMPT = (
-    "<|think|> You are Computer, a helpful voice transcript (STT) cleaner"
-    " and assistant. <|think|> You are a helpful assistant."
-    " Keep your internal reasoning very brief (under 3 sentences)."
-    " Clean up the following transcript: remove filler words"
-    " (ähm, öhm, halt, also, um, uh, like, so), correct grammar and"
-    " misunderstood words, while preserving the meaning and writing style."
-    " You might get German mixed with English, that is expected, keep it"
-    " that way. It could also be just English or just German, ONLY translate"
-    " IF there is a EXPLICIT request to do so.\n\n\n"
-    "If the transcript has things that should be clearly replaced like"
-    " emojis / smileys / special chars, do that! Examples:"
-    " `laughing emoji`->`🤣`,"
-    " `Hello comma new line greetings`->`Hello,\ngreetings`,"
-    " `This allows us to do stuff like new line dash some point new line"
-    " dash another point`->`This allows us to do stuff like\n - Some point\n"
-    " - Another Point`, ... IF there is the intention to have formatting you"
-    " should apply it.\n\n\n"
-    "Return ONLY the cleaned-up text; do not include any explanations."
-    " If there is a meta request e.g. `Hey Computer` or something that CLEARLY"
-    " is meant as instructions for you, then you should follow them, or"
-    " respond to it, (possible examples: Adjust the writing style, provide"
-    " translations, answer a question, compose a message/email, normal chat"
-    " with you (User asks you something - or tells you something), etc.).\n\n\n"
-    "If there is no `Hey Computer` in the transcript than it is most likely"
-    " NOT a request and just normal cleanup should happen!"
-    " IF there is the `Hey Computer` somewhere in it, in the middle, at the"
-    " end, somewhere, then it is for you!, you then have to act on it!"
-    " Don't just clean up the text if there is a Request to `hey computer`,"
-    " but do what the user asked for, or chat with the user! You don't have"
-    " to parrot the cleaned up text back to the user if he asks you to do"
-    " something, so if he asks for an translation don't give the cleaned"
-    " orignal language and then the translation, but just give him directly"
-    " the translated text!\n"
-)
+_DEFAULT_SYSTEM_PROMPT = """\
+You are `Computer`, a helpful voice transcript (STT) cleaner and assistant.
+<|think|> You are a helpful assistant. Keep your internal reasoning very brief (under 3 sentences).
+Clean up the following transcript: remove filler words (ähm, öhm, halt, also, um, uh, like, so), correct grammar and misunderstood words, while preserving the meaning and writing style. You might get German mixed with English, that is expected, keep it that way. It could also be just English or just German, ONLY translate IF there is a EXPLICIT request to do so.
 
-def _toml_basic_escape(s: str) -> str:
-    """Escape *s* so it can be embedded inside a TOML basic string (``"..."``).
+If the transcript has things that should be clearly replaced like emojis / smileys / special chars, do that!
+Examples:
+- `laughing emoji`->`🤣`
+- `Hello comma new line greetings`->`Hello,
+greetings`,
+- `This allows us to do stuff like new line dash some point new line dash another point`->`This allows us to do stuff like
+ - Some point
+ - Another point`,
+(IF there should be formatting you should apply it, like special words in backticks: 'The `cat` command is helpful.')
 
-    Mirrors the style used by the user's hand-edited gemma4.toml — newlines
-    become literal ``\\n`` rather than switching to a triple-quoted multi-line
-    string, so the generated profile diffs cleanly against the user's edits.
-    """
-    return (
-        s.replace("\\", "\\\\")
-        .replace('"', '\\"')
-        .replace("\n", "\\n")
-        .replace("\r", "\\r")
-        .replace("\t", "\\t")
-    )
+Return ONLY the cleaned-up text; do not include any explanations. If there is a meta request e.g. `Hey Computer` or something that CLEARLY is meant as instructions for you, then you should follow them, or respond to it, (possible examples: Adjust the writing style, provide translations, answer a question, compose a message/email, normal chat with you (User asks you something - or tells you something), etc.).
+
+If there is no `Hey Computer` in the transcript than it is most likely NOT a request and just normal cleanup should happen! IF there is the `Hey Computer` somewhere in it, in the middle, at the end, somewhere, then it is for you!, you then have to act on it! Don't just clean up the text if there is a Request to `hey computer`, but do what the user asked for, or chat with the user! You don't have to parrot the cleaned up text back to the user if he asks you to do something, so if he asks for an translation don't give the cleaned orignal language and then the translation, but just give him directly the translated text!
+"""
 
 
 # Written to disk on first ``justsayit init`` so the user can inspect and
-# customise it without having to know the TOML schema.
-_DEFAULT_PROFILE_TOML = f"""\
+# customise it without having to know the TOML schema.  Embed the system
+# prompt in a TOML triple-quoted basic string ("""…""") so newlines stay
+# real and the file is readable; this requires the Python literal itself
+# to use single-quoted '''…''' delimiters so the embedded """ aren't
+# parsed as the closing delimiter.
+_DEFAULT_PROFILE_TOML = f'''\
 # justsayit postprocessing profile — gemma-cleanup
 #
 # Enable this profile in config.toml:
@@ -126,18 +99,18 @@ max_tokens = 4096
 
 # System prompt.  Edit freely — the model reads this before every request.
 #
-# The default prompt enables Gemma's "thinking" channel (the leading
-# `<|think|>` tokens make the model emit a `<|channel>...<channel|>`
-# reasoning block before its real reply).  This usually improves quality
-# on ambiguous "Hey Computer" requests but adds latency and produces
-# extra text that has to be stripped before pasting (see
-# `paste_strip_regex` below).
+# The default prompt enables Gemma's "thinking" channel (the `<|think|>`
+# token makes the model emit a `<|channel>...<channel|>` reasoning block
+# before its real reply).  This usually improves quality on ambiguous
+# "Hey Computer" requests but adds latency and produces extra text that
+# has to be stripped before pasting (see `paste_strip_regex` below).
 #
-# To disable thinking entirely: remove BOTH `<|think|>` markers from the
-# beginning of the prompt.  The model will then reply directly with the
-# cleaned text and you can also clear `paste_strip_regex` since there is
-# no channel block to strip.
-system_prompt = "{_toml_basic_escape(_DEFAULT_SYSTEM_PROMPT)}"
+# To disable thinking entirely: remove the `<|think|>` marker from the
+# prompt.  The model will then reply directly with the cleaned text and
+# you can also clear `paste_strip_regex` since there is no channel block
+# to strip.
+system_prompt = """
+{_DEFAULT_SYSTEM_PROMPT}"""
 
 # User message template.  {{text}} is replaced with the raw transcription.
 user_template = "{{text}}"
@@ -147,29 +120,29 @@ user_template = "{{text}}"
 # whose output contains a reasoning preamble that should not land in the
 # focused window. Empty = no stripping.
 #
-# The default below matches Gemma's harmony-style channel block — note the
-# tags are ASYMMETRIC: the opening is `<|channel>` (one pipe, before
-# `channel`) and the closing is `<channel|>` (one pipe, after).  Don't add
-# a second pipe to the opening — the model never emits `<|channel|>`.
+# The default below matches Gemma's channel block — note the tags are
+# ASYMMETRIC: the opening is `<|channel>` (one pipe, before `channel`)
+# and the closing is `<channel|>` (one pipe, after).  Don't add a second
+# pipe to the opening — the model never emits `<|channel|>`.
 #
 # Examples:
 #   paste_strip_regex = '<\\|channel>.*?<channel\\|>'   # Gemma thinking channel
-#   paste_strip_regex = '(?s).*<\\|message\\|>'         # everything up to last <|message|>
+#   paste_strip_regex = '(?s)^.*?</think>'              # generic <think>…</think>
 paste_strip_regex = '<\\|channel>.*?<channel\\|>'
 
 # Optional free-form context about the user — appended to the system prompt
 # under a "User context" heading, so the model can correctly spell your name,
-# pick the right register, etc. Use a TOML multi-line string ('''…''').
+# pick the right register, etc. Use a TOML multi-line string ("""…""").
 # Leave empty to send no context. Example:
 #
-#   context = '''
+#   context = """
 #   Name: Jane Doe
 #   Country: Germany
 #   Languages: German (native), English (fluent)
 #   Notes: works in software, often dictates code-related text
-#   '''
+#   """
 context = ""
-"""
+'''
 
 
 @dataclass
