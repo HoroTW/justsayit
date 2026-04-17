@@ -57,4 +57,8 @@ def make_transcriber(
         from justsayit.transcribe_whisper import WhisperTranscriber
 
         return WhisperTranscriber(cfg)
+    if backend == "openai":
+        from justsayit.transcribe_openai import OpenAIWhisperTranscriber
+
+        return OpenAIWhisperTranscriber(cfg)
     raise ValueError(f"unknown transcription backend: {backend!r}")

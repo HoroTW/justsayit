@@ -531,3 +531,165 @@ def test_hf_model_has_q4_k_m_gguf(network, model_key):
     assert "Q4_K_M" in filename, (
         f"{model_key} ({hf_repo}): expected Q4_K_M in filename, got {filename!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# OpenAI-compatible LLM endpoint
+# ---------------------------------------------------------------------------
+
+
+def test_profile_has_openai_fields():
+    p = PostprocessProfile()
+    assert p.endpoint == ""
+    assert p.model == ""
+    assert p.api_key == ""
+    assert p.api_key_env == "OPENAI_API_KEY"
+    assert p.request_timeout == 60.0
+
+
+def test_remote_process_posts_chat_completions(monkeypatch):
+    """Happy path: profile.endpoint set → urllib POST with the right body
+    and Authorization header; returned content is stripped and surfaced."""
+    import json
+    from unittest.mock import MagicMock
+    import justsayit.postprocess as pp_mod
+
+    profile = PostprocessProfile(
+        endpoint="https://api.example.com/v1",
+        model="gpt-4o-mini",
+        api_key="sk-test",
+        system_prompt="Clean it up.",
+        temperature=0.05,
+        max_tokens=128,
+    )
+    pp = LLMPostprocessor(profile)
+
+    captured = {}
+
+    def fake_urlopen(req, timeout=None):
+        captured["url"] = req.full_url
+        captured["headers"] = dict(req.header_items())
+        captured["body"] = json.loads(req.data.decode("utf-8"))
+        captured["timeout"] = timeout
+        body = json.dumps(
+            {"choices": [{"message": {"content": "  cleaned reply  "}}]}
+        ).encode()
+        resp = MagicMock()
+        resp.read.return_value = body
+        resp.__enter__ = lambda self: self
+        resp.__exit__ = lambda self, *a: False
+        return resp
+
+    monkeypatch.setattr(pp_mod.urllib.request, "urlopen", fake_urlopen)
+
+    out = pp.process("raw text")
+    assert out == "cleaned reply"
+    assert captured["url"] == "https://api.example.com/v1/chat/completions"
+    # Authorization is title-cased by urllib's header_items
+    assert captured["headers"].get("Authorization") == "Bearer sk-test"
+    assert captured["body"]["model"] == "gpt-4o-mini"
+    assert captured["body"]["temperature"] == pytest.approx(0.05)
+    assert captured["body"]["max_tokens"] == 128
+    assert captured["body"]["messages"][0]["role"] == "system"
+    assert captured["body"]["messages"][0]["content"] == "Clean it up."
+    assert captured["body"]["messages"][1]["content"] == "raw text"
+    assert captured["timeout"] == pytest.approx(60.0)
+
+
+def test_remote_process_uses_env_key_when_literal_empty(monkeypatch, tmp_path):
+    """No api_key in profile → resolve_secret reads from process env
+    (which now also includes anything the .env loader merged in)."""
+    from unittest.mock import MagicMock
+    import json
+    import justsayit.postprocess as pp_mod
+    import justsayit.config as cfg_mod
+
+    monkeypatch.setattr(cfg_mod, "config_dir", lambda: tmp_path)
+    cfg_mod._DOTENV_LOADED = False
+    monkeypatch.setenv("OPENAI_API_KEY", "key-from-shell")
+
+    profile = PostprocessProfile(
+        endpoint="https://api.example.com/v1",
+        model="m",
+    )
+    pp = LLMPostprocessor(profile)
+
+    captured = {}
+
+    def fake_urlopen(req, timeout=None):
+        captured["headers"] = dict(req.header_items())
+        body = json.dumps({"choices": [{"message": {"content": "ok"}}]}).encode()
+        resp = MagicMock()
+        resp.read.return_value = body
+        resp.__enter__ = lambda self: self
+        resp.__exit__ = lambda self, *a: False
+        return resp
+
+    monkeypatch.setattr(pp_mod.urllib.request, "urlopen", fake_urlopen)
+    pp.process("x")
+    assert captured["headers"]["Authorization"] == "Bearer key-from-shell"
+
+
+def test_remote_process_raises_when_no_key(monkeypatch, tmp_path):
+    """Endpoint set but no key anywhere → clear error message that names
+    the env var the user should set."""
+    import justsayit.config as cfg_mod
+    monkeypatch.setattr(cfg_mod, "config_dir", lambda: tmp_path)
+    cfg_mod._DOTENV_LOADED = False
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    profile = PostprocessProfile(
+        endpoint="https://api.example.com/v1",
+        model="m",
+    )
+    pp = LLMPostprocessor(profile)
+    with pytest.raises(RuntimeError, match="OPENAI_API_KEY"):
+        pp.process("x")
+
+
+def test_remote_process_raises_when_model_empty(monkeypatch):
+    profile = PostprocessProfile(
+        endpoint="https://api.example.com/v1",
+        api_key="sk-x",
+    )
+    pp = LLMPostprocessor(profile)
+    with pytest.raises(RuntimeError, match="profile.model"):
+        pp.process("x")
+
+
+def test_remote_process_falls_back_to_input_on_empty_response(monkeypatch):
+    """Same contract as the local path: empty content → return input."""
+    from unittest.mock import MagicMock
+    import json
+    import justsayit.postprocess as pp_mod
+
+    profile = PostprocessProfile(
+        endpoint="https://api.example.com/v1",
+        model="m",
+        api_key="sk",
+    )
+    pp = LLMPostprocessor(profile)
+
+    def fake_urlopen(req, timeout=None):
+        body = json.dumps({"choices": [{"message": {"content": ""}}]}).encode()
+        resp = MagicMock()
+        resp.read.return_value = body
+        resp.__enter__ = lambda self: self
+        resp.__exit__ = lambda self, *a: False
+        return resp
+
+    monkeypatch.setattr(pp_mod.urllib.request, "urlopen", fake_urlopen)
+    assert pp.process("original") == "original"
+
+
+def test_warmup_skipped_for_remote_endpoint():
+    """warmup() must NOT touch llama-cpp-python when endpoint is set —
+    there is no local model and we don't want a probe request."""
+    profile = PostprocessProfile(
+        endpoint="https://api.example.com/v1",
+        model="m",
+        api_key="sk",
+    )
+    pp = LLMPostprocessor(profile)
+    pp.warmup()  # would raise RuntimeError("llama-cpp-python is not installed")
+    assert pp._llm is None  # never tried to build

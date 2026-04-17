@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-04-17
+
+### Added
+
+- **OpenAI-compatible LLM endpoint** for postprocessing. Set
+  ``endpoint``, ``model``, and an API key on a `PostprocessProfile`
+  and the cleanup call goes over HTTP instead of loading a local GGUF
+  via llama-cpp-python. Compatible with OpenAI, OpenRouter, Groq,
+  Together, vLLM, Ollama (`/v1`), LM Studio, llama.cpp's bundled
+  server, and anything else that speaks the chat-completions schema.
+  No new dependencies — pure stdlib `urllib`.
+- **OpenAI-compatible Whisper STT backend**. New
+  ``model.backend = "openai"`` value plus ``model.openai_endpoint /
+  openai_model / openai_api_key / openai_api_key_env / openai_language
+  / openai_timeout``. Captured audio is encoded as 16-bit PCM WAV
+  in-memory and posted as multipart form to ``/audio/transcriptions``.
+  Local Parakeet/Whisper downloads are skipped when this backend is
+  selected (only the tiny Silero VAD ONNX is fetched, since we don't
+  want to stream audio to the network just to detect silence).
+- **Shared `.env` file** at ``$XDG_CONFIG_HOME/justsayit/.env`` for
+  API keys. Same `KEY=VALUE` format as `python-dotenv`, with optional
+  matched quotes and a leading `export ` for shell parity. Process
+  env wins when a value is defined in both places. Loaded lazily on
+  first ``resolve_secret`` call so test isolation stays clean.
+- Three places to source secrets, in priority order: explicit literal
+  in the config / profile → process env (``api_key_env``) → `.env`
+  file. Both the LLM profile and the OpenAI Whisper backend use the
+  same resolver.
+- Inline documentation block at the bottom of `gemma4-cleanup.toml`
+  showing the new endpoint fields and explaining the `.env`
+  precedence — discoverable without leaving the file.
+
+### Changed
+
+- ``justsayit init`` (and the post-install model fetch) now
+  short-circuits the Parakeet/Whisper download path when
+  ``model.backend == "openai"``, printing the configured endpoint
+  instead of pretending there is something local to fetch.
+- ``LLMPostprocessor.warmup()`` is a no-op on the remote path — there
+  is no local model to load and a probe request would burn quota.
+
+### Internal
+
+- New ``justsayit/transcribe_openai.py`` with
+  ``OpenAIWhisperTranscriber`` plus reusable ``_encode_wav`` and
+  ``_build_multipart`` helpers.
+- 26 new tests cover the `.env` loader (precedence, quote stripping,
+  process-env wins), the LLM remote-process path (request shape,
+  auth header, missing-key error, empty-response fallback,
+  warmup no-op), and the OpenAI Whisper backend (WAV round-trip,
+  multipart structure, language hint, JSON + plain-text response
+  parsing, empty-buffer short-circuit, missing-key error,
+  ``make_transcriber`` dispatch).
+
 ## [0.9.1] - 2026-04-17
 
 ### Fixed

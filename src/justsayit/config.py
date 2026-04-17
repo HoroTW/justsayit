@@ -6,6 +6,7 @@ and resolves the filter-file and cache-dir paths.
 
 from __future__ import annotations
 
+import os
 import re
 import tomllib
 from dataclasses import dataclass, field, fields, is_dataclass, MISSING
@@ -26,6 +27,79 @@ _COMMENTED_FORM_MARKER = "# justsayit configuration (commented-defaults form)."
 
 def config_dir() -> Path:
     return Path(user_config_dir(APP_NAME))
+
+
+# --- .env / secret resolution ---------------------------------------------
+#
+# API keys for the OpenAI-compatible LLM and Whisper backends can come from
+# three places, in priority order:
+#   1. an explicit literal in the config file / profile (``api_key = "..."``)
+#   2. a process environment variable (``api_key_env = "OPENAI_API_KEY"``)
+#   3. ``$XDG_CONFIG_HOME/justsayit/.env`` — same KEY=VALUE format as
+#      python-dotenv, loaded into ``os.environ`` on first call so anything
+#      already exported in the shell still wins.
+#
+# Reading the .env at first ``resolve_secret`` call (instead of at import
+# time) keeps test isolation straightforward — tests that monkeypatch
+# ``config_dir`` don't have to worry about ordering.
+
+_DOTENV_LOADED = False
+
+
+def _dotenv_path() -> Path:
+    return config_dir() / ".env"
+
+
+def load_dotenv(*, force: bool = False) -> None:
+    """Merge KEY=VALUE pairs from ``<config_dir>/.env`` into ``os.environ``.
+
+    Process env wins — values already exported in the shell are preserved.
+    Call is idempotent; pass ``force=True`` to re-read (mainly for tests).
+    Lines beginning with ``#`` are comments; values may be wrapped in
+    matched single or double quotes (which are stripped). Anything else
+    is left as-is, preserving embedded whitespace inside the value.
+    """
+    global _DOTENV_LOADED
+    if _DOTENV_LOADED and not force:
+        return
+    _DOTENV_LOADED = True
+    path = _dotenv_path()
+    if not path.exists():
+        return
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        # Strip an optional leading "export " for shell compatibility.
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
+        key, _, val = line.partition("=")
+        key = key.strip()
+        if not key or key in os.environ:
+            continue
+        val = val.strip()
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
+            val = val[1:-1]
+        os.environ[key] = val
+
+
+def resolve_secret(literal: str, env_var: str) -> str:
+    """Return the secret value, preferring explicit literals.
+
+    Order: literal config value > process env (after .env is merged in).
+    Returns ``""`` if neither yields a value, so callers can branch on
+    truthiness.
+    """
+    if literal:
+        return literal
+    if not env_var:
+        return ""
+    load_dotenv()
+    return os.environ.get(env_var, "")
 
 
 def cache_dir() -> Path:
@@ -136,9 +210,13 @@ class PasteConfig:
 
 @dataclass
 class ModelConfig:
-    # Transcription backend. "parakeet" uses sherpa-onnx (bundled dep,
-    # default). "whisper" uses faster-whisper (optional dep — install with
-    # the [whisper] extra or run: uv pip install faster-whisper).
+    # Transcription backend.
+    #   "parakeet" — local sherpa-onnx (bundled dep, default).
+    #   "whisper"  — local faster-whisper (optional [whisper] extra).
+    #   "openai"   — OpenAI-compatible /audio/transcriptions endpoint
+    #                (no local model loaded; needs openai_endpoint +
+    #                openai_model + an API key via openai_api_key /
+    #                openai_api_key_env / .env).
     backend: str = "parakeet"
 
     # --- Parakeet (sherpa-onnx) -------------------------------------------
@@ -168,6 +246,26 @@ class ModelConfig:
     # CTranslate2 quantisation. "int8" is fastest on CPU with little quality
     # loss. Use "float16" on CUDA, "float32" for maximum accuracy.
     whisper_compute_type: str = "int8"
+
+    # --- OpenAI-compatible /audio/transcriptions endpoint -----------------
+    # Base URL of an OpenAI-compatible API (no trailing slash). Examples:
+    #   "https://api.openai.com/v1"            (OpenAI Whisper)
+    #   "https://api.groq.com/openai/v1"       (Groq whisper-large-v3)
+    #   "http://localhost:8000/v1"             (self-hosted: vLLM, faster-
+    #                                           whisper-server, whisper.cpp …)
+    openai_endpoint: str = ""
+    # Model name passed in the multipart form (e.g. "whisper-1",
+    # "whisper-large-v3", "Systran/faster-whisper-large-v3").
+    openai_model: str = "whisper-1"
+    # Inline API key. Empty by default — prefer openai_api_key_env / .env.
+    openai_api_key: str = ""
+    # Process env var to read the key from when openai_api_key is empty.
+    # Falls through to ``<config_dir>/.env`` (loaded once into os.environ).
+    openai_api_key_env: str = "OPENAI_API_KEY"
+    # Optional ISO-639-1 language hint sent to the API (empty = auto).
+    openai_language: str = ""
+    # HTTP timeout (seconds) for the transcription request.
+    openai_timeout: float = 60.0
 
     # --- Shared ---------------------------------------------------------------
     # Silero VAD ONNX (tiny file, downloaded directly).

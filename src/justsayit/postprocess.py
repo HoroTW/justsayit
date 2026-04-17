@@ -20,12 +20,13 @@ import logging
 import re
 import threading
 import tomllib
+import urllib.error
 import urllib.request
 from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
 
-from justsayit.config import config_dir, ensure_commented_form_file
+from justsayit.config import config_dir, ensure_commented_form_file, resolve_secret
 
 log = logging.getLogger(__name__)
 
@@ -202,6 +203,25 @@ _CLEANUP_PROFILE_TOML = f'''\
 # Name: Jane Doe
 # ...
 # """
+
+# --- OpenAI-compatible /chat/completions endpoint --------------------
+# When `endpoint` is set, the LLM call goes over HTTP instead of loading
+# a local GGUF.  The local GGUF fields above (model_path, hf_repo,
+# n_gpu_layers, n_ctx) are ignored on this path — no llama-cpp-python
+# is needed.  Works with OpenAI, OpenRouter, Groq, Together, vLLM,
+# Ollama (`/v1`), LM Studio, llama.cpp's bundled server, etc.
+#
+# API keys come from one of three places, in priority order:
+#   1. `api_key = "sk-..."` below (explicit, lowest-friction for tests)
+#   2. the env var named by `api_key_env` (default OPENAI_API_KEY)
+#   3. `~/.config/justsayit/.env` — same KEY=VALUE format as
+#      python-dotenv; lines you've already exported in your shell win.
+#
+# endpoint = "https://api.openai.com/v1"
+# model = "gpt-4o-mini"
+# api_key = ""
+# api_key_env = "OPENAI_API_KEY"
+# request_timeout = 60.0
 '''
 
 
@@ -289,6 +309,24 @@ class PostprocessProfile:
     # technical interests, etc.). Empty by default; users can fill in via
     # a multi-line TOML string. Only sent if non-empty.
     context: str = ""
+    # --- OpenAI-compatible /chat/completions endpoint --------------------
+    # When ``endpoint`` is set, the LLM call goes over HTTP instead of
+    # loading a local GGUF via llama-cpp-python. Works with any provider
+    # that speaks the OpenAI chat-completions schema: OpenAI, OpenRouter,
+    # Groq, Together, vLLM, Ollama (/v1), LM Studio, llama.cpp's server …
+    # Local GGUF fields above (model_path, hf_repo, n_gpu_layers, n_ctx)
+    # are ignored on the remote path.
+    endpoint: str = ""
+    # Model name passed in the JSON body (e.g. "gpt-4o-mini",
+    # "openai/gpt-4o", "qwen2.5-7b-instruct"). Required when endpoint is set.
+    model: str = ""
+    # Inline API key. Empty by default — prefer api_key_env / .env.
+    api_key: str = ""
+    # Process env var to read the key from when api_key is empty.
+    # Falls through to ``<config_dir>/.env`` (loaded once into os.environ).
+    api_key_env: str = "OPENAI_API_KEY"
+    # HTTP timeout (seconds) for the chat-completions request.
+    request_timeout: float = 60.0
 
 
 def profiles_dir() -> Path:
@@ -548,7 +586,11 @@ class LLMPostprocessor:
         )
 
     def warmup(self) -> None:
-        """Eagerly load the model so the first transcription is not slow."""
+        """Eagerly load the local model so the first transcription is not
+        slow.  No-op for the remote endpoint path — there is nothing to
+        load locally and a probe request would cost real money / latency."""
+        if self.profile.endpoint:
+            return
         with self._lock:
             if self._llm is None:
                 self._llm = self._build()
@@ -560,25 +602,86 @@ class LLMPostprocessor:
             prompt = f"{prompt}\n\n# User context\n{ctx}"
         return prompt
 
-    def process(self, text: str) -> str:
-        """Run the LLM on *text* and return the cleaned result.
+    def _build_messages(self, text: str) -> list[dict[str, str]]:
+        return [
+            {"role": "system", "content": self._system_prompt()},
+            {"role": "user", "content": self.profile.user_template.format(text=text)},
+        ]
 
-        Returns the original *text* unchanged if the model produces an
-        empty response.
-        """
+    def _remote_process(self, text: str) -> str:
+        """OpenAI-compatible /chat/completions POST.  Pure stdlib (no
+        ``openai`` dep) — same response shape as ``llama_cpp`` so the
+        extraction below mirrors the local path."""
+        api_key = resolve_secret(self.profile.api_key, self.profile.api_key_env)
+        if not api_key:
+            raise RuntimeError(
+                "LLM endpoint is set but no API key was found.\n"
+                f"  Set api_key in the profile, export {self.profile.api_key_env},\n"
+                "  or put it in ~/.config/justsayit/.env."
+            )
+        if not self.profile.model:
+            raise RuntimeError(
+                "LLM endpoint is set but profile.model is empty — "
+                "set 'model' in the profile (e.g. \"gpt-4o-mini\")."
+            )
+        url = self.profile.endpoint.rstrip("/") + "/chat/completions"
+        body = {
+            "model": self.profile.model,
+            "messages": self._build_messages(text),
+            "temperature": self.profile.temperature,
+            "max_tokens": self.profile.max_tokens,
+        }
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(body).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+                "User-Agent": "justsayit",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self.profile.request_timeout) as resp:
+                data = json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            try:
+                detail = exc.read().decode("utf-8", errors="replace")[:500]
+            except Exception:
+                detail = ""
+            raise RuntimeError(
+                f"LLM endpoint returned HTTP {exc.code}: {exc.reason}\n  {detail}"
+            ) from exc
+        choices = data.get("choices") or []
+        if not choices:
+            raise RuntimeError(
+                f"LLM endpoint returned no choices: {str(data)[:300]}"
+            )
+        return (choices[0].get("message") or {}).get("content", "").strip()
+
+    def _local_process(self, text: str) -> str:
         with self._lock:
             if self._llm is None:
                 self._llm = self._build()
-            user_msg = self.profile.user_template.format(text=text)
             resp = self._llm.create_chat_completion(
-                messages=[
-                    {"role": "system", "content": self._system_prompt()},
-                    {"role": "user", "content": user_msg},
-                ],
+                messages=self._build_messages(text),
                 temperature=self.profile.temperature,
                 max_tokens=self.profile.max_tokens,
             )
-        result: str = resp["choices"][0]["message"]["content"].strip()
+        return resp["choices"][0]["message"]["content"].strip()
+
+    def process(self, text: str) -> str:
+        """Run the LLM on *text* and return the cleaned result.
+
+        Routes to the remote OpenAI-compatible endpoint when
+        ``profile.endpoint`` is set; otherwise loads a local GGUF via
+        llama-cpp-python.  Returns the original *text* unchanged if the
+        model produces an empty response.
+        """
+        if self.profile.endpoint:
+            result = self._remote_process(text)
+        else:
+            result = self._local_process(text)
         return result if result else text
 
 

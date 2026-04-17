@@ -269,7 +269,14 @@ class App:
     def setup_models(self) -> None:
         # Always fetch the VAD model so the tray's auto-listen toggle
         # works regardless of whether it was enabled at startup.
-        if self.cfg.model.backend == "whisper":
+        if self.cfg.model.backend == "openai":
+            # Remote STT — no local ASR model to download. VAD is still
+            # local (we don't want to stream audio over the network just
+            # to detect silence) so fetch the tiny silero ONNX.
+            self.vad_path = ensure_vad(self.cfg)
+            self.model_paths = None
+            log.info("openai backend: VAD ready, transcription via remote endpoint")
+        elif self.cfg.model.backend == "whisper":
             self.vad_path = ensure_vad(self.cfg)
             self.model_paths = None
             log.info("whisper backend: VAD ready, Whisper model loads on first use")
@@ -1007,7 +1014,11 @@ def _write_default_config(force: bool = False, backend: str | None = None) -> No
 def _download_models_only() -> int:
     ensure_dirs()
     cfg = load_config()
-    if cfg.model.backend == "whisper":
+    if cfg.model.backend == "openai":
+        vad = ensure_vad(cfg, force=False)
+        print(f"openai backend — VAD model ready: {vad}")
+        print(f"  (transcription served by {cfg.model.openai_endpoint or '<unset endpoint>'})")
+    elif cfg.model.backend == "whisper":
         vad = ensure_vad(cfg, force=False)
         print(f"whisper backend — VAD model ready: {vad}")
         print("  (Whisper model downloads automatically on first transcription)")
@@ -1018,7 +1029,9 @@ def _download_models_only() -> int:
     if cfg.postprocess.enabled:
         try:
             profile = load_profile(cfg.postprocess.profile)
-            if profile.hf_repo and profile.hf_filename:
+            if profile.endpoint:
+                print(f"LLM endpoint: {profile.endpoint} (model={profile.model!r})")
+            elif profile.hf_repo and profile.hf_filename:
                 from justsayit.postprocess import LLMPostprocessor
                 pp = LLMPostprocessor(profile)
                 model_path = pp._resolved_model_path()

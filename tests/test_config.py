@@ -309,3 +309,94 @@ def test_state_overlay_ignores_malformed_file(tmp_path):
 
     restored = load_config(p)
     assert restored.vad.enabled is True
+
+
+# ---------------------------------------------------------------------------
+# .env loader + secret resolution
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_secret_prefers_literal(monkeypatch, tmp_path):
+    import justsayit.config as cfg_mod
+    monkeypatch.setattr(cfg_mod, "config_dir", lambda: tmp_path)
+    cfg_mod._DOTENV_LOADED = False
+    monkeypatch.setenv("FOO_KEY", "from-env")
+    assert cfg_mod.resolve_secret("literal-wins", "FOO_KEY") == "literal-wins"
+
+
+def test_resolve_secret_falls_back_to_process_env(monkeypatch, tmp_path):
+    import justsayit.config as cfg_mod
+    monkeypatch.setattr(cfg_mod, "config_dir", lambda: tmp_path)
+    cfg_mod._DOTENV_LOADED = False
+    monkeypatch.setenv("FOO_KEY", "from-env")
+    assert cfg_mod.resolve_secret("", "FOO_KEY") == "from-env"
+
+
+def test_resolve_secret_loads_dotenv(monkeypatch, tmp_path):
+    """When the env var isn't already exported, a value from
+    <config_dir>/.env should be picked up."""
+    import justsayit.config as cfg_mod
+    monkeypatch.setattr(cfg_mod, "config_dir", lambda: tmp_path)
+    cfg_mod._DOTENV_LOADED = False
+    monkeypatch.delenv("DOTENV_KEY", raising=False)
+    (tmp_path / ".env").write_text("DOTENV_KEY=from-dotenv\n", encoding="utf-8")
+    assert cfg_mod.resolve_secret("", "DOTENV_KEY") == "from-dotenv"
+
+
+def test_load_dotenv_does_not_override_process_env(monkeypatch, tmp_path):
+    """Process env wins over .env (matches python-dotenv default)."""
+    import justsayit.config as cfg_mod
+    monkeypatch.setattr(cfg_mod, "config_dir", lambda: tmp_path)
+    cfg_mod._DOTENV_LOADED = False
+    monkeypatch.setenv("CONTESTED", "from-shell")
+    (tmp_path / ".env").write_text("CONTESTED=from-dotenv\n", encoding="utf-8")
+    cfg_mod.load_dotenv(force=True)
+    import os
+    assert os.environ["CONTESTED"] == "from-shell"
+
+
+def test_load_dotenv_strips_quotes_and_export(monkeypatch, tmp_path):
+    import justsayit.config as cfg_mod
+    monkeypatch.setattr(cfg_mod, "config_dir", lambda: tmp_path)
+    cfg_mod._DOTENV_LOADED = False
+    monkeypatch.delenv("QUOTED", raising=False)
+    monkeypatch.delenv("EXPORTED", raising=False)
+    monkeypatch.delenv("PLAIN", raising=False)
+    (tmp_path / ".env").write_text(
+        '# a comment\n'
+        'QUOTED="has spaces"\n'
+        "EXPORTED='single-q'\n"
+        'export PLAIN=plain-value\n'
+        '\n',
+        encoding="utf-8",
+    )
+    cfg_mod.load_dotenv(force=True)
+    import os
+    assert os.environ["QUOTED"] == "has spaces"
+    assert os.environ["EXPORTED"] == "single-q"
+    assert os.environ["PLAIN"] == "plain-value"
+
+
+def test_load_dotenv_missing_file_is_noop(monkeypatch, tmp_path):
+    import justsayit.config as cfg_mod
+    monkeypatch.setattr(cfg_mod, "config_dir", lambda: tmp_path)
+    cfg_mod._DOTENV_LOADED = False
+    cfg_mod.load_dotenv(force=True)  # must not raise
+
+
+def test_resolve_secret_returns_empty_when_unset(monkeypatch, tmp_path):
+    import justsayit.config as cfg_mod
+    monkeypatch.setattr(cfg_mod, "config_dir", lambda: tmp_path)
+    cfg_mod._DOTENV_LOADED = False
+    monkeypatch.delenv("NOPE_KEY", raising=False)
+    assert cfg_mod.resolve_secret("", "NOPE_KEY") == ""
+
+
+def test_model_config_has_openai_fields():
+    cfg = ModelConfig()
+    assert cfg.openai_endpoint == ""
+    assert cfg.openai_model == "whisper-1"
+    assert cfg.openai_api_key == ""
+    assert cfg.openai_api_key_env == "OPENAI_API_KEY"
+    assert cfg.openai_language == ""
+    assert cfg.openai_timeout == 60.0
