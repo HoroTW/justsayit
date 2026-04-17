@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-04-17
+
+### Changed
+
+- **Manual mode (auto-listen off) now closes the microphone between
+  recordings.** Previously the audio stream stayed open continuously and
+  buffered into a lookback ring even when no recording was happening —
+  fine for VAD mode but unnecessary (and a minor privacy / power cost)
+  when the user is opting in per-press. The mic is opened on
+  `start_manual()` and closed again as soon as the worker returns to
+  IDLE. Auto-listen mode (`vad.enabled = true`) keeps the always-on
+  stream and lookback. Toggling auto-listen from the tray opens / closes
+  the stream live.
+
+  Tradeoff: lookback (`audio.lookback_ms`) does nothing in manual mode
+  now — the stream is closed before the user presses the hotkey, so
+  there's nothing to look back at.
+
 ## [0.6.3] - 2026-04-17
 
 ### Changed

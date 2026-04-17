@@ -2,12 +2,14 @@
 
 Two modes:
 
-* **vad.enabled = False** (default) — pure hotkey mode. The audio stream
-  is running, but segments are only emitted in response to
-  ``start_manual()`` / ``stop_manual()``. No Silero, no validation.
+* **vad.enabled = False** (default) — pure hotkey mode. The mic is
+  *closed* until ``start_manual()`` opens it; ``stop_manual()`` emits
+  the segment and the mic is closed again. No Silero, no validation,
+  no always-on stream.
 * **vad.enabled = True** — Silero VAD watches for speech onset; the
   first ``validation_seconds`` get transcribed and discarded if they
   contain no words; otherwise recording continues until VAD silence.
+  The mic stays open continuously while VAD is enabled.
 
 Both modes share the same sounddevice input stream and the same
 segment-emission callback. Consumers receive events via injected
@@ -85,6 +87,10 @@ class AudioEngine:
         self._stop_ev = threading.Event()
         self._worker: threading.Thread | None = None
         self._stream: sd.InputStream | None = None
+        # Guards stream open/close — set_vad_enabled (UI thread),
+        # start_manual (hotkey thread), and the worker thread can all
+        # race here.
+        self._stream_lock = threading.Lock()
         self._external_stop = threading.Event()
         self._external_start = threading.Event()
         self._stop_requested_at: float | None = None
@@ -149,6 +155,12 @@ class AudioEngine:
                 self._vad.reset()
             except Exception:
                 pass
+        # Manual-only mode keeps the mic closed when idle; auto-listen
+        # needs it always open. Toggle to match the new setting.
+        if enabled:
+            self._ensure_stream_open()
+        elif self._state is State.IDLE:
+            self._close_stream()
 
     def set_vad_paused(self, paused: bool) -> None:
         """Toggle the runtime pause (hotkey-level, not persisted).
@@ -185,7 +197,13 @@ class AudioEngine:
             target=self._run, name="justsayit-audio", daemon=True
         )
         self._worker.start()
-        self._open_stream()
+        # Manual-only mode (no VAD) keeps the mic closed until the user
+        # presses the hotkey / activation button — no point holding the
+        # microphone open for a stream we never look at.
+        if self.cfg.vad.enabled:
+            self._ensure_stream_open()
+        else:
+            log.info("auto-listen off — mic stays closed until activation")
 
     def stop(self) -> None:
         log.info("audio engine stopping")
@@ -194,13 +212,7 @@ class AudioEngine:
             self._q.put_nowait(None)
         except queue.Full:
             pass
-        if self._stream is not None:
-            try:
-                self._stream.stop()
-                self._stream.close()
-            except Exception:  # pragma: no cover
-                log.exception("error closing audio stream")
-            self._stream = None
+        self._close_stream()
         if self._worker is not None:
             self._worker.join(timeout=2.0)
             self._worker = None
@@ -208,6 +220,10 @@ class AudioEngine:
     def start_manual(self) -> None:
         """External trigger: begin recording (bypass VAD)."""
         log.info("start_manual requested (state=%s)", self._state.value)
+        # In manual-only mode the mic is closed until activation —
+        # open it before flipping the external_start flag so the worker
+        # has chunks to consume.
+        self._ensure_stream_open()
         self._external_start.set()
 
     def stop_manual(self) -> None:
@@ -241,35 +257,57 @@ class AudioEngine:
             buffer_size_in_seconds=int(self.cfg.vad.max_segment_seconds) + 5,
         )
 
-    def _open_stream(self) -> None:
-        sr = self.cfg.audio.sample_rate
-        block = max(32, int(sr * self.cfg.audio.block_ms / 1000))
-        log.info(
-            "opening audio stream: device=%s rate=%d channels=%d block=%d",
-            self.cfg.audio.device,
-            sr,
-            self.cfg.audio.channels,
-            block,
-        )
+    def _ensure_stream_open(self) -> None:
+        with self._stream_lock:
+            if self._stream is not None:
+                return
+            sr = self.cfg.audio.sample_rate
+            block = max(32, int(sr * self.cfg.audio.block_ms / 1000))
+            log.info(
+                "opening audio stream: device=%s rate=%d channels=%d block=%d",
+                self.cfg.audio.device,
+                sr,
+                self.cfg.audio.channels,
+                block,
+            )
 
-        def _cb(indata, frames, _time, status):
-            if status:
-                log.debug("sounddevice status: %s", status)
+            def _cb(indata, frames, _time, status):
+                if status:
+                    log.debug("sounddevice status: %s", status)
+                try:
+                    self._q.put_nowait(indata[:, 0].astype(np.float32, copy=True))
+                except queue.Full:
+                    log.warning("audio queue full; dropping %d frames", frames)
+
+            self._stream = sd.InputStream(
+                samplerate=sr,
+                channels=self.cfg.audio.channels,
+                dtype="float32",
+                blocksize=block,
+                device=self.cfg.audio.device,
+                callback=_cb,
+            )
+            self._stream.start()
+            log.info("audio stream open")
+
+    def _close_stream(self) -> None:
+        with self._stream_lock:
+            if self._stream is None:
+                return
+            log.info("closing audio stream")
             try:
-                self._q.put_nowait(indata[:, 0].astype(np.float32, copy=True))
-            except queue.Full:
-                log.warning("audio queue full; dropping %d frames", frames)
-
-        self._stream = sd.InputStream(
-            samplerate=sr,
-            channels=self.cfg.audio.channels,
-            dtype="float32",
-            blocksize=block,
-            device=self.cfg.audio.device,
-            callback=_cb,
-        )
-        self._stream.start()
-        log.info("audio stream open")
+                self._stream.stop()
+                self._stream.close()
+            except Exception:  # pragma: no cover
+                log.exception("error closing audio stream")
+            self._stream = None
+        # Reset transient audio state so we don't leak cached chunks /
+        # level updates when the mic re-opens later.
+        self._reset_lookback()
+        try:
+            self.on_level(0.0)
+        except Exception:  # pragma: no cover
+            log.exception("on_level callback raised")
 
     def _set_state(self, new: State) -> None:
         if new == self._state:
@@ -499,6 +537,15 @@ class AudioEngine:
                     self._set_state(State.IDLE)
                 else:
                     log.info("stop_manual ignored (already idle)")
+
+            # In manual-only mode we close the mic between recordings —
+            # the user explicitly opted out of always-on listening.
+            # Lookback is also pointless in this mode (no audio survives
+            # between sessions anyway), so skip maintaining it.
+            if self._state is State.IDLE and not self.cfg.vad.enabled:
+                if self._stream is not None:
+                    self._close_stream()
+                continue
 
             # Maintain the lookback ring while idle; drop it the moment
             # we start buffering so stale audio can't leak into a fresh
