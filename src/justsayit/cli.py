@@ -513,8 +513,11 @@ class App:
         log.info("checking for updates on GitHub...")
         install_dir = detect_install_dir()
 
-        def _on_result(info: UpdateInfo | None) -> None:
+        def _on_result(info: UpdateInfo | None, checked: bool) -> None:
+            if not checked:
+                return
             if info is None:
+                log.info("no update available on GitHub")
                 return
 
             def _apply() -> bool:

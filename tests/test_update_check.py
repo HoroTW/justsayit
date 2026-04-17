@@ -159,3 +159,54 @@ def test_kick_off_update_check_logs_startup_message_and_starts_async(caplog):
     assert captured["current_version"] == __version__
     assert callable(captured["on_result"])
     assert captured["timeout"] == 5.0
+
+
+def test_kick_off_update_check_logs_no_update_result(caplog):
+    app = object.__new__(App)
+    app.gtk_app = object()
+    app.overlay = None
+
+    captured: dict[str, object] = {}
+
+    def fake_check_async(current_version, on_result, *, timeout=5.0):
+        captured["on_result"] = on_result
+        return object()
+
+    caplog.set_level("INFO", logger="justsayit")
+
+    with (
+        patch("justsayit.update_check.check_async", side_effect=fake_check_async),
+        patch("justsayit.update_check.detect_install_dir", return_value=None),
+    ):
+        app._kick_off_update_check()
+
+    captured["on_result"](None, True)
+
+    assert "checking for updates on GitHub..." in caplog.text
+    assert "no update available on GitHub" in caplog.text
+
+
+def test_kick_off_update_check_logs_update_available_result(caplog):
+    app = object.__new__(App)
+    app.gtk_app = object()
+    app.overlay = None
+    app._notify_update_available = lambda info, install_dir: None
+
+    captured: dict[str, object] = {}
+
+    def fake_check_async(current_version, on_result, *, timeout=5.0):
+        captured["on_result"] = on_result
+        return object()
+
+    info = UpdateInfo(current="0.11.5", latest="0.11.6", url="https://example.com")
+    caplog.set_level("INFO", logger="justsayit")
+
+    with (
+        patch("justsayit.update_check.check_async", side_effect=fake_check_async),
+        patch("justsayit.update_check.detect_install_dir", return_value=None),
+        patch("justsayit.cli.GLib.idle_add", side_effect=lambda fn: fn()),
+    ):
+        app._kick_off_update_check()
+        captured["on_result"](info, True)
+
+    assert "update available: v0.11.5 -> v0.11.6" in caplog.text

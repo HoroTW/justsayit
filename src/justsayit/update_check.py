@@ -26,9 +26,7 @@ from justsayit.config import cache_dir
 
 log = logging.getLogger(__name__)
 
-PYPROJECT_URL = (
-    "https://raw.githubusercontent.com/HoroTW/justsayit/main/pyproject.toml"
-)
+PYPROJECT_URL = "https://raw.githubusercontent.com/HoroTW/justsayit/main/pyproject.toml"
 RELEASE_PAGE_URL = "https://github.com/HoroTW/justsayit/releases"
 CHECK_INTERVAL_SECONDS = 24 * 60 * 60
 
@@ -124,6 +122,41 @@ def _fetch_latest(timeout: float) -> str | None:
     return parse_version_from_pyproject(body)
 
 
+def _check_for_update_with_status(
+    current_version: str,
+    *,
+    timeout: float = 5.0,
+    force: bool = False,
+    cache_path: Path | None = None,
+) -> tuple[UpdateInfo | None, bool]:
+    """Return ``(result, checked)`` for an update check.
+
+    ``checked`` is ``True`` when we successfully determined the latest
+    version (including a cached "no update" result), and ``False`` when
+    the check failed and should stay silent.
+    """
+    path = cache_path if cache_path is not None else _cache_path()
+    cache = _load_cache(path)
+    now = int(time.time())
+    if not force and cache:
+        last = int(cache.get("checked_at", 0))
+        cached_latest = cache.get("latest")
+        if cached_latest and now - last < CHECK_INTERVAL_SECONDS:
+            if is_newer(cached_latest, current_version):
+                return UpdateInfo(
+                    current_version, cached_latest, RELEASE_PAGE_URL
+                ), True
+            return None, True
+
+    latest = _fetch_latest(timeout)
+    if latest is None:
+        return None, False
+    _save_cache(path, latest)
+    if is_newer(latest, current_version):
+        return UpdateInfo(current_version, latest, RELEASE_PAGE_URL), True
+    return None, True
+
+
 def check_for_update(
     current_version: str,
     *,
@@ -140,46 +173,38 @@ def check_for_update(
     *force* skips the cache check; *cache_path* overrides the default
     location for tests.
     """
-    path = cache_path if cache_path is not None else _cache_path()
-    cache = _load_cache(path)
-    now = int(time.time())
-    if not force and cache:
-        last = int(cache.get("checked_at", 0))
-        cached_latest = cache.get("latest")
-        if cached_latest and now - last < CHECK_INTERVAL_SECONDS:
-            if is_newer(cached_latest, current_version):
-                return UpdateInfo(current_version, cached_latest, RELEASE_PAGE_URL)
-            return None
-
-    latest = _fetch_latest(timeout)
-    if latest is None:
-        return None
-    _save_cache(path, latest)
-    if is_newer(latest, current_version):
-        return UpdateInfo(current_version, latest, RELEASE_PAGE_URL)
-    return None
+    result, _checked = _check_for_update_with_status(
+        current_version,
+        timeout=timeout,
+        force=force,
+        cache_path=cache_path,
+    )
+    return result
 
 
 def check_async(
     current_version: str,
-    on_result: Callable[[UpdateInfo | None], None],
+    on_result: Callable[[UpdateInfo | None, bool], None],
     *,
     timeout: float = 5.0,
 ) -> threading.Thread:
     """Run :func:`check_for_update` on a daemon thread.
 
-    *on_result* is invoked with the result on the worker thread — wrap
-    it in ``GLib.idle_add`` if it touches the UI.
+    *on_result* is invoked with ``(result, checked)`` on the worker
+    thread — wrap it in ``GLib.idle_add`` if it touches the UI.
     """
 
     def _run() -> None:
         try:
-            result = check_for_update(current_version, timeout=timeout)
+            result, checked = _check_for_update_with_status(
+                current_version, timeout=timeout
+            )
         except Exception:
             log.exception("update check raised")
             result = None
+            checked = False
         try:
-            on_result(result)
+            on_result(result, checked)
         except Exception:
             log.exception("update-check callback raised")
 
