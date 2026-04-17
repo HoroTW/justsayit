@@ -447,6 +447,25 @@ def test_dynamic_context_script_failure_logged_and_ignored(monkeypatch, caplog):
     assert "dynamic context script exited with 7" in caplog.text
 
 
+def test_dynamic_context_success_and_assembled_prompt_logged(monkeypatch, caplog):
+    caplog.set_level("INFO")
+    profile = PostprocessProfile(
+        model_path="/fake/model.gguf", system_prompt="Base prompt."
+    )
+    pp = LLMPostprocessor(profile, dynamic_context_script="~/dynamic-context.sh")
+    pp._llm = _make_mock_llama("ok")
+    monkeypatch.setattr(
+        pp, "_dynamic_context", lambda: "Date: 2026-04-17\nTimezone: Europe/Berlin"
+    )
+
+    pp.process("input")
+
+    assert "assembled LLM system prompt:" in caplog.text
+    assert "# STATE (DYNAMIC CONTEXT):" in caplog.text
+    assert "Date: 2026-04-17" in caplog.text
+    assert "Timezone: Europe/Berlin" in caplog.text
+
+
 def test_build_raises_without_llama_cpp():
     profile = PostprocessProfile(model_path="/nonexistent/model.gguf")
     pp = LLMPostprocessor(profile)

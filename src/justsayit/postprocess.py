@@ -787,7 +787,16 @@ class LLMPostprocessor:
                     script,
                 )
             return ""
-        return proc.stdout.strip()
+        dynamic = proc.stdout.strip()
+        if dynamic:
+            log.info(
+                "dynamic context from %s:\n%s",
+                Path(script).expanduser(),
+                dynamic,
+            )
+        else:
+            log.info("dynamic context script returned empty output: %s", script)
+        return dynamic
 
     @staticmethod
     def _compile_paste_strip(pattern: str) -> re.Pattern[str] | None:
@@ -902,10 +911,12 @@ class LLMPostprocessor:
         return prompt
 
     def _build_messages(self, text: str) -> list[dict[str, str]]:
-        return [
+        messages = [
             {"role": "system", "content": self._system_prompt()},
             {"role": "user", "content": self.profile.user_template.format(text=text)},
         ]
+        log.info("assembled LLM system prompt:\n%s", messages[0]["content"])
+        return messages
 
     def _remote_process(self, text: str) -> str:
         """OpenAI-compatible /chat/completions POST.  Pure stdlib (no
