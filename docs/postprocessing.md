@@ -2,11 +2,11 @@
 
 An optional LLM cleanup pass runs after transcription. The default
 "cleanup" profile fixes obvious mishears, removes filler words, applies
-dictated formatting / punctuation, and only switches into assistant mode
-when the transcript starts with `Hey Computer`. The same machinery can
-do anything else you'd ask an LLM to do — emojify, translate,
-summarise, change tone, format as Markdown, etc. — by swapping in a
-custom system prompt.
+dictated formatting / punctuation, and switches into [assistant mode
+when the transcript starts with `Hey Computer`](#hey-computer--inline-assistant-mode).
+The same machinery can do anything else you'd ask an LLM to do —
+emojify, translate, summarise, change tone, format as Markdown, etc. —
+by swapping in a custom system prompt.
 
 Enable in `config.toml` (or toggle from the tray):
 
@@ -15,6 +15,44 @@ Enable in `config.toml` (or toggle from the tray):
 enabled = true
 profile = "gemma4-cleanup"   # filename stem under postprocess/
 ```
+
+## "Hey Computer" — inline assistant mode
+
+The shipped cleanup profiles double as a zero-friction assistant. Start
+any dictation with `Hey Computer …` and the LLM treats the rest as a
+request — its reply lands in your focused window the same way a
+transcription would.
+
+- **Trigger is strict.** Only a *leading* `Hey Computer` (case-insensitive)
+  flips the switch. A bare `Computer`, a mid-sentence mention, or a
+  quoted "she said hey computer …" all stay in cleanup mode. Common STT
+  mishears like `Hi Computer` / `Hey Computa` are tolerated.
+- **No mode-switch UI.** The trigger lives inside the system prompt;
+  same hotkey, same overlay, same paste flow.
+- **Ignores phrasing.** Without a leading trigger, even
+  question-shaped or instruction-shaped dictations stay as plain
+  cleanup — the assistant never fires "because it sounded like a
+  request". You can dictate `Translate this to German: hello world`
+  into a chat box and it goes through verbatim.
+- **Direct replies.** When triggered, the model answers without
+  echoing your request and without preamble like "Sure, here you go:".
+
+Examples:
+
+| You say | Result |
+|---------|--------|
+| `Hey Computer, what's 47 times 18?` | `846` |
+| `hey computer translate to German: see you tomorrow` | `Bis morgen` |
+| `Hey Computer, write a Python one-liner that sums a list of dicts by key 'cost'.` | `sum(d['cost'] for d in items)` |
+| `Hey Computer, give me a polite decline for a meeting on Friday.` | (a short polite decline) |
+| `Computer, translate this to German: hello world` | (cleanup only — bare `Computer` is **not** the trigger) |
+| `Can you tell me how many things you can see?` | (cleanup only — no trigger) |
+
+The trigger is just text in the system prompt — if you want a different
+wake word, a different language, or a stricter / looser pattern, edit
+your profile's `system_prompt` and the rules change with it. Custom
+profiles (translate, emojify, summarise, …) typically drop the
+assistant-mode block entirely so they always rewrite, never branch.
 
 ## Shipped profiles
 

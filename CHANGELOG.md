@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-04-17
+
+### Documentation
+
+- Surface "Hey Computer" inline assistant mode as a top-level feature
+  in the README (it had been demoted to a sub-bullet of "LLM cleanup"
+  and was buried — turns out it's one of the most useful tricks).
+- New `## "Hey Computer" — inline assistant mode` section in
+  postprocessing.md with the trigger rules and worked examples
+  (math, translation, code one-liners, polite decline …).
+- Cross-reference from the LLM section of configuration.md.
+
 ## [0.11.1] - 2026-04-17
 
 ### Documentation

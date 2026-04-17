@@ -177,7 +177,9 @@ and line-break words in DE+EN, so you can use spoken `Komma` /
 Optional cleanup pass with shipped profiles for local Gemma 4, an
 emoji-heavy "fun" variant, and an OpenAI-compatible endpoint variant —
 plus full customisation for your own style profiles (translate,
-summarise, format-as-Markdown, you name it).
+summarise, format-as-Markdown, you name it). Doubles as an inline
+assistant when you start a dictation with
+[`Hey Computer …`](postprocessing.md#hey-computer--inline-assistant-mode).
 
 See [docs/postprocessing.md](postprocessing.md).
 

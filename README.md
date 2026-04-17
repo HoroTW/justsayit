@@ -24,6 +24,14 @@ Local Parakeet v3 voice dictation for Wayland.
   mode that bypasses the clipboard entirely (`paste.type_directly`)
 - **System tray** to toggle dictation / auto-VAD, switch postprocess
   profile, and open config files
+- **"Hey Computer" inline assistant** — start any dictation with
+  `Hey Computer …` (case-insensitive, mishears like `Hi Computer`
+  tolerated) and the LLM treats the rest as a request and replies
+  directly into the focused window. Anything else is plain cleanup —
+  even when it's phrased as a question — so the trigger never fires
+  by accident. Ask for a translation, a quick rewrite, a calculation,
+  a snippet of code, … without leaving the keyboard. See
+  [docs/postprocessing.md#hey-computer--inline-assistant-mode](docs/postprocessing.md#hey-computer--inline-assistant-mode).
 - **Optional LLM cleanup pass** with shipped profiles (cleanup, emoji,
   OpenAI-compatible endpoint) and **fully customisable system prompts**
   for emojification, translation, summarisation, or your own style.
