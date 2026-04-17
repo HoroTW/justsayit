@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.11] - 2026-04-17
+
+### Fixed
+
+- **Hotkey re-bind dialog after restarting from the tray (CLI launches
+  only)**. Symptom: launching from a terminal bound the global shortcut
+  fine, but selecting "Reload config" from the tray triggered a restart
+  that came back with `shortcut toggle-dictation -> (unassigned)` and
+  popped the portal bind dialog again. Launches via the installed
+  `.desktop` file were unaffected. Diagnosis: the restart used in-place
+  `os.execve`, preserving the self-managed `app-<app_id>-<pid>.scope`
+  cgroup and starting a fresh D-Bus connection inside it. KDE's portal
+  v1 (which doesn't support `ConfigureShortcuts`) couldn't match the new
+  connection back to the prior binding under that scope name. Fix: the
+  restart path now first tries `Gio.DesktopAppInfo.launch` against the
+  installed `dev.horotw.justsayit.desktop`, so the desktop env owns the
+  scope naming and the portal recognizes the app id consistently across
+  launches. Falls back to in-place `execve` in dev mode where no
+  `.desktop` is installed.
+
 ## [0.8.10] - 2026-04-17
 
 ### Fixed

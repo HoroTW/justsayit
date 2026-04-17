@@ -40,6 +40,37 @@ def _app_id() -> str:
     return _os.environ.get("JUSTSAYIT_APP_ID", "dev.horotw.justsayit")
 
 
+def _relaunch_via_desktop() -> bool:
+    """Spawn a fresh instance via the installed ``.desktop`` file so the
+    desktop env (KDE/GNOME) places it in a portal-recognized systemd
+    scope with a stable, well-formed app id. Returns ``True`` if a new
+    instance was launched (caller should exit), ``False`` otherwise.
+
+    Why this matters for the restart-from-tray flow: when launched from a
+    terminal we self-create ``app-<app_id>-<pid>.scope`` via systemd-run.
+    That scope name isn't always parsed back to our app id by the XDG
+    portal's app-id resolver, so on the second D-Bus connection (after
+    in-place execve) BindShortcuts can come back unassigned — the user
+    sees the bind dialog pop again. Going through gio-launch-desktop
+    (what ``Gio.DesktopAppInfo.launch`` does under the hood) makes the
+    desktop env own the scope naming, which the portal then recognizes
+    consistently across launches.
+    """
+    try:
+        from gi.repository import Gio  # local import: avoids loading gi
+        # before LD_PRELOAD reexec on cold start.
+
+        info = Gio.DesktopAppInfo.new(_app_id() + ".desktop")
+    except Exception:
+        return False
+    if info is None:
+        return False
+    try:
+        return bool(info.launch([], None))
+    except Exception:
+        return False
+
+
 def _reexec_under_systemd_scope() -> None:
     """Re-exec ourselves inside an ``app-<app_id>-*.scope`` cgroup so the
     XDG portal can identify us with a stable name no matter how we were
@@ -1368,6 +1399,16 @@ def main(argv: list[str] | None = None) -> int:
     ja.shutdown()
     if ja._restart_requested:
         log.info("restarting process to pick up new config")
+        # Prefer relaunching via the installed .desktop file so the new
+        # instance lands in a desktop-env-managed systemd scope. In-place
+        # execve keeps the same scope/D-Bus connection lineage, which on
+        # KDE causes the portal to lose track of our existing shortcut
+        # binding (ConfigureShortcuts isn't supported on portal v1, so the
+        # bind dialog re-pops). Falls back to execve in dev mode where no
+        # .desktop file is installed.
+        if _relaunch_via_desktop():
+            return rc
+        log.info("desktop relaunch unavailable, falling back to in-place execve")
         _os.execve(_sys.executable, [_sys.executable] + _sys.argv, _os.environ)
     return rc
 
