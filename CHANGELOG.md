@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-04-17
+
+### Changed
+
+- **Default cleanup prompt now has a dedicated "Spoken punctuation /
+  line-break words" section** with explicit mappings (`Punkt` → `.`,
+  `Komma` → `,`, `Fragezeichen` → `?`, `Ausrufezeichen` → `!`,
+  `Doppelpunkt` → `:`, `Semikolon` → `;`, `neue Zeile` → newline,
+  `neuer Absatz` → blank line) and a CRITICAL rule: drop the spoken
+  word silently if the STT already produced the character or inserting
+  it would leave a stray symbol on its own line. The exact failure
+  case that motivated the fix (`Hallo, neue Zeile. Ich komme nicht.
+  Punkt. Neue Zeile, eure Katja.` rendering with a stray `.` on its
+  own line between sentences) is baked in as the headline example.
+- **`<|think|>` constraint tightened hard** — was "very brief (under
+  3 sentences)", now "INTERNAL reasoning ONLY — at most ONE short
+  sentence (≤ 15 words). NEVER echo the input, list filler/mishear/
+  formatting checks, enumerate corrections, or show step-by-step
+  work. If nothing needs changing, just write `No changes.` and stop."
+  Stops Gemma from emitting multi-paragraph chain-of-thought blocks
+  that bloated the overlay and added latency.
+
 ## [0.7.0] - 2026-04-17
 
 Milestone release rolling up the 0.6.8 – 0.6.15 push around LLM
