@@ -1,3 +1,3 @@
 """justsayit - local Parakeet dictation for Wayland."""
 
-__version__ = "0.6.10"
+__version__ = "0.6.11"

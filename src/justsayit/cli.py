@@ -731,19 +731,23 @@ class App:
                     final = cleaned
             except Exception:
                 log.exception("LLM postprocessor failed; using unprocessed text")
-            # Always update the LLM field — clears "Wait…" even when text is unchanged.
-            # Overlay sees the full LLM output (including any reasoning channel);
-            # the paste path below strips it via profile.paste_strip_regex.
-            if self.overlay is not None:
-                self.overlay.push_llm_text(final)
             stripped = pp.strip_for_paste(final)
+            # Surface the reasoning preamble (whatever paste_strip_regex
+            # matched) above the body so the user sees the full LLM reply
+            # but only the stripped body lands in the focused window.
+            thought = ""
             if stripped != final:
+                matches = [m.strip() for m in pp.find_strip_matches(final) if m.strip()]
+                thought = "\n".join(matches)
                 log.info(
                     "paste_strip_regex applied: %d -> %d chars",
                     len(final),
                     len(stripped),
                 )
-                final = stripped
+            # Always update the LLM field — clears "Wait…" even when text is unchanged.
+            if self.overlay is not None:
+                self.overlay.push_llm_text(stripped, thought=thought)
+            final = stripped
 
         # Space prefix / suffix (applied to paste content only; not shown in overlay)
         auto_space_ms = self.cfg.paste.auto_space_timeout_ms

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.11] - 2026-04-17
+
+### Changed
+
+- **Overlay LLM field now formats the "thought" preamble in italic** on
+  its own line above the pasted body. Previously the entire LLM-cleaned
+  output (including any `<|channel>…<channel|>` reasoning block) was
+  shown in italic green and the user couldn't visually distinguish what
+  the model "thought" from what it actually replied. Now whatever
+  `paste_strip_regex` matches is rendered italicised, then a newline,
+  then the stripped body in normal weight — same body that is pasted
+  into the focused window.
+- New `LLMPostprocessor.find_strip_matches()` helper returns the
+  substrings the regex matched, so the cli can hand them to the overlay
+  for display without depending on the private compiled pattern.
+
 ## [0.6.10] - 2026-04-17
 
 ### Changed

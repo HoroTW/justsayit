@@ -67,7 +67,6 @@ window.justsayit-overlay {
     font-family: "Inter", "Cantarell", "Noto Sans", sans-serif;
     font-size: 11px;
     font-weight: 400;
-    font-style: italic;
 }
 .justsayit-abort-button {
     background: transparent;
@@ -277,9 +276,19 @@ class OverlayWindow(Gtk.ApplicationWindow):
             priority=GLib.PRIORITY_DEFAULT,
         )
 
-    def push_llm_text(self, text: str) -> None:
-        """Update the bottom field with the LLM-cleaned result."""
-        GLib.idle_add(self._apply_llm_text, text, priority=GLib.PRIORITY_DEFAULT)
+    def push_llm_text(self, text: str, thought: str = "") -> None:
+        """Update the bottom field with the LLM-cleaned result.
+
+        *thought* — optional reasoning preamble (the part stripped by
+        ``paste_strip_regex`` before paste). When non-empty it is shown
+        italicised on its own line above *text* so the user sees the
+        full model reply at a glance, even though only *text* will be
+        pasted into the focused window.
+        """
+        GLib.idle_add(
+            self._apply_llm_text, text, thought,
+            priority=GLib.PRIORITY_DEFAULT,
+        )
 
     def push_linger_start(self) -> None:
         GLib.idle_add(self._start_linger, priority=GLib.PRIORITY_DEFAULT)
@@ -370,8 +379,13 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self.present()
         return False
 
-    def _apply_llm_text(self, text: str) -> bool:
-        self._llm_label.set_label(text)
+    def _apply_llm_text(self, text: str, thought: str = "") -> bool:
+        if thought:
+            from html import escape
+            markup = f"<i>{escape(thought)}</i>\n{escape(text)}"
+            self._llm_label.set_markup(markup)
+        else:
+            self._llm_label.set_label(text)
         if not self._llm_label.get_visible():
             self._sep2.set_visible(True)
             self._llm_label.set_visible(True)

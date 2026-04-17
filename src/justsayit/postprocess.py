@@ -274,6 +274,17 @@ class LLMPostprocessor:
             return text
         return self._paste_strip.sub("", text)
 
+    def find_strip_matches(self, text: str) -> list[str]:
+        """Return the substrings of *text* that ``paste_strip_regex`` matches.
+
+        Used by the overlay to display the stripped "thought" / reasoning
+        preamble alongside the pasted body so the user can see the full
+        model reply. Empty list if no regex is configured.
+        """
+        if self._paste_strip is None:
+            return []
+        return self._paste_strip.findall(text)
+
     def _resolved_model_path(self) -> Path:
         p = Path(self.profile.model_path).expanduser()
         if p.exists():
