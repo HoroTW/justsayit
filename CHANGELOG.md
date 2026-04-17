@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Loosened the shipped local and OpenAI-compatible cleanup prompts so
+  `Hey Computer` anywhere in a transcript is generally treated as an
+  assistant cue, while clearly quoted, reported, incidental, or
+  otherwise nonsensical uses should still stay cleanup-only.
+
+### Documentation
+
+- Updated README, `docs/postprocessing.md`, and
+  `docs/configuration.md` to describe the shipped `Hey Computer`
+  behavior as best-effort prompt semantics rather than deterministic app
+  logic.
+
 ## [0.11.3] - 2026-04-17
 
 ### Changed

@@ -2,8 +2,8 @@
 
 An optional LLM cleanup pass runs after transcription. The default
 "cleanup" profile fixes obvious mishears, removes filler words, applies
-dictated formatting / punctuation, and switches into [assistant mode
-when the transcript starts with `Hey Computer`](#hey-computer--inline-assistant-mode).
+dictated formatting / punctuation, and can switch into [assistant mode
+when `Hey Computer` appears as an actual cue to the model](#hey-computer--inline-assistant-mode).
 The same machinery can do anything else you'd ask an LLM to do —
 emojify, translate, summarise, change tone, format as Markdown, etc. —
 by swapping in a custom system prompt.
@@ -18,35 +18,29 @@ profile = "gemma4-cleanup"   # filename stem under postprocess/
 
 ## "Hey Computer" — inline assistant mode
 
-The shipped cleanup profiles double as a zero-friction assistant. Start
-any dictation with `Hey Computer …` and the LLM treats the rest as a
-request — its reply lands in your focused window the same way a
-transcription would.
+The shipped cleanup profiles double as a zero-friction assistant.
+`Hey Computer` anywhere in the transcript is generally treated as a cue
+that the text is meant for the model, so the reply lands in your focused
+window the same way a transcription would.
 
 - **Leading trigger stays the main rule.** A leading `Hey Computer`
-  (case-insensitive) flips into assistant mode. A bare `Computer`, a
-  casual mid-sentence mention, or a quoted "she said hey computer …"
-  still stays in cleanup mode. Common STT mishears like `Hi Computer` /
-  `Hey Computa` are tolerated.
-- **Trailing convention is conservative and prompt-driven.** The shipped
-  cleanup prompts also mention a narrow end-of-dictation pattern:
-  dictated text first, then a final `Hey Computer` rewrite/edit request
-  that clearly refers back to that dictated text, such as
-  `... Hey Computer, please clean this up` or `... Hey Computer, make
-  this sound more formal`. This is best-effort model behavior, not a
-  separate deterministic parser in the app.
+  (case-insensitive) is still the clearest and most reliable pattern.
+  Common STT mishears like `Hi Computer` / `Hey Computa` are tolerated.
+- **Not a hard parser rule.** The shipped prompts are intentionally
+  broader than "must be at the start": if `Hey Computer` appears later
+  and it plainly reads like a request to the model, the model may treat
+  it as assistant mode too. This is best-effort prompt behavior, not a
+  deterministic app-side mode switch.
+- **Quoted / reported / incidental uses stay cleanup-only.** If the text
+  is clearly reporting speech, quoting someone else, naming something,
+  or otherwise not actually addressing the model, it should remain plain
+  cleanup. The same applies when treating it as an instruction clearly
+  does not make sense.
 - **No mode-switch UI.** The trigger lives inside the system prompt;
   same hotkey, same overlay, same paste flow.
-- **Ignores phrasing.** Without a leading trigger, even
-  question-shaped or instruction-shaped dictations stay as plain
-  cleanup — the assistant never fires "because it sounded like a
-  request". You can dictate `Translate this to German: hello world`
-  into a chat box and it goes through verbatim.
-- **Trailing shortcut is not "trigger anywhere".** It only fires for
-  clear rewrite/edit requests about the already-dictated text when the
-  model reads that intent clearly. A trailing `Hey Computer` that asks
-  for something unrelated, or doesn't clearly refer back to the dictated
-  text, should stay cleanup-only.
+- **Best effort, not a guarantee.** README/docs describe the intended
+  semantics of the shipped prompt. Different models may still vary at
+  the edges, especially on ambiguous transcripts.
 - **Direct replies.** When triggered, the model answers without
   echoing your request and without preamble like "Sure, here you go:".
 
@@ -64,8 +58,9 @@ Examples:
 | `please polish this note for the client hey computer make this sound more formal` | (best-effort assistant-style rewrite of the earlier dictated text) |
 | `Computer, translate this to German: hello world` | (cleanup only — bare `Computer` is **not** the trigger) |
 | `Can you tell me how many things you can see?` | (cleanup only — no trigger) |
-| `and then I told him hey computer remind me tomorrow` | (cleanup only — quoted/casual mention, not a supported trailing rewrite request) |
-| `this is my rough note hey computer translate to German` | (usually cleanup only — trailing convention is intentionally conservative; no explicit reference to the dictated text) |
+| `and then I told him hey computer remind me tomorrow` | (cleanup only — quoted/reported, not actually addressed to the model) |
+| `the folder is called hey computer drafts` | (cleanup only — incidental mention, not an instruction) |
+| `this is my rough note hey computer translate to German` | (often assistant-mode best effort, unless the transcript clearly reads as something else) |
 
 The trigger behavior lives in the system prompt. If you want a
 different wake word, a different language, or stricter / looser trigger
@@ -79,9 +74,9 @@ assistant-mode block entirely so they always rewrite, never branch.
 
 | Profile | Backend | What it does |
 |---------|---------|--------------|
-| `gemma4-cleanup` | Local Gemma 4 E4B via `llama-cpp-python` | Recommended. Conservative DE/EN cleanup tuned for Gemma. Supports leading `Hey Computer` assistant mode and documents the same conservative trailing rewrite convention described above. |
+| `gemma4-cleanup` | Local Gemma 4 E4B via `llama-cpp-python` | Recommended. Conservative DE/EN cleanup tuned for Gemma. Treats `Hey Computer` as a best-effort assistant cue anywhere in the transcript, while quoted/reported/incidental uses should remain cleanup-only. |
 | `gemma4-fun` | Same local Gemma model | Keeps your wording but sprinkles emojis. Great for chat / social. |
-| `openai-cleanup` | Any OpenAI-compatible `/chat/completions` endpoint | Same cleanup contract, including the same leading trigger and conservative trailing convention in the shipped prompt, no GPU required. Pre-configured for `https://api.openai.com/v1` + `gpt-4o-mini`; just point it elsewhere if you prefer another provider. |
+| `openai-cleanup` | Any OpenAI-compatible `/chat/completions` endpoint | Same cleanup contract, including the same best-effort `Hey Computer` semantics in the shipped prompt, no GPU required. Pre-configured for `https://api.openai.com/v1` + `gpt-4o-mini`; just point it elsewhere if you prefer another provider. |
 
 All three use the **commented-defaults** form: every key is shipped
 commented out, with the dataclass default tracked automatically. Lines

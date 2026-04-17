@@ -24,19 +24,19 @@ Local Parakeet v3 voice dictation for Wayland.
   mode that bypasses the clipboard entirely (`paste.type_directly`)
 - **System tray** to toggle dictation / auto-VAD, switch postprocess
   profile, and open config files
-- **"Hey Computer" inline assistant** — start any dictation with
-  `Hey Computer …` (case-insensitive, mishears like `Hi Computer`
-  tolerated) and the LLM treats the rest as a request and replies
-  directly into the focused window. Use it for rewrite-style requests
-  like `Hey Computer, make this sound more formal` or composition/help
-  requests like `Hey Computer, there is an offering, please write a
-  humble decline with the wording 'deeply sorry ...'`. There is also a
-  conservative prompt-level convention for already-dictated text:
-  `... Hey Computer, please clean this up` / `... Hey Computer, make
-  this sound more formal`. Anything else is plain cleanup — even when
-  it's phrased as a question — which helps reduce accidental triggers.
-  Ask for a translation, a quick rewrite, a calculation, a snippet of
-  code, … without leaving the keyboard. See
+- **"Hey Computer" inline assistant** — `Hey Computer` anywhere in a
+  dictation is generally treated as a cue that the text is for the LLM,
+  so it may answer directly into the focused window instead of doing
+  cleanup only. This is prompt-guided best effort, not a hard-coded
+  parser rule: clearly quoted, reported, incidental, or otherwise
+  non-addressed uses should stay cleanup-only, and so should cases where
+  treating it as an instruction clearly does not make sense. Use it for
+  rewrite-style requests like `Hey Computer, make this sound more
+  formal`, composition/help requests like `Hey Computer, there is an
+  offering, please write a humble decline with the wording 'deeply sorry
+  ...'`, or already-dictated text such as `... Hey Computer, please
+  clean this up`. Ask for a translation, a quick rewrite, a calculation,
+  a snippet of code, … without leaving the keyboard. See
   [docs/postprocessing.md#hey-computer--inline-assistant-mode](docs/postprocessing.md#hey-computer--inline-assistant-mode).
 - **Optional LLM cleanup pass** with shipped profiles (cleanup, emoji,
   OpenAI-compatible endpoint) and **fully customisable system prompts**

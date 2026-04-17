@@ -178,12 +178,11 @@ Optional cleanup pass with shipped profiles for local Gemma 4, an
 emoji-heavy "fun" variant, and an OpenAI-compatible endpoint variant —
 plus full customisation for your own style profiles (translate,
 summarise, format-as-Markdown, you name it). Doubles as an inline
-assistant when you start a dictation with
-[`Hey Computer …`](postprocessing.md#hey-computer--inline-assistant-mode).
-The default cleanup profiles also document a conservative end-of-
-dictation rewrite/edit convention for already-dictated text in that same
-section; it is prompt-guided best-effort behavior, not a separate hard-
-coded parser.
+assistant when [`Hey Computer …`](postprocessing.md#hey-computer--inline-assistant-mode)
+appears as an actual cue to the model. The shipped prompts treat that as
+a best-effort signal anywhere in the transcript, while clearly quoted,
+reported, incidental, or nonsensical uses should remain cleanup-only.
+This is prompt-guided behavior, not a separate hard-coded parser.
 
 See [docs/postprocessing.md](postprocessing.md).
 
