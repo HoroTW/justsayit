@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.15] - 2026-04-17
+
+### Changed
+
+- **Default `paste_strip_regex` now consumes the literal `thought`
+  channel label** that Gemma emits right after `<|channel>`:
+  `<\|channel>thought(.*?)<channel\|>`. Previously the label leaked into
+  the displayed thought as a stray "thought" word at the start of the
+  italic preamble.
+- **Overlay default linger halved** from 10 s to 5 s
+  (`overlay.result_linger_ms = 5_000`). The old value lingered long
+  enough to feel like a stuck overlay; 5 s is enough to glance at the
+  thought and the cleaned text without getting in the way of the next
+  dictation.
+- **Overlay LLM markup now puts a blank line between the thought and
+  the body**, not just a single newline. Visually separates the italic
+  blue-green reasoning from the green reply you actually pasted.
+
 ## [0.6.14] - 2026-04-17
 
 ### Changed

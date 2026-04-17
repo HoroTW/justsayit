@@ -174,13 +174,13 @@ user_template = "{{text}}"
 # entire match (including the framing tokens) is shown.
 #
 # Examples:
-#   # Gemma thinking channel — show only inner content, hide the tags:
-#   paste_strip_regex = '<\\|channel>(.*?)<channel\\|>'
+#   # Gemma thinking channel — drops the literal `thought` label too:
+#   paste_strip_regex = '<\\|channel>thought(.*?)<channel\\|>'
 #   # Generic <think>…</think> — show only inner content:
 #   paste_strip_regex = '<think>(.*?)</think>'
 #   # Strip everything before the final answer — nothing to show:
 #   paste_strip_regex = '(?s)^.*?</think>'
-paste_strip_regex = '<\\|channel>(.*?)<channel\\|>'
+paste_strip_regex = '<\\|channel>thought(.*?)<channel\\|>'
 
 # Optional free-form context about the user — appended to the system prompt
 # under a "User context" heading, so the model can correctly spell your name,
@@ -266,9 +266,10 @@ class PostprocessProfile:
     # whole match is shown.
     #
     # Default matches Gemma 4 with the `<|think|>` markers in the prompt
-    # and captures the inner content so the framing tags don't appear in
-    # the overlay; set to "" if you remove `<|think|>` from system_prompt.
-    paste_strip_regex: str = r"<\|channel>(.*?)<channel\|>"
+    # and captures the inner content so the framing tags AND the literal
+    # `thought` channel label don't appear in the overlay; set to "" if
+    # you remove `<|think|>` from system_prompt.
+    paste_strip_regex: str = r"<\|channel>thought(.*?)<channel\|>"
     # Free-form text appended to the system prompt under a "User context"
     # heading so the model knows who's dictating (name, language, country,
     # technical interests, etc.). Empty by default; users can fill in via

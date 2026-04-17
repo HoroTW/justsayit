@@ -190,7 +190,7 @@ class OverlayConfig:
     # How long (ms) the overlay stays visible after a successful paste so
     # the user can read the transcribed / LLM-cleaned text.
     # 0 = hide immediately after paste (original behaviour).
-    result_linger_ms: int = 10_000
+    result_linger_ms: int = 5_000
     # Maximum width/height (px) the overlay may expand to when showing the
     # result text fields.  The overlay always starts at width × height and
     # grows to fit the content up to these limits.
