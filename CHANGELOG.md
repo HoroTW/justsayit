@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.13] - 2026-04-17
+
+### Changed
+
+- **`setup-llm` activation hint no longer points at `config.toml`**.
+  After downloading models, setup-llm used to print
+  `To activate, set in config.toml: [postprocess] enabled = true,
+  profile = "<name>"`. Both halves were wrong: those keys are runtime
+  state and live in `state.toml` (since 0.8.8), and steering users at
+  hand-editing a state file is the wrong default — the tray's LLM
+  submenu toggles `enabled` and selects `profile` for you, writing to
+  `state.toml` correctly. The hint now lists the available profile
+  names and tells users to pick one from the tray menu.
+
 ## [0.8.12] - 2026-04-17
 
 ### Fixed

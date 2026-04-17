@@ -1269,16 +1269,15 @@ def _run_setup_llm(model_key: str | None = None, cpu: bool = False) -> int:
 
     print(f"\n{'─' * 54}")
     if len(downloaded_models) == 1:
-        print("\nTo activate, set in config.toml:")
+        print("\n1 model ready. Available profile(s):")
     else:
-        print(
-            f"\n{len(downloaded_models)} model(s) ready."
-            " To activate one, set in config.toml:"
-        )
-    print("  [postprocess]")
-    print("  enabled = true")
+        print(f"\n{len(downloaded_models)} model(s) ready. Available profile(s):")
     for name in activate_options:
-        print(f'  profile = "{name}"')
+        print(f"  - {name}")
+    print(
+        "\nPick one from the tray menu (LLM submenu) — that's a runtime"
+        " toggle and writes to ~/.config/justsayit/state.toml for you."
+    )
     return 0
 
 
