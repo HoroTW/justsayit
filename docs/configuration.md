@@ -180,6 +180,9 @@ plus full customisation for your own style profiles (translate,
 summarise, format-as-Markdown, you name it). Doubles as an inline
 assistant when you start a dictation with
 [`Hey Computer …`](postprocessing.md#hey-computer--inline-assistant-mode).
+The default cleanup profiles also support a conservative end-of-
+dictation shortcut for rewrite/edit requests about the already-dictated
+text, documented in the same section.
 
 See [docs/postprocessing.md](postprocessing.md).
 

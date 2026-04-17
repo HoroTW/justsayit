@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.3] - 2026-04-17
+
+### Changed
+
+- The default cleanup flow now supports a conservative trailing
+  `Hey Computer` shortcut for rewrite/edit requests about the already-
+  dictated text. When justsayit sees a clear end-of-dictation form such
+  as `... Hey Computer, please clean this up` or `... Hey Computer, make
+  this sound more formal`, it rewrites the user message into an explicit
+  assistant input with separate `Dictated text:` and `Request:` blocks
+  before sending it to the LLM. Leading `Hey Computer` requests still
+  work unchanged.
+- The shipped local and OpenAI-compatible cleanup prompts now document
+  that explicit normalised assistant form, keeping the deterministic
+  code-level gate and the model-facing instructions aligned.
+
+### Documentation
+
+- README, `docs/postprocessing.md`, and `docs/configuration.md` now show
+  both rewrite-style and composition-style leading `Hey Computer` usage,
+  and explain the new trailing shortcut conservatively so the docs match
+  the real behavior.
+
+### Tests
+
+- Added postprocess tests for positive and negative trailing `Hey
+  Computer` cases, plus a regression guard that the supported trailing
+  form is normalised before the model call.
+
 ## [0.11.2] - 2026-04-17
 
 ### Documentation

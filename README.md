@@ -27,10 +27,16 @@ Local Parakeet v3 voice dictation for Wayland.
 - **"Hey Computer" inline assistant** — start any dictation with
   `Hey Computer …` (case-insensitive, mishears like `Hi Computer`
   tolerated) and the LLM treats the rest as a request and replies
-  directly into the focused window. Anything else is plain cleanup —
-  even when it's phrased as a question — so the trigger never fires
-  by accident. Ask for a translation, a quick rewrite, a calculation,
-  a snippet of code, … without leaving the keyboard. See
+  directly into the focused window. Use it for rewrite-style requests
+  like `Hey Computer, make this sound more formal` or composition/help
+  requests like `Hey Computer, there is an offering, please write a
+  humble decline with the wording 'deeply sorry ...'`. There is also a
+  conservative trailing shortcut for already-dictated text:
+  `... Hey Computer, please clean this up` / `... Hey Computer, make
+  this sound more formal`. Anything else is plain cleanup — even when
+  it's phrased as a question — so the trigger never fires by accident.
+  Ask for a translation, a quick rewrite, a calculation, a snippet of
+  code, … without leaving the keyboard. See
   [docs/postprocessing.md#hey-computer--inline-assistant-mode](docs/postprocessing.md#hey-computer--inline-assistant-mode).
 - **Optional LLM cleanup pass** with shipped profiles (cleanup, emoji,
   OpenAI-compatible endpoint) and **fully customisable system prompts**

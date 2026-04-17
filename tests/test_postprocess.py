@@ -19,6 +19,7 @@ from justsayit.postprocess import (
     PostprocessProfile,
     _CLEANUP_PROFILE_TOML,
     _FUN_PROFILE_TOML,
+    _normalise_assistant_input,
     context_file_path,
     ensure_context_file,
     ensure_default_profile,
@@ -124,7 +125,9 @@ def test_ensure_default_profiles_writes_all_three(tmp_path, monkeypatch):
     assert 'paste_strip_regex = ""' in fun_text
 
 
-def test_openai_profile_template_has_endpoint_and_model_uncommented(tmp_path, monkeypatch):
+def test_openai_profile_template_has_endpoint_and_model_uncommented(
+    tmp_path, monkeypatch
+):
     """The openai-cleanup.toml ships with `endpoint` + `model` already
     uncommented (they're what makes this the openai variant); everything
     else stays commented so users only override what they need.  The
@@ -148,6 +151,7 @@ def test_openai_profile_template_has_endpoint_and_model_uncommented(tmp_path, mo
     assert profile.api_key == ""  # falls through to env / .env
     # System prompt = dataclass default → triggers the remote auto-swap.
     from justsayit.postprocess import _DEFAULT_SYSTEM_PROMPT
+
     assert profile.system_prompt == _DEFAULT_SYSTEM_PROMPT
 
 
@@ -229,6 +233,62 @@ def test_process_substitutes_text_in_user_template():
     messages = pp._llm.create_chat_completion.call_args[1]["messages"]
     user_msg = next(m for m in messages if m["role"] == "user")
     assert user_msg["content"] == "Bitte korrigiere: roher text"
+
+
+def test_build_messages_keeps_leading_hey_computer_request_as_is():
+    profile = PostprocessProfile(model_path="/fake/model.gguf")
+    pp = LLMPostprocessor(profile)
+
+    messages = pp._build_messages("Hey Computer, make this sound more formal")
+
+    user_msg = next(m for m in messages if m["role"] == "user")
+    assert user_msg["content"] == "Hey Computer, make this sound more formal"
+
+
+def test_normalise_assistant_input_rewrites_supported_trailing_request():
+    text = "this is my rough note for the client hey computer please clean this up and make this sound more formal"
+
+    result = _normalise_assistant_input(text)
+
+    assert result.startswith(
+        "Hey Computer, apply the request to the dictated text below."
+    )
+    assert "Dictated text:\nthis is my rough note for the client" in result
+    assert "Request:\nplease clean this up and make this sound more formal" in result
+
+
+def test_build_messages_normalises_supported_trailing_request():
+    profile = PostprocessProfile(model_path="/fake/model.gguf")
+    pp = LLMPostprocessor(profile)
+
+    messages = pp._build_messages(
+        "Please review the attached proposal draft. Hey Computer, make this sound more formal"
+    )
+
+    user_msg = next(m for m in messages if m["role"] == "user")
+    assert user_msg["content"].startswith(
+        "Hey Computer, apply the request to the dictated text below."
+    )
+    assert (
+        "Dictated text:\nPlease review the attached proposal draft."
+        in user_msg["content"]
+    )
+    assert "Request:\nmake this sound more formal" in user_msg["content"]
+
+
+def test_normalise_assistant_input_ignores_trailing_non_meta_request():
+    text = "and then I told him hey computer remind me tomorrow"
+    assert _normalise_assistant_input(text) == text
+
+
+def test_normalise_assistant_input_ignores_bare_computer_request():
+    text = "this is my rough note computer please clean this up"
+    assert _normalise_assistant_input(text) == text
+
+
+def test_normalise_assistant_input_ignores_trailing_request_without_text_reference():
+    text = "this is my rough note hey computer translate to German"
+    assert _normalise_assistant_input(text) == text
 
 
 def test_warmup_loads_model(tmp_path):
@@ -373,6 +433,7 @@ def test_postprocess_config_defaults():
 
 def test_render_includes_postprocess_section():
     import tomllib
+
     raw = tomllib.loads(render_config_toml())
     assert "postprocess" in raw
     assert raw["postprocess"]["enabled"] is False
@@ -382,7 +443,7 @@ def test_render_includes_postprocess_section():
 def test_load_config_postprocess_settings(tmp_path):
     p = tmp_path / "config.toml"
     p.write_text(
-        "[postprocess]\nenabled = true\nprofile = \"my-model\"\n",
+        '[postprocess]\nenabled = true\nprofile = "my-model"\n',
         encoding="utf-8",
     )
     cfg = load_config(p)
@@ -401,7 +462,9 @@ def test_ensure_context_file_writes_template(tmp_path, monkeypatch):
     assert p.exists()
     body = p.read_text(encoding="utf-8")
     assert 'context = ""' in body, "template must define an empty context value"
-    assert "User context" not in body or "appended" in body, "template should explain the field"
+    assert "User context" not in body or "appended" in body, (
+        "template should explain the field"
+    )
 
 
 def test_ensure_context_file_does_not_overwrite(tmp_path, monkeypatch):
@@ -472,7 +535,9 @@ def test_load_profile_context_field_overrides_sidecar(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_ensure_default_profile_writes_commented_template_on_fresh_install(tmp_path: Path):
+def test_ensure_default_profile_writes_commented_template_on_fresh_install(
+    tmp_path: Path,
+):
     p = tmp_path / "gemma4-cleanup.toml"
     ensure_default_profile(p)
     assert p.read_text(encoding="utf-8") == _CLEANUP_PROFILE_TOML
@@ -505,8 +570,7 @@ def test_ensure_default_profile_preserves_user_overrides_post_migration(tmp_path
     marker tells us we're already in the new form."""
     p = tmp_path / "gemma4-cleanup.toml"
     user_edited = (
-        _CLEANUP_PROFILE_TOML.rstrip()
-        + "\n\n# user override\ntemperature = 0.42\n"
+        _CLEANUP_PROFILE_TOML.rstrip() + "\n\n# user override\ntemperature = 0.42\n"
     )
     p.write_text(user_edited, encoding="utf-8")
     ensure_default_profile(p)
@@ -521,11 +585,14 @@ def test_shipped_profile_templates_parse_as_valid_toml():
     lines into the file at column 1, breaking TOML parsing and making
     the profile silently disappear from the tray menu."""
     import tomllib
+
     tomllib.loads(_CLEANUP_PROFILE_TOML)
     tomllib.loads(_FUN_PROFILE_TOML)
 
 
-def test_ensure_default_profile_re_migrates_marker_carrying_corrupt_file(tmp_path: Path):
+def test_ensure_default_profile_re_migrates_marker_carrying_corrupt_file(
+    tmp_path: Path,
+):
     """A file that bears the commented-form marker but fails TOML parse
     (i.e. was written by an earlier buggy template) must be backed up
     and rewritten — otherwise the user is stuck with a broken file that
@@ -666,6 +733,7 @@ def test_remote_process_raises_when_no_key(monkeypatch, tmp_path):
     """Endpoint set but no key anywhere → clear error message that names
     the env var the user should set."""
     import justsayit.config as cfg_mod
+
     monkeypatch.setattr(cfg_mod, "config_dir", lambda: tmp_path)
     cfg_mod._DOTENV_LOADED = False
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
