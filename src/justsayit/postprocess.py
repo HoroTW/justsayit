@@ -100,6 +100,16 @@ system_prompt = "{_DEFAULT_SYSTEM_PROMPT}"
 
 # User message template.  {{text}} is replaced with the raw transcription.
 user_template = "{{text}}"
+
+# Optional regex (re.DOTALL) applied to the LLM output before it is pasted
+# but NOT before it is shown in the overlay. Useful for "thinking" models
+# whose output contains a reasoning preamble that should not land in the
+# focused window. Empty = no stripping.
+#
+# Examples:
+#   paste_strip_regex = '<\\|channel\\|>.*?<\\|message\\|>'   # one channel block
+#   paste_strip_regex = '(?s).*<\\|message\\|>'              # everything up to last <|message|>
+paste_strip_regex = ""
 """
 
 
@@ -114,6 +124,17 @@ class PostprocessProfile:
     max_tokens: int = 4096
     system_prompt: str = _DEFAULT_SYSTEM_PROMPT
     user_template: str = "{text}"
+    # Regex applied (re.DOTALL) to the LLM output before it is pasted
+    # but NOT before it is shown in the overlay. Useful to strip
+    # reasoning/channel tags from "thinking" models (e.g. Gemma harmony
+    # format) so the user sees the full reply but only the final
+    # message lands in the focused window.
+    #
+    # Example patterns:
+    #   r"<\|channel\|>.*?<\|message\|>"  – strip a single channel block
+    #   r"(?s).*<\|message\|>"             – strip everything up to and
+    #                                        including the last <|message|>
+    paste_strip_regex: str = ""
 
 
 def profiles_dir() -> Path:
@@ -171,6 +192,24 @@ class LLMPostprocessor:
         self.profile = profile
         self._llm = None
         self._lock = threading.Lock()
+        self._paste_strip = self._compile_paste_strip(profile.paste_strip_regex)
+
+    @staticmethod
+    def _compile_paste_strip(pattern: str) -> re.Pattern[str] | None:
+        if not pattern.strip():
+            return None
+        try:
+            return re.compile(pattern, re.DOTALL)
+        except re.error as exc:
+            log.error("invalid paste_strip_regex %r: %s — disabled", pattern, exc)
+            return None
+
+    def strip_for_paste(self, text: str) -> str:
+        """Apply ``paste_strip_regex`` to *text*. Returns *text* unchanged
+        if the profile has no strip regex (or it was invalid)."""
+        if self._paste_strip is None:
+            return text
+        return self._paste_strip.sub("", text)
 
     def _resolved_model_path(self) -> Path:
         p = Path(self.profile.model_path).expanduser()

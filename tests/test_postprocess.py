@@ -181,6 +181,41 @@ def test_warmup_loads_model(tmp_path):
     assert pp._llm is mock_llm
 
 
+def test_strip_for_paste_noop_when_unset():
+    profile = PostprocessProfile(model_path="/fake/model.gguf")
+    pp = LLMPostprocessor(profile)
+    assert pp.strip_for_paste("hello world") == "hello world"
+
+
+def test_strip_for_paste_removes_match_dotall():
+    profile = PostprocessProfile(
+        model_path="/fake/model.gguf",
+        paste_strip_regex=r"<\|channel\|>.*?<\|message\|>",
+    )
+    pp = LLMPostprocessor(profile)
+    raw = "<|channel|>analysis\nthinking lines\nmore lines<|message|>real reply"
+    assert pp.strip_for_paste(raw) == "real reply"
+
+
+def test_strip_for_paste_strip_before_token():
+    profile = PostprocessProfile(
+        model_path="/fake/model.gguf",
+        paste_strip_regex=r"(?s).*<\|message\|>",
+    )
+    pp = LLMPostprocessor(profile)
+    raw = "preamble\n<|channel|>x<|message|>middle<|message|>final"
+    assert pp.strip_for_paste(raw) == "final"
+
+
+def test_strip_for_paste_invalid_regex_disabled(caplog):
+    profile = PostprocessProfile(
+        model_path="/fake/model.gguf",
+        paste_strip_regex="[unterminated",
+    )
+    pp = LLMPostprocessor(profile)
+    assert pp.strip_for_paste("anything") == "anything"
+
+
 def test_build_raises_without_llama_cpp():
     profile = PostprocessProfile(model_path="/nonexistent/model.gguf")
     pp = LLMPostprocessor(profile)

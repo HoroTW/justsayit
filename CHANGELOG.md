@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-04-17
+
+### Added
+
+- **`paste_strip_regex`** field on the postprocess profile. A regex
+  (compiled with `re.DOTALL`) applied to the LLM output before pasting
+  but **not** before the overlay shows it — so you can see the model's
+  full reasoning while only the final message lands in the focused
+  window. Designed for "thinking" models like Gemma's harmony format
+  (`<|channel|>analysis…<|message|>final`). Default is empty (no
+  stripping) for backwards compatibility.
+
+  Examples:
+  ```toml
+  paste_strip_regex = '<\|channel\|>.*?<\|message\|>'  # one channel block
+  paste_strip_regex = '(?s).*<\|message\|>'            # everything before last <|message|>
+  ```
+
 ## [0.6.4] - 2026-04-17
 
 ### Changed
