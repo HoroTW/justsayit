@@ -215,7 +215,7 @@ class PostprocessConfig:
     enabled: bool = False
     # Profile name (resolved to config_dir()/postprocess/<profile>.toml)
     # or a direct path to a .toml file.
-    profile: str = "gemma-cleanup"
+    profile: str = "gemma4-cleanup"
 
 
 @dataclass

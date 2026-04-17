@@ -168,6 +168,7 @@ from justsayit.postprocess import (
     LLMPostprocessor,
     download_llm_model,
     ensure_default_profile,
+    ensure_default_profiles,
     find_hf_q4_filename,
     load_profile,
     profiles_dir,
@@ -906,8 +907,9 @@ def _write_default_config(force: bool = False, backend: str | None = None) -> No
         cfg_path.write_text(render_config_toml(cfg), encoding="utf-8")
         print(f"wrote {cfg_path}")
 
-    profile_path = ensure_default_profile()
-    print(f"postprocess profile: {profile_path}")
+    cleanup_path, fun_path = ensure_default_profiles()
+    print(f"postprocess profile: {cleanup_path}  (recommended)")
+    print(f"postprocess profile: {fun_path}      (emoji-heavy variant)")
 
     if filters_path.exists() and not force:
         print(f"filters already exist: {filters_path}", file=sys.stderr)

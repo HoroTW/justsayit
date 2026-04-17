@@ -35,23 +35,66 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _DEFAULT_SYSTEM_PROMPT = """\
-You are `Computer`, a helpful voice transcript (STT) cleaner and assistant.
-<|think|> You are a helpful assistant. Keep your internal reasoning very brief (under 3 sentences).
-Clean up the following transcript: remove filler words (ähm, öhm, halt, also, um, uh, like, so), correct grammar and misunderstood words, while preserving the meaning and writing style. You might get German mixed with English, that is expected, keep it that way. It could also be just English or just German, ONLY translate IF there is a EXPLICIT request to do so.
+You are `Computer`, a voice-transcript (STT) cleaner and assistant.
+<|think|> Keep your internal reasoning very brief (under 3 sentences).
 
-If the transcript has things that should be clearly replaced like emojis / smileys / special chars, do that!
+# Default mode — CONSERVATIVE CLEANUP
+You are NOT a copy editor. Output the transcript verbatim except for these specific edits:
+- remove obvious filler words: `ähm`, `öhm`, `halt`, `also`, `um`, `uh`, `like`, `so`
+- fix words the STT clearly misheard
+- replace spoken descriptions of characters / formatting (see below)
+- apply formatting only when explicitly dictated
+
+DO NOT:
+- rephrase, restructure, or reorder words
+- "improve" valid colloquial grammar (especially German modal particles like `denn`, `doch`, `mal`, `ja`, `eben`, `schon` — keep them as-is, they carry meaning)
+- change `?` ↔ `.` or drop punctuation
+- normalise mixed German + English — keep the mix
+- translate (unless `Computer` mode, see below)
+
+When in doubt: leave it exactly as the user said it.
+
+Examples of what NOT to change:
+- `Ich weiß nicht, was denkst du denn?` -> `Ich weiß nicht, was denkst du denn?`  (valid German, the `denn` is a modal particle, keep it; do not restructure to "was du denkst")
+- `I don't know, what do you think?` -> `I don't know, what do you think?`  (already clean)
+- `Das war halt so` — `halt` is a filler here, drop it -> `Das war so`
+
+Spoken-character / formatting replacements:
+- `laughing emoji` -> `🤣`
+- `Hello comma new line greetings` -> `Hello,
+greetings`
+- `... new line dash some point new line dash another point` -> `...
+ - some point
+ - another point`
+- code-y words in backticks: 'The cat command is helpful.' -> 'The `cat` command is helpful.'
+
+# Assistant mode — ONLY when explicitly addressed
+Switch to assistant mode ONLY IF the literal word `Computer` appears in the transcript (anywhere — start, middle, end). Without `Computer`, the transcript is dictated content for some other app (chat, editor, email, …), NEVER for you. This holds EVEN IF the text is phrased as a question, a request, or an instruction. No exceptions, no "but it sounded like a request".
+
 Examples:
-- `laughing emoji`->`🤣`
-- `Hello comma new line greetings`->`Hello,
-greetings`,
-- `This allows us to do stuff like new line dash some point new line dash another point`->`This allows us to do stuff like
- - Some point
- - Another point`,
-(IF there should be formatting you should apply it, like special words in backticks: 'The `cat` command is helpful.')
+- `Can you tell me how many things you can see?`               -> CLEANUP only (no `Computer`)
+- `Ich weiß nicht, was denkst du denn?`                        -> CLEANUP only (no `Computer`)
+- `Translate this to German: hello world`                       -> CLEANUP only (no `Computer`)
+- `Hey Computer, can you tell me how many things you can see?` -> ANSWER (explicit `Computer`)
+- `Computer, translate this to German: hello world`             -> ACT on the request
+- `… and then I told him, hey computer remind me tomorrow.`     -> ACT (anywhere counts, lowercase counts)
 
-Return ONLY the cleaned-up text; do not include any explanations. If there is a meta request e.g. `Hey Computer` or something that CLEARLY is meant as instructions for you, then you should follow them, or respond to it, (possible examples: Adjust the writing style, provide translations, answer a question, compose a message/email, normal chat with you (User asks you something - or tells you something), etc.).
+When addressed:
+- follow the request directly; do NOT echo the source first
+- if asked to translate, output ONLY the translation
+- short, on-point reply — no preamble like "Sure, here you go:"
 
-If there is no `Hey Computer` in the transcript than it is most likely NOT a request and just normal cleanup should happen! IF there is the `Hey Computer` somewhere in it, in the middle, at the end, somewhere, then it is for you!, you then have to act on it! Don't just clean up the text if there is a Request to `hey computer`, but do what the user asked for, or chat with the user! You don't have to parrot the cleaned up text back to the user if he asks you to do something, so if he asks for an translation don't give the cleaned orignal language and then the translation, but just give him directly the translated text!
+# Output
+Return ONLY the cleaned text (default) OR the assistant reply (assistant mode). No meta explanations.
+"""
+
+
+# Minimal "fun" profile prompt — written to disk as gemma4-fun.toml so users
+# can flip to a playful, emoji-heavy variant without having to compose a
+# prompt themselves.  Intentionally tiny: the recommended everyday default
+# is gemma4-cleanup, this one is the silly sibling.
+_FUN_SYSTEM_PROMPT = """\
+Emojify the transcript as much as possible. Keep the original wording and order, just sprinkle in plenty of fitting emojis (between words, at the end of sentences, wherever they fit). Reply with the emojified text only — no explanations, no preamble.
 """
 
 
@@ -61,13 +104,13 @@ If there is no `Hey Computer` in the transcript than it is most likely NOT a req
 # real and the file is readable; this requires the Python literal itself
 # to use single-quoted '''…''' delimiters so the embedded """ aren't
 # parsed as the closing delimiter.
-_DEFAULT_PROFILE_TOML = f'''\
-# justsayit postprocessing profile — gemma-cleanup
+_CLEANUP_PROFILE_TOML = f'''\
+# justsayit postprocessing profile — gemma4-cleanup (recommended default)
 #
 # Enable this profile in config.toml:
 #   [postprocess]
 #   enabled = true
-#   profile = "gemma-cleanup"
+#   profile = "gemma4-cleanup"
 #
 # Then install the inference backend (with Vulkan GPU support):
 #   CMAKE_ARGS="-DGGML_VULKAN=1" uv pip install llama-cpp-python
@@ -154,6 +197,51 @@ context = ""
 '''
 
 
+# Companion "fun" profile — a tiny stub that emojifies the transcript.
+# Written alongside gemma4-cleanup so users can flip via the `profile`
+# config field without composing a prompt themselves. The header
+# explicitly points back at the recommended cleanup profile so anyone
+# who lands here by accident knows where to go for serious dictation.
+_FUN_PROFILE_TOML = f'''\
+# justsayit postprocessing profile — gemma4-fun
+#
+# Playful sibling of `gemma4-cleanup`: keeps the wording but sprinkles
+# in plenty of emojis. Use it when you want a chatty, expressive tone
+# in messages or social posts.
+#
+# For everyday cleanup, switch back to the recommended default:
+#   profile = "gemma4-cleanup"
+#
+# Activate this one in config.toml:
+#   [postprocess]
+#   enabled = true
+#   profile = "gemma4-fun"
+
+# Same model file as gemma4-cleanup — if you ran `setup-llm` once you
+# already have it on disk and no extra download happens.
+model_path = "~/.cache/justsayit/models/llm/gemma-4-E4B-it-Q4_K_M.gguf"
+hf_repo = "unsloth/gemma-4-E4B-it-GGUF"
+hf_filename = "gemma-4-E4B-it-Q4_K_M.gguf"
+
+n_gpu_layers = -1
+n_ctx = 4096
+
+# Slightly higher temperature so emoji choice has some variety.
+temperature = 0.4
+max_tokens = 4096
+
+system_prompt = """
+{_FUN_SYSTEM_PROMPT}"""
+
+user_template = "{{text}}"
+
+# No `<|think|>` in the prompt → no channel block to strip.
+paste_strip_regex = ""
+
+context = ""
+'''
+
+
 @dataclass
 class PostprocessProfile:
     model_path: str = "~/.cache/justsayit/models/llm/gemma-4-E4B-it-Q4_K_M.gguf"
@@ -193,13 +281,38 @@ def profiles_dir() -> Path:
 
 
 def ensure_default_profile(path: Path | None = None) -> Path:
-    """Write the default ``gemma-cleanup.toml`` profile if it doesn't exist yet."""
+    """Write the recommended ``gemma4-cleanup.toml`` profile if it's missing.
+
+    Writes the cleanup-style template (the conservative everyday default).
+    Used both by ``justsayit init`` and by ``setup-llm`` when seeding a
+    per-model profile.
+    """
     if path is None:
-        path = profiles_dir() / "gemma-cleanup.toml"
+        path = profiles_dir() / "gemma4-cleanup.toml"
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(_DEFAULT_PROFILE_TOML, encoding="utf-8")
+        path.write_text(_CLEANUP_PROFILE_TOML, encoding="utf-8")
     return path
+
+
+def ensure_fun_profile(path: Path | None = None) -> Path:
+    """Write the ``gemma4-fun.toml`` companion profile if it's missing.
+
+    A tiny emoji-heavy variant of the cleanup profile, written alongside
+    it on first ``init`` so users discover the schema and have an obvious
+    second profile to switch to via the ``profile`` config field.
+    """
+    if path is None:
+        path = profiles_dir() / "gemma4-fun.toml"
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_FUN_PROFILE_TOML, encoding="utf-8")
+    return path
+
+
+def ensure_default_profiles() -> tuple[Path, Path]:
+    """Write both the cleanup and fun default profiles. Returns (cleanup, fun)."""
+    return ensure_default_profile(), ensure_fun_profile()
 
 
 def load_profile(name_or_path: str) -> PostprocessProfile:
@@ -374,7 +487,7 @@ class LLMPostprocessor:
 #: Each entry maps a short key → display label + HuggingFace repo.
 KNOWN_LLM_MODELS: dict[str, dict[str, str]] = {
     "gemma4": {
-        "display": "gemma-4-E4B-it      (4B, ~3 GB)   — Google Gemma 4, highest quality",
+        "display": "gemma-4-E4B-it      (4B, ~3 GB)   — Google Gemma 4, highest quality  (recommended — tuned for best results)",
         "hf_repo": "unsloth/gemma-4-E4B-it-GGUF",
     },
     "qwen3-4b": {

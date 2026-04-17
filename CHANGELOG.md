@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.14] - 2026-04-17
+
+### Changed
+
+- **Default profile renamed `gemma-cleanup` → `gemma4-cleanup`** and its
+  system prompt promoted to the conservative tuned version that has been
+  giving the best results in the wild. The new prompt is explicit about
+  cleanup being non-destructive: no rephrasing, no restructuring, no
+  punctuation flips, German modal particles preserved (`denn`, `doch`,
+  `mal`, `ja`, `eben`, `schon`). Assistant mode only fires on the literal
+  trigger word `Computer` — questions and instructions without it stay
+  pure dictation. The exact failure cases that motivated the rewrite
+  (over-correction of `was denkst du denn?`, treating "Can you tell me
+  …?" as a request) are baked into the prompt as counter-examples.
+- **Default `[postprocess].profile` in fresh configs now reads
+  `gemma4-cleanup`** (was `gemma-cleanup`). Existing installs continue
+  working with whatever filename their config already references.
+
+### Added
+
+- **`gemma4-fun` companion profile** written alongside cleanup on first
+  `init`. A tiny stub with system prompt "emojify the transcript as much
+  as possible" and a header that points users back at the recommended
+  `gemma4-cleanup` profile. Useful for chat / social messages where you
+  want a playful tone without composing a custom prompt.
+- **`(recommended — tuned for best results)`** tag on the `gemma4` entry
+  in the `setup-llm` model picker so the qwen alternatives don't look
+  like equally-supported options.
+- New helpers `ensure_fun_profile()` and `ensure_default_profiles()`
+  (returns both paths). `init` now writes both profile files.
+
 ## [0.6.13] - 2026-04-17
 
 ### Changed

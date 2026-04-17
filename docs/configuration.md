@@ -65,10 +65,15 @@ Filters run top-to-bottom, so later rules can operate on earlier results.
 An optional LLM cleanup pass runs after transcription to fix grammar, remove
 filler words, apply formatting, and handle MetaRequests spoken into the mic.
 
-Driven by a profile TOML under `~/.config/justsayit/postprocess/`. The default
-profile (`gemma-cleanup`) targets Gemma 4 E4B with a multilingual DE/EN system
-prompt that also understands inline formatting requests and `LLM MetaRequest`
-instructions.
+Driven by a profile TOML under `~/.config/justsayit/postprocess/`. `init`
+writes two profiles:
+
+- **`gemma4-cleanup`** (recommended) — conservative DE/EN cleanup tuned for
+  Gemma 4 E4B. Removes filler words, fixes obvious mishears, applies dictated
+  formatting, and switches into assistant mode only when the literal trigger
+  word `Computer` appears in the transcript.
+- **`gemma4-fun`** — a tiny emoji-heavy variant of cleanup. Keeps the original
+  wording but sprinkles emojis throughout. Useful for chat / social messages.
 
 To set up a profile interactively:
 
@@ -81,5 +86,5 @@ Enable in `config.toml`:
 ```toml
 [postprocess]
 enabled = true
-profile = "gemma-cleanup"   # filename stem under postprocess/
+profile = "gemma4-cleanup"   # filename stem under postprocess/
 ```

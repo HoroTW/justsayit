@@ -84,10 +84,29 @@ def test_ensure_default_profile_creates_file(tmp_path, monkeypatch):
     monkeypatch.setattr("justsayit.postprocess.config_dir", lambda: tmp_path)
     path = ensure_default_profile()
     assert path.exists()
-    assert path.name == "gemma-cleanup.toml"
+    assert path.name == "gemma4-cleanup.toml"
     content = path.read_text(encoding="utf-8")
     assert "system_prompt" in content
     assert "temperature" in content
+    # The recommended cleanup prompt has the conservative guardrails baked in
+    assert "CONSERVATIVE CLEANUP" in content
+    assert "modal particles" in content
+
+
+def test_ensure_default_profiles_writes_both(tmp_path, monkeypatch):
+    monkeypatch.setattr("justsayit.postprocess.config_dir", lambda: tmp_path)
+    from justsayit.postprocess import ensure_default_profiles
+
+    cleanup, fun = ensure_default_profiles()
+    assert cleanup.name == "gemma4-cleanup.toml"
+    assert fun.name == "gemma4-fun.toml"
+    assert cleanup.exists() and fun.exists()
+    fun_text = fun.read_text(encoding="utf-8")
+    # Fun profile is the emojify stub and points users back at cleanup.
+    assert "Emojify" in fun_text
+    assert "gemma4-cleanup" in fun_text
+    # No <|think|> in fun → no strip regex needed.
+    assert 'paste_strip_regex = ""' in fun_text
 
 
 def test_ensure_default_profile_idempotent(tmp_path, monkeypatch):
@@ -307,7 +326,7 @@ def test_build_raises_without_llama_cpp():
 def test_postprocess_config_defaults():
     cfg = Config()
     assert cfg.postprocess.enabled is False
-    assert cfg.postprocess.profile == "gemma-cleanup"
+    assert cfg.postprocess.profile == "gemma4-cleanup"
 
 
 def test_render_includes_postprocess_section():
@@ -315,7 +334,7 @@ def test_render_includes_postprocess_section():
     raw = tomllib.loads(render_config_toml())
     assert "postprocess" in raw
     assert raw["postprocess"]["enabled"] is False
-    assert raw["postprocess"]["profile"] == "gemma-cleanup"
+    assert raw["postprocess"]["profile"] == "gemma4-cleanup"
 
 
 def test_load_config_postprocess_settings(tmp_path):
