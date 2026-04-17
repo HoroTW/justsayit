@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-04-17
+
+### Changed
+
+- **Tightened the assistant-mode trigger** in the default
+  `gemma4-cleanup` system prompt. Assistant mode now only activates when
+  the transcript STARTS with `Hey Computer` (case-insensitive, with
+  tolerance for obvious STT mishears like `Hi Computer` /
+  `Hey Computa`). A bare leading `Computer`, mid-sentence `hey
+  computer`, or quoted/reported uses no longer trigger a reply — they
+  are passed through as ordinary cleanup. This stops the assistant from
+  jumping in on dictated text that merely contains the word "Computer".
+  Existing user-customised profile TOMLs are not modified;
+  `install.sh --update` will offer the new prompt as a diff over the
+  previous shipped default.
+
 ## [0.8.2] - 2026-04-17
 
 ### Added

@@ -70,8 +70,8 @@ writes two profiles:
 
 - **`gemma4-cleanup`** (recommended) — conservative DE/EN cleanup tuned for
   Gemma 4 E4B. Removes filler words, fixes obvious mishears, applies dictated
-  formatting, and switches into assistant mode only when the literal trigger
-  word `Computer` appears in the transcript.
+  formatting, and switches into assistant mode only when the transcript starts
+  with `Hey Computer` (case-insensitive).
 - **`gemma4-fun`** — a tiny emoji-heavy variant of cleanup. Keeps the original
   wording but sprinkles emojis throughout. Useful for chat / social messages.
 
