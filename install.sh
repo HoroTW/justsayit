@@ -135,7 +135,6 @@ else
     need uv "install from https://docs.astral.sh/uv/"
     need wl-copy "install the 'wl-clipboard' package"
     need dotool "install 'dotool' (AUR: dotool, yay -S dotool)"
-    need wtype "install 'wtype' (optional fallback; Arch: pacman -S wtype)"
 
     if ! pkg-config --exists gtk4 2>/dev/null; then
         echo "warning: gtk4 pkg-config not found. PyGObject may still work via system gi," >&2

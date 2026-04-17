@@ -1,12 +1,8 @@
 """Clipboard + auto-paste helpers for Wayland.
 
-Supports two keystroke-injection backends, selectable via config:
-
-* ``dotool`` — uinput-based, works on KDE Plasma / sway / Hyprland / niri.
-  Requires the user to be in the ``input`` group (or the ``dotoold``
-  user service running).
-* ``wtype`` — virtual-keyboard protocol. Fine on sway/Hyprland; broken
-  on Plasma 6 at time of writing.
+Uses ``dotool`` (uinput-based) for keystroke injection — works on KDE
+Plasma / sway / Hyprland / niri. Requires the user to be in the
+``input`` group.
 
 ``wl-copy`` is always used for the clipboard itself unless
 ``skip_clipboard_history`` is True, in which case :class:`Paster` uses
@@ -115,42 +111,20 @@ def _dotool_input(combo: str) -> bytes:
     return f"key {combo}\n".encode("utf-8")
 
 
-def _wtype_argv(combo: str) -> list[str]:
-    parts = [p for p in combo.split("+") if p]
-    if not parts:
-        raise PasteError(f"empty paste combo: {combo!r}")
-    *modifiers, key = parts
-    argv = ["wtype"]
-    for m in modifiers:
-        argv += ["-M", m]
-    argv += ["-k", key]
-    for m in reversed(modifiers):
-        argv += ["-m", m]
-    return argv
-
-
 def send_paste_shortcut(
     combo: str = "ctrl+shift+v",
     *,
     backend: str = "dotool",
     timeout: float = 5.0,
 ) -> None:
-    """Synthesise ``combo`` as a keystroke via the chosen backend."""
-    if backend == "dotool":
-        dotool = _require("dotool")
-        argv = [dotool]
-        stdin = _dotool_input(combo)
-    elif backend == "wtype":
-        _require("wtype")
-        argv = _wtype_argv(combo)
-        stdin = None
-    else:
+    """Synthesise ``combo`` as a keystroke via dotool."""
+    if backend != "dotool":
         raise PasteError(f"unknown paste backend: {backend!r}")
-
+    dotool = _require("dotool")
     try:
         proc = subprocess.run(
-            argv,
-            input=stdin,
+            [dotool],
+            input=_dotool_input(combo),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             timeout=timeout,
@@ -158,10 +132,10 @@ def send_paste_shortcut(
         )
     except subprocess.TimeoutExpired as e:
         raise PasteError(
-            f"{backend} timed out after {timeout}s — is the service running?"
+            f"dotool timed out after {timeout}s — is the service running?"
         ) from e
     if proc.returncode != 0:
-        raise PasteError(f"{backend} exited {proc.returncode}")
+        raise PasteError(f"dotool exited {proc.returncode}")
 
 
 def paste_text(
@@ -307,13 +281,9 @@ class Paster:
     # --- internals --------------------------------------------------------
 
     def _send_key(self, combo: str) -> None:
-        if self.backend == "dotool":
-            self._send_dotool(combo)
-        elif self.backend == "wtype":
-            # wtype is short-lived; no daemon to reuse.
-            send_paste_shortcut(combo, backend="wtype", timeout=self.timeout)
-        else:
+        if self.backend != "dotool":
             raise PasteError(f"unknown paste backend: {self.backend!r}")
+        self._send_dotool(combo)
 
     def _spawn_dotool_locked(self) -> None:
         path = _require("dotool")

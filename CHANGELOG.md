@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-04-17
+
+### Removed
+
+- **`wtype` paste backend.** Was an alternative to `dotool` (virtual-keyboard
+  protocol) but unused — `dotool` covers KDE Plasma / sway / Hyprland / niri
+  uniformly and the wtype path was never selected in practice. `paste.backend`
+  in `config.toml` now only accepts `"dotool"`. Drop `wtype` from your install
+  command (`pacman -S … wtype` no longer needed); already-installed `wtype`
+  packages can be uninstalled.
+
 ## [0.6.1] - 2026-04-17
 
 ### Fixed

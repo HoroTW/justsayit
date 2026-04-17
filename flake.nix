@@ -9,7 +9,7 @@
       pkgs = nixpkgs.legacyPackages.${system};
 
       # Runtime CLI tools justsayit shells out to.
-      runtimeTools = with pkgs; [ wl-clipboard dotool wtype ];
+      runtimeTools = with pkgs; [ wl-clipboard dotool ];
 
       # nixpkgs ships llama-cpp-python 0.3.16, which predates the qwen35 / gemma4
       # architectures.  Override the source to 0.3.20 (latest on PyPI) so all
@@ -54,7 +54,7 @@
 
       mkJustsayit = { withLlm ? false, withVulkan ? false, llamaCppPython ? llama-cpp-python-new }: pkgs.python3Packages.buildPythonApplication {
         pname = "justsayit";
-        version = "0.6.1";
+        version = "0.6.2";
         pyproject = true;
 
         src = pkgs.lib.cleanSource ./.;
@@ -160,7 +160,6 @@
           glib
           wl-clipboard
           dotool
-          wtype
         ];
 
         # Expose the typelibs so a bare `python` / `uv run` inside the shell

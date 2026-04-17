@@ -5,7 +5,7 @@
 ### Dependencies
 
 ```sh
-sudo pacman -S uv gtk4 gtk4-layer-shell python-gobject portaudio wl-clipboard dotool wtype
+sudo pacman -S uv gtk4 gtk4-layer-shell python-gobject portaudio wl-clipboard dotool
 ```
 
 ### Input group (required for paste)

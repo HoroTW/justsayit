@@ -26,7 +26,7 @@ Local Parakeet v3 voice dictation for Wayland.
 
 ```sh
 # 1. Dependencies + input group
-sudo pacman -S uv gtk4 gtk4-layer-shell python-gobject portaudio wl-clipboard dotool wtype
+sudo pacman -S uv gtk4 gtk4-layer-shell python-gobject portaudio wl-clipboard dotool
 id -nG | grep -qw input && echo "already in input group" || sudo usermod -aG input $USER
 # if you just added yourself: log out and back in
 

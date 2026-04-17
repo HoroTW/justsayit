@@ -79,8 +79,7 @@ class ShortcutConfig:
 @dataclass
 class PasteConfig:
     enabled: bool = True
-    # Which keystroke-injection tool to use: "dotool" (recommended on KDE)
-    # or "wtype" (broken on Plasma 6 as of writing; fine on sway/Hyprland).
+    # Keystroke-injection tool. Only "dotool" is currently supported.
     backend: str = "dotool"
     # Key combination to trigger paste in the focused app.
     paste_combo: str = "shift+insert"
