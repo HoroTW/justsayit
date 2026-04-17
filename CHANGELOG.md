@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-04-17
+
+Milestone release rolling up the 0.6.8 – 0.6.15 push around LLM
+post-processing UX. The default cleanup pipeline is now usable out of
+the box: a tuned conservative prompt, a sibling fun profile, asymmetric
+Gemma channel-tag stripping done right, a separate "thought" view in
+the overlay, and quality-of-life fixes throughout.
+
+### Highlights
+
+- **Recommended `gemma4-cleanup` default profile** with a conservative
+  tuned prompt: no rephrasing, no restructuring, no `?` ↔ `.` flips,
+  German modal particles preserved (`denn`, `doch`, `mal`, `ja`,
+  `eben`, `schon`). Assistant mode triggers only on the literal word
+  `Computer` — questions and instructions without it stay pure
+  dictation. The exact failure cases that motivated the rewrite are
+  baked in as counter-examples.
+- **`gemma4-fun` companion profile** auto-written on `init` — a tiny
+  emojify-the-transcript stub that points users back at cleanup.
+- **`setup-llm` model picker** tags `gemma4` as
+  `(recommended — tuned for best results)`.
+- **Overlay "thought" rendering**: `paste_strip_regex` now supports an
+  optional capture group; matched content is shown italicised in
+  blue-green (`#5ed1c4`) with a blank line separating it from the
+  pasted body. The default regex strips Gemma's literal
+  `<|channel>thought…<channel|>` framing so only the reasoning text
+  appears in the overlay.
+- **Default `result_linger_ms` halved** from 10 s to 5 s — long enough
+  to glance at the result, short enough to clear before the next take.
+- **Abort × pinned to overlay top-right** in the expanded result view
+  via `Gtk.CenterBox`, fixing the layout collapse when the state label
+  was hidden.
+- **Default profile written as a TOML triple-quoted multi-line string**
+  so the on-disk prompt is readable and editable, plus a new
+  `context = ""` field for per-user notes.
+- **`KNOWN_LLM_MODELS` model picker** lists the qwen alternatives but
+  no longer presents them as co-equal to the tuned gemma4 path.
+
+### Notes
+
+- Existing installs whose `config.toml` still references
+  `profile = "gemma-cleanup"` keep working — only fresh configs default
+  to the renamed `gemma4-cleanup`.
+- See entries 0.6.8 – 0.6.15 below for the full chronological log.
+
 ## [0.6.15] - 2026-04-17
 
 ### Changed
