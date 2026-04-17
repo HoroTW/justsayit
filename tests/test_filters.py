@@ -7,7 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from justsayit.config import _default_filter_chain, ensure_filters_file
+from justsayit.config import (
+    _default_filter_chain,
+    defaults_baseline_path,
+    ensure_filters_file,
+)
 from justsayit.filters import (
     Filter,
     FilterError,
@@ -370,3 +374,44 @@ def test_ensure_filters_file_does_not_overwrite(tmp_path: Path):
     p.write_text("[]", encoding="utf-8")
     ensure_filters_file(p)
     assert p.read_text(encoding="utf-8") == "[]"
+
+
+def test_defaults_baseline_path_format(tmp_path: Path):
+    # Convention is "<stem>.defaults-baseline<suffix>" so install.sh's
+    # baseline_path_for() can derive the same path with shell parameter
+    # expansion.
+    assert defaults_baseline_path(tmp_path / "filters.json") == (
+        tmp_path / "filters.defaults-baseline.json"
+    )
+    assert defaults_baseline_path(tmp_path / "config.toml") == (
+        tmp_path / "config.defaults-baseline.toml"
+    )
+
+
+def test_ensure_filters_file_writes_baseline_on_fresh_install(tmp_path: Path):
+    p = tmp_path / "filters.json"
+    ensure_filters_file(p)
+    baseline = defaults_baseline_path(p)
+    assert baseline.exists(), "baseline sidecar should be written alongside filters.json"
+    assert baseline.read_text(encoding="utf-8") == p.read_text(encoding="utf-8")
+
+
+def test_ensure_filters_file_heals_baseline_when_user_in_sync(tmp_path: Path):
+    # Pre-baseline install: user has the current shipped defaults verbatim
+    # but no baseline file. Next app start should snapshot one silently.
+    p = tmp_path / "filters.json"
+    p.write_text(
+        json.dumps(_default_filter_chain(), indent=2) + "\n", encoding="utf-8"
+    )
+    ensure_filters_file(p)
+    assert defaults_baseline_path(p).exists()
+
+
+def test_ensure_filters_file_does_not_heal_when_user_customised(tmp_path: Path):
+    # Pre-baseline install with a customised file: no auto-baseline. The
+    # update path will degrade to a plain diff prompt and write the
+    # baseline only after the user accepts/rejects.
+    p = tmp_path / "filters.json"
+    p.write_text("[]", encoding="utf-8")
+    ensure_filters_file(p)
+    assert not defaults_baseline_path(p).exists()

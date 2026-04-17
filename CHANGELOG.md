@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-04-17
+
+### Changed
+
+- **`install.sh --update` now uses a defaults-baseline sidecar** to tell
+  three previously-indistinguishable cases apart on every update:
+  *stale shipped defaults the user never customised* (safe to replace
+  with `[Y/n]` default-yes), *user customisations against unchanged
+  defaults* (silent no-op), and *true 3-way drift* (shows two diffs —
+  what changed in shipped defaults, what the user customised — and
+  prompts `[y/N]` default-no since accept is destructive). Without the
+  baseline, the previous flow always showed the same scary "do you want
+  to lose all this?" diff, which made users decline even when they
+  hadn't customised anything.
+- **Sidecar file convention:** `filters.json` →
+  `filters.defaults-baseline.json` (and same for `config.toml`), written
+  by `ensure_filters_file()` / `ensure_config_file()` on first run and
+  refreshed by `install.sh` whenever the user accepts an overwrite.
+  `defaults_baseline_path()` in `config.py` is the source of truth;
+  `install.sh`'s `baseline_path_for()` derives the same path with shell
+  parameter expansion.
+- **Self-healing migration for pre-baseline installs:** on app startup,
+  if the user file matches current shipped defaults verbatim and no
+  baseline exists yet, one is snapshotted silently. Customised
+  pre-baseline installs degrade to a plain diff prompt for one update
+  cycle, then the baseline is established on accept/decline.
+- Best-effort everywhere: missing or unreadable baselines fall back to
+  the plain diff prompt — install.sh never refuses to run because
+  baseline state is bad.
+
 ## [0.8.0] - 2026-04-17
 
 ### Added

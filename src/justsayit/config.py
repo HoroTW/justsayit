@@ -357,15 +357,64 @@ def save_config(cfg: Config, path: Path | None = None) -> None:
     path.write_text(render_config_toml(merged), encoding="utf-8")
 
 
+def defaults_baseline_path(user_path: Path) -> Path:
+    """Sidecar that records the shipped defaults the user file derives from.
+
+    ``install.sh --update`` reads this to tell three cases apart that
+    otherwise look identical:
+      1. user file == baseline (never customised, defaults moved → safe to update)
+      2. user file != baseline, baseline == new defaults (user customised, defaults didn't move → leave alone)
+      3. both diverged (true 3-way: show what changed in defaults vs what user customised)
+
+    Convention: ``filters.json`` → ``filters.defaults-baseline.json``,
+    ``config.toml`` → ``config.defaults-baseline.toml``. install.sh
+    derives the path from the user-file name with the same rule.
+
+    Best-effort state — if the baseline goes missing, install.sh degrades
+    cleanly to a plain diff prompt, then writes a fresh baseline.
+    """
+    return user_path.with_name(
+        f"{user_path.stem}.defaults-baseline{user_path.suffix}"
+    )
+
+
+def _write_baseline(user_path: Path, content: str) -> None:
+    """Write the defaults baseline next to *user_path*. Best-effort —
+    OSError is swallowed since baseline-tracking is non-essential."""
+    try:
+        defaults_baseline_path(user_path).write_text(content, encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _heal_baseline(user_path: Path, current_defaults: str) -> None:
+    """Migration helper: if the user file matches current shipped
+    defaults verbatim and no baseline exists yet, snapshot one. Lets
+    pre-baseline installs auto-upgrade silently for users who never
+    customised."""
+    baseline = defaults_baseline_path(user_path)
+    if baseline.exists():
+        return
+    try:
+        if user_path.read_text(encoding="utf-8") == current_defaults:
+            _write_baseline(user_path, current_defaults)
+    except OSError:
+        pass
+
+
 def ensure_config_file(path: Path | None = None) -> Path:
     """Write the fully-populated default ``config.toml`` if it doesn't
     exist yet, so the file is always available for inspection / editing.
     Returns the resolved path."""
     if path is None:
         path = config_dir() / "config.toml"
+    rendered = render_config_toml(None)
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(render_config_toml(None), encoding="utf-8")
+        path.write_text(rendered, encoding="utf-8")
+        _write_baseline(path, rendered)
+    else:
+        _heal_baseline(path, rendered)
     return path
 
 
@@ -382,10 +431,13 @@ def ensure_filters_file(path: Path | None = None) -> Path:
 
     if path is None:
         path = config_dir() / "filters.json"
+    rendered = json.dumps(_default_filter_chain(), indent=2) + "\n"
     if not path.exists():
-        default = _default_filter_chain()
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(default, indent=2) + "\n", encoding="utf-8")
+        path.write_text(rendered, encoding="utf-8")
+        _write_baseline(path, rendered)
+    else:
+        _heal_baseline(path, rendered)
     return path
 
 

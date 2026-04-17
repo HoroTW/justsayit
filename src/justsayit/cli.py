@@ -155,6 +155,7 @@ from justsayit.config import (
     cache_dir,
     config_dir,
     default_config_toml,
+    defaults_baseline_path,
     ensure_config_file,
     ensure_dirs,
     ensure_filters_file,
@@ -946,7 +947,11 @@ def _write_default_config(force: bool = False, backend: str | None = None) -> No
         cfg = Config()
         if backend is not None:
             cfg.model.backend = backend
-        cfg_path.write_text(render_config_toml(cfg), encoding="utf-8")
+        rendered = render_config_toml(cfg)
+        cfg_path.write_text(rendered, encoding="utf-8")
+        # Snapshot the defaults baseline so future install.sh --update
+        # runs can tell stale shipped defaults apart from user edits.
+        defaults_baseline_path(cfg_path).write_text(rendered, encoding="utf-8")
         print(f"wrote {cfg_path}")
 
     cleanup_path, fun_path = ensure_default_profiles()
@@ -958,9 +963,10 @@ def _write_default_config(force: bool = False, backend: str | None = None) -> No
     else:
         import json
 
-        filters_path.write_text(
-            json.dumps(_default_filter_chain(), indent=2) + "\n",
-            encoding="utf-8",
+        rendered_filters = json.dumps(_default_filter_chain(), indent=2) + "\n"
+        filters_path.write_text(rendered_filters, encoding="utf-8")
+        defaults_baseline_path(filters_path).write_text(
+            rendered_filters, encoding="utf-8"
         )
         print(f"wrote {filters_path}")
 

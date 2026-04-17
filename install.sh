@@ -253,32 +253,121 @@ fi
 
 # --- update mode: prompt to refresh user config files ---------------------
 
-# Replaces the user's $1 with the freshly-rendered defaults from `BIN
-# show-defaults $2`, after backing up the current file. No-op if the
-# user file is already byte-identical to the new defaults.
+# Sidecar baseline path matching defaults_baseline_path() in config.py:
+# foo.json -> foo.defaults-baseline.json, foo.toml -> foo.defaults-baseline.toml.
+baseline_path_for() {
+    _f=$1
+    _dir=$(dirname "$_f")
+    _base=$(basename "$_f")
+    case "$_base" in
+        *.*)
+            _stem=${_base%.*}
+            _ext=${_base##*.}
+            echo "$_dir/$_stem.defaults-baseline.$_ext"
+            ;;
+        *)
+            echo "$_dir/$_base.defaults-baseline"
+            ;;
+    esac
+}
+
+# Reconcile the user's $1 against the freshly-rendered defaults from
+# `BIN show-defaults $2`. Five cases, all of which preserve user data
+# (nothing is overwritten without either a [Y/n] prompt or — in the
+# safe stale-defaults case — a clearly announced .bak):
+#   1. user == new                   → in sync, no-op (catch up baseline)
+#   2. user == baseline, baseline != new → never customised, defaults moved → [Y/n]
+#   3. baseline == new, user != new  → user customised, defaults didn't move → no-op
+#   4. all three differ              → 3-way: show two diffs, [y/N]
+#   5. baseline missing              → migration: plain diff + [y/N]
+# Backups always go to $_USER_FILE.bak.<ts> before any overwrite.
 maybe_update_user_file() {
     _USER_FILE=$1
     _KIND=$2
     [ -f "$_USER_FILE" ] || return 0
-    _TMP=$(mktemp -t justsayit-defaults.XXXXXX)
-    if ! "$BIN" show-defaults "$_KIND" >"$_TMP" 2>/dev/null; then
+    _BASELINE=$(baseline_path_for "$_USER_FILE")
+
+    _NEW=$(mktemp -t justsayit-defaults.XXXXXX)
+    if ! "$BIN" show-defaults "$_KIND" >"$_NEW" 2>/dev/null; then
         echo "  could not render defaults for $_KIND — skipping." >&2
-        rm -f "$_TMP"
+        rm -f "$_NEW"
         return 0
     fi
-    if cmp -s "$_USER_FILE" "$_TMP"; then
-        rm -f "$_TMP"
+
+    # Case 1: already in sync. Refresh baseline if missing/stale and exit.
+    if cmp -s "$_USER_FILE" "$_NEW"; then
+        if [ ! -f "$_BASELINE" ] || ! cmp -s "$_BASELINE" "$_NEW"; then
+            cp "$_NEW" "$_BASELINE"
+        fi
+        rm -f "$_NEW"
         return 0
     fi
-    echo
-    echo "==> $_KIND file has new shipped defaults"
-    echo "    ($_USER_FILE)"
-    if command -v diff >/dev/null 2>&1; then
-        echo "    diff (current -> new), first 60 lines:"
-        diff -u "$_USER_FILE" "$_TMP" | sed 's/^/      /' | head -60
+
+    if [ -f "$_BASELINE" ]; then
+        # Case 3: defaults haven't moved, user customised — leave alone.
+        if cmp -s "$_BASELINE" "$_NEW"; then
+            rm -f "$_NEW"
+            return 0
+        fi
+        # Case 2: never customised, just stale shipped defaults.
+        if cmp -s "$_USER_FILE" "$_BASELINE"; then
+            echo
+            echo "==> $_KIND: shipped defaults have changed and your file"
+            echo "    matches the previous shipped defaults exactly (you"
+            echo "    never customised it)."
+            echo "    ($_USER_FILE)"
+            if command -v diff >/dev/null 2>&1; then
+                echo "    diff (your current file -> new shipped defaults), first 60 lines:"
+                diff -u "$_USER_FILE" "$_NEW" | sed 's/^/      /' | head -60
+            fi
+            if [ -t 0 ]; then
+                printf "Update to new shipped defaults? [Y/n] "
+                read -r _REPLY
+            else
+                _REPLY="y"
+            fi
+            case "$_REPLY" in
+                [Nn]*)
+                    rm -f "$_NEW"
+                    echo "  kept current $_USER_FILE."
+                    return 0
+                    ;;
+            esac
+            _TS=$(date +%Y%m%d-%H%M%S)
+            cp -v "$_USER_FILE" "$_USER_FILE.bak.$_TS"
+            mv "$_NEW" "$_USER_FILE"
+            cp "$_USER_FILE" "$_BASELINE"
+            echo "  updated. Old file kept at $_USER_FILE.bak.$_TS"
+            return 0
+        fi
+        # Case 4: both diverged. Two diffs make the situation clear.
+        echo
+        echo "==> $_KIND: shipped defaults have moved AND you customised the file."
+        echo "    ($_USER_FILE)"
+        if command -v diff >/dev/null 2>&1; then
+            echo
+            echo "    Changes in shipped defaults since you installed (first 60 lines):"
+            diff -u "$_BASELINE" "$_NEW" | sed 's/^/      /' | head -60
+            echo
+            echo "    Your local customisations vs the previous defaults (first 60 lines):"
+            diff -u "$_BASELINE" "$_USER_FILE" | sed 's/^/      /' | head -60
+        fi
+        echo
+        echo "    Replacing will discard your customisations (kept as .bak)."
+    else
+        # Case 5: pre-baseline migration. Can't tell stale from customised.
+        echo
+        echo "==> $_KIND differs from current shipped defaults."
+        echo "    (no baseline on disk — can't tell new defaults from your edits.)"
+        echo "    ($_USER_FILE)"
+        if command -v diff >/dev/null 2>&1; then
+            echo "    diff (your current file -> new shipped defaults), first 60 lines:"
+            diff -u "$_USER_FILE" "$_NEW" | sed 's/^/      /' | head -60
+        fi
     fi
+
     if [ -t 0 ]; then
-        printf "Replace with new defaults? Current file will be backed up. [y/N] "
+        printf "Replace with new shipped defaults? Current file will be backed up. [y/N] "
         read -r _REPLY
     else
         _REPLY="n"
@@ -287,11 +376,12 @@ maybe_update_user_file() {
         [Yy]*)
             _TS=$(date +%Y%m%d-%H%M%S)
             cp -v "$_USER_FILE" "$_USER_FILE.bak.$_TS"
-            mv "$_TMP" "$_USER_FILE"
+            mv "$_NEW" "$_USER_FILE"
+            cp "$_USER_FILE" "$_BASELINE"
             echo "  updated. Old file kept at $_USER_FILE.bak.$_TS"
             ;;
         *)
-            rm -f "$_TMP"
+            rm -f "$_NEW"
             echo "  kept current $_USER_FILE."
             ;;
     esac
