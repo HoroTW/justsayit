@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.12] - 2026-04-17
+
+### Fixed
+
+- **`setup-llm gemma4` no longer creates a redundant `gemma4.toml`**.
+  Previously, selecting the gemma4 model wrote a third profile file
+  alongside the two we ship (`gemma4-cleanup.toml`,
+  `gemma4-fun.toml`), copying the cleanup template and patching in the
+  model path. The third file then had to be activated via
+  `profile = "gemma4"` (which the suggestion line printed), even though
+  the shipped profiles already bind the same model and have proper
+  filenames. Now `setup-llm gemma4` ensures the two shipped profiles
+  exist, patches their `model_path` to the actual download location,
+  and prints `profile = "gemma4-cleanup"` / `"gemma4-fun"` as the
+  activation hints. Other model keys (`qwen3-4b`, `qwen3-0.8b`)
+  continue to get a single per-key profile file as before, since no
+  shipped variants exist for them.
+
 ## [0.8.11] - 2026-04-17
 
 ### Fixed

@@ -1220,7 +1220,8 @@ def _run_setup_llm(model_key: str | None = None, cpu: bool = False) -> int:
                 " or comma-separated values."
             )
 
-    downloaded: list[tuple[str, Path, Path]] = []
+    downloaded_models: list[tuple[str, Path]] = []  # (key, model_path)
+    activate_options: list[str] = []  # profile names to suggest in the hint
     failed: list[str] = []
 
     for key in selected_keys:
@@ -1243,25 +1244,41 @@ def _run_setup_llm(model_key: str | None = None, cpu: bool = False) -> int:
             failed.append(key)
             continue
 
-        profile_path = profiles_dir() / f"{key}.toml"
-        ensure_default_profile(profile_path)
-        update_profile_model(profile_path, model_path, hf_repo, hf_filename)
-        downloaded.append((key, model_path, profile_path))
+        downloaded_models.append((key, model_path))
         print(f"  Model:   {model_path}")
-        print(f"  Profile: {profile_path}")
 
-    if not downloaded:
+        if key == "gemma4":
+            # gemma4 ships two profiles (-cleanup and -fun) that share the
+            # same model file. Reuse them instead of creating a third
+            # generic gemma4.toml that would only confuse users.
+            cleanup_path, fun_path = ensure_default_profiles()
+            update_profile_model(cleanup_path, model_path, hf_repo, hf_filename)
+            update_profile_model(fun_path, model_path, hf_repo, hf_filename)
+            activate_options.extend(["gemma4-cleanup", "gemma4-fun"])
+            print(f"  Profile: {cleanup_path}")
+            print(f"  Profile: {fun_path}")
+        else:
+            profile_path = profiles_dir() / f"{key}.toml"
+            ensure_default_profile(profile_path)
+            update_profile_model(profile_path, model_path, hf_repo, hf_filename)
+            activate_options.append(key)
+            print(f"  Profile: {profile_path}")
+
+    if not downloaded_models:
         return 1 if failed else 0
 
     print(f"\n{'─' * 54}")
-    if len(downloaded) == 1:
+    if len(downloaded_models) == 1:
         print("\nTo activate, set in config.toml:")
     else:
-        print(f"\n{len(downloaded)} model(s) ready. To activate one, set in config.toml:")
+        print(
+            f"\n{len(downloaded_models)} model(s) ready."
+            " To activate one, set in config.toml:"
+        )
     print("  [postprocess]")
     print("  enabled = true")
-    for key, _, _ in downloaded:
-        print(f'  profile = "{key}"')
+    for name in activate_options:
+        print(f'  profile = "{name}"')
     return 0
 
 
