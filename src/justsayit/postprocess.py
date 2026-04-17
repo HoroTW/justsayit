@@ -47,6 +47,7 @@ You are NOT a copy editor. Output the transcript verbatim except for these speci
 - apply formatting only when explicitly dictated
 
 KEEP every newline and blank line from the input exactly where it is — line breaks and paragraph spacing are part of the user's intended structure and must round-trip 1:1 into the output.
+Explicit ellipses are intentional — preserve literal `...` and spoken `punkt punkt punkt` / `dot dot dot` as `...`.
 
 DO NOT:
 - rephrase, restructure, or reorder words
@@ -128,6 +129,7 @@ You are NOT a copy editor. Output the transcript verbatim except for these speci
 - apply formatting only when explicitly dictated
 
 KEEP every newline and blank line from the input exactly where it is — line breaks and paragraph spacing are part of the user's intended structure and must round-trip 1:1 into the output.
+Explicit ellipses are intentional — preserve literal `...` and spoken `punkt punkt punkt` / `dot dot dot` as `...`.
 
 DO NOT:
 - rephrase, restructure, or reorder words

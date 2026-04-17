@@ -101,6 +101,8 @@ def test_ensure_default_profile_creates_file(tmp_path, monkeypatch):
     # The recommended cleanup prompt has the conservative guardrails baked in
     assert "CONSERVATIVE CLEANUP" in content
     assert "modal particles" in content
+    assert "punkt punkt punkt" in content
+    assert "dot dot dot" in content
 
 
 def test_ensure_default_profiles_writes_all_three(tmp_path, monkeypatch):
