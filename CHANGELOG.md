@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.6] - 2026-04-17
+
+### Added
+
+- **Abort button (×) in the overlay's top-right.** Click it during a
+  recording (validating / recording / manual) to discard the audio
+  buffer and return to IDLE without transcribing or pasting. During
+  the post-result linger phase it just dismisses the overlay early.
+  Backed by a new `AudioEngine.abort()` that flushes the buffer and
+  resets VAD without emitting a segment.
+
 ## [0.6.5] - 2026-04-17
 
 ### Added

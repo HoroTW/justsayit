@@ -93,6 +93,7 @@ class AudioEngine:
         self._stream_lock = threading.Lock()
         self._external_stop = threading.Event()
         self._external_start = threading.Event()
+        self._external_abort = threading.Event()
         self._stop_requested_at: float | None = None
 
         self._vad = None  # built on start when enabled
@@ -235,6 +236,17 @@ class AudioEngine:
             self._buffered_seconds(),
         )
         self._external_stop.set()
+
+    def abort(self) -> None:
+        """Discard the current recording and return to IDLE without
+        emitting a segment. No transcription, no paste. Used by the
+        overlay's abort (×) button."""
+        self._external_abort.set()
+        log.info(
+            "abort requested (state=%s, buffered=%.2fs)",
+            self._state.value,
+            self._buffered_seconds(),
+        )
 
     # --- internals ---------------------------------------------------------
 
@@ -438,6 +450,30 @@ class AudioEngine:
 
             external_start = self._external_start.is_set()
             external_stop = self._external_stop.is_set()
+            external_abort = self._external_abort.is_set()
+
+            # Abort wins: discard everything, return to IDLE silently. The
+            # overlay's × button uses this; we explicitly do not emit a
+            # segment so nothing is transcribed or pasted.
+            if external_abort:
+                self._external_abort.clear()
+                self._external_stop.clear()
+                self._stop_requested_at = None
+                if self._state is not State.IDLE:
+                    log.info(
+                        "abort: discarding %.2fs (state=%s)",
+                        self._buffered_seconds(),
+                        self._state.value,
+                    )
+                self._flush()
+                if self._vad is not None:
+                    try:
+                        self._vad.reset()
+                    except Exception:
+                        pass
+                prev_speech = False
+                self._set_state(State.IDLE)
+                continue
 
             if external_start:
                 self._external_start.clear()

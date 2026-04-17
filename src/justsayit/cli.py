@@ -828,7 +828,11 @@ class App:
         app.hold()
         self.gtk_app = app
         if not self.no_overlay:
-            self.overlay = OverlayWindow(app, self.cfg)
+            def _on_overlay_abort() -> None:
+                if self.engine is not None:
+                    self.engine.abort()
+
+            self.overlay = OverlayWindow(app, self.cfg, on_abort=_on_overlay_abort)
             # Explicitly hidden until the engine reports a non-idle state.
             self.overlay.set_visible(False)
 

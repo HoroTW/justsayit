@@ -26,6 +26,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass
+from typing import Callable
 
 import gi
 
@@ -67,6 +68,22 @@ window.justsayit-overlay {
     font-size: 11px;
     font-weight: 400;
     font-style: italic;
+}
+.justsayit-abort-button {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    padding: 0 4px;
+    margin: 0;
+    min-height: 16px;
+    min-width: 16px;
+    color: rgba(255, 255, 255, 0.55);
+    font-family: "Inter", "Cantarell", "Noto Sans", sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+}
+.justsayit-abort-button:hover {
+    color: rgba(255, 120, 120, 0.95);
 }
 """
 
@@ -112,10 +129,17 @@ def _install_css_once() -> None:
 class OverlayWindow(Gtk.ApplicationWindow):
     """Bottom-anchored layer-shell window."""
 
-    def __init__(self, application: Gtk.Application, cfg: Config) -> None:
+    def __init__(
+        self,
+        application: Gtk.Application,
+        cfg: Config,
+        *,
+        on_abort: Callable[[], None] | None = None,
+    ) -> None:
         super().__init__(application=application)
         self._cfg = cfg
         self._state = State.IDLE
+        self._on_abort = on_abort
 
         self._level = 0.0
         self._level_smoothed = 0.0
@@ -148,12 +172,28 @@ class OverlayWindow(Gtk.ApplicationWindow):
         root.set_vexpand(True)
         root.set_opacity(max(0.0, min(1.0, cfg.overlay.opacity)))
 
-        # ── State label (compact mode only) ──────────────────────────────────
+        # ── Top row: state label (left) + abort × button (right) ─────────────
+        top_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        top_row.set_hexpand(True)
+
         self._state_label = Gtk.Label(label=_STATE_STYLE[State.IDLE][0])
         self._state_label.add_css_class("justsayit-overlay-label")
         self._state_label.set_xalign(0.0)
         self._state_label.set_hexpand(True)
-        root.append(self._state_label)
+        top_row.append(self._state_label)
+
+        self._abort_button = Gtk.Button(label="×")
+        self._abort_button.add_css_class("justsayit-abort-button")
+        self._abort_button.set_valign(Gtk.Align.START)
+        self._abort_button.set_halign(Gtk.Align.END)
+        self._abort_button.set_tooltip_text("Abort recording (discard, no paste)")
+        self._abort_button.connect("clicked", self._on_abort_clicked)
+        # Layer-shell windows need explicit keyboard mode to receive input;
+        # pointer events work without it as long as Gtk reports an
+        # interactive surface (which any Button does).
+        top_row.append(self._abort_button)
+
+        root.append(top_row)
 
         # ── Text area (result mode only, hidden by default) ───────────────────
         # Separator + top field
@@ -244,6 +284,25 @@ class OverlayWindow(Gtk.ApplicationWindow):
 
     def push_hide(self) -> None:
         GLib.idle_add(self._force_hide, priority=GLib.PRIORITY_DEFAULT)
+
+    # ── User actions ─────────────────────────────────────────────────────────
+
+    def _on_abort_clicked(self, _button: Gtk.Button) -> None:
+        """× button: abort an active recording (discard, no paste). If
+        the overlay is in the post-result linger phase, just dismiss."""
+        if self._state in (State.VALIDATING, State.RECORDING, State.MANUAL):
+            log.info("abort button clicked during %s — discarding", self._state.value)
+            if self._on_abort is not None:
+                try:
+                    self._on_abort()
+                except Exception:
+                    log.exception("on_abort callback raised")
+            # Engine will transition to IDLE; hide immediately so the user
+            # gets instant feedback without waiting for the state callback.
+            self._force_hide()
+        else:
+            log.info("abort button clicked outside recording — dismissing overlay")
+            self._force_hide()
 
     # ── UI-thread handlers ───────────────────────────────────────────────────
 
