@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.3] - 2026-04-17
+
+### Changed
+
+- Reframed the blank-line preservation rule as a positive `KEEP every
+  newline and blank line` instruction (own paragraph, prominent), since
+  the previous negative bullet in the DO NOT list was being ignored —
+  models followed positive directives more reliably.
+
 ## [0.10.2] - 2026-04-17
 
 ### Changed
