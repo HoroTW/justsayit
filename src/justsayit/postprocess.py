@@ -797,19 +797,16 @@ KNOWN_LLM_MODELS: dict[str, dict[str, Any]] = {
     "qwen3-0.8b": {
         "display": "Qwen3.5-0.8B        (0.8B, ~600 MB) — fastest, smallest footprint",
         "hf_repo": "unsloth/Qwen3.5-0.8B-GGUF",
-        # Qwen's own recommended thinking-mode sampling for the 0.8B
-        # (see https://huggingface.co/Qwen/Qwen3.5-0.8B). The default
-        # ``temperature = 0.08`` is effectively greedy, which Qwen
-        # explicitly warns against — it drives the 0.8B into thinking
-        # loops. ``presence_penalty = 1.5`` is their named anti-loop
-        # knob; non-thinking mode would want 2.0, but we default to
-        # thinking on for Qwen 3.5 (see chat_template_kwargs).
+        # Thinking mode is OFF at 0.8B — the model reliably enters
+        # thinking loops on the complex cleanup+assistant-mode prompt.
+        # cleanup_qwen_simple.md is a short cleanup-only prompt that
+        # the model handles well at near-greedy temperature.
+        # paste_strip_regex cleared (no <think> blocks to strip).
         "profile_overrides": {
-            "temperature": 0.6,
-            "top_p": 0.95,
-            "top_k": 20,
-            "min_p": 0.0,
-            "presence_penalty": 1.5,
+            "system_prompt_file": "cleanup_qwen_simple.md",
+            "chat_template_kwargs": {},
+            "paste_strip_regex": "",
+            "temperature": 0.08,
         },
     },
 }
@@ -864,6 +861,13 @@ def _format_toml_scalar(value: Any) -> str:
         return "true" if value else "false"
     if isinstance(value, (int, float)):
         return str(value)
+    if isinstance(value, dict):
+        if not value:
+            return "{}"
+        items = ", ".join(
+            f"{k} = {_format_toml_scalar(v)}" for k, v in value.items()
+        )
+        return f"{{ {items} }}"
     return f'"{value}"'
 
 

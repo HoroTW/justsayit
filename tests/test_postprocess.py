@@ -1088,19 +1088,24 @@ def test_apply_profile_overrides_appends_missing_keys(tmp_path):
     assert "presence_penalty = 1.5" in profile.read_text(encoding="utf-8")
 
 
-def test_qwen_08b_entry_has_anti_loop_overrides():
-    """Guardrail so future model-catalogue edits don't silently drop
-    the Qwen 3.5 0.8B sampling tuning. ``setup-llm`` needs these
-    bakeds into the seeded profile — without them, users land in
-    near-greedy decoding and hit the thinking-loop tendency Qwen's
-    own docs warn about."""
+def test_qwen_08b_entry_has_correct_profile_overrides():
+    """Guardrail so future model-catalogue edits don't silently break
+    the qwen3-0.8b seeded profile. Thinking is OFF for this model —
+    the 0.8B loops badly on the complex assistant-mode prompt when
+    thinking is on; the simple cleanup prompt + near-greedy temperature
+    is what works reliably."""
     entry = KNOWN_LLM_MODELS["qwen3-0.8b"]
     overrides = entry.get("profile_overrides")
     assert overrides, "qwen3-0.8b lost its profile_overrides"
-    # The critical anti-loop knob per Qwen's docs:
-    assert overrides["presence_penalty"] == 1.5
-    # And the away-from-greedy temperature, also per Qwen:
-    assert overrides["temperature"] == 0.6
+    # Thinking must be off — keep {}
+    assert overrides["chat_template_kwargs"] == {}, (
+        "qwen3-0.8b should have thinking disabled — the 0.8B loops on the "
+        "complex prompt when enable_thinking=true"
+    )
+    # Correct prompt
+    assert overrides["system_prompt_file"] == "cleanup_qwen_simple.md"
+    # Near-greedy temperature appropriate for cleanup-only (no thinking)
+    assert overrides["temperature"] == 0.08
 
 
 @pytest.mark.network

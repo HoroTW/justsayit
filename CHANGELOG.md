@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.9] - 2026-04-18
+
+### Fixed
+
+- Qwen 3.5 0.8B produced multi-page looping "Thinking Process:" output
+  instead of a clean transcript. Three compounding causes:
+  1. Profile was using `cleanup_local.md`, which opens with Gemma's
+     `<|think|>` channel instruction — Qinja doesn't know that
+     syntax, so the model saw it as literal system-prompt text and
+     got confused by the complex conditional logic.
+  2. `paste_strip_regex` was the builtin default (Gemma's
+     `<\|channel>thought…<channel\|>`) — doesn't match Qwen's
+     `<think>…</think>` format, so thinking blocks bled into the paste.
+  3. With thinking enabled, the model looped endlessly on the
+     assistant-mode trigger-detection rules in the full prompt.
+
+  Fix: new `cleanup_qwen_simple.md` — a short, cleanup-only prompt
+  (no "Hey Computer" assistant mode, no channel instructions) that the
+  0.8B model handles reliably. Thinking disabled (`chat_template_kwargs
+  = {}`); temperature back to 0.08 (near-greedy is fine without
+  thinking). The anti-loop sampling knobs from 0.13.6 (presence_penalty
+  1.5, temperature 0.6, etc.) are removed — they were fighting the
+  symptom, not the cause.
+
+- `setup-llm qwen3-0.8b` now seeds the correct profile: points at
+  `cleanup_qwen_simple.md`, disables thinking, and clears the Gemma
+  `paste_strip_regex`. `profile_overrides` in `KNOWN_LLM_MODELS` drives
+  this; required fixing `_format_toml_scalar` to handle dict values
+  (empty `{}` → `{}` TOML inline table) so dict overrides like
+  `chat_template_kwargs = {}` could be upserted into the seeded file.
+
+### Added
+
+- `src/justsayit/prompts/cleanup_qwen_simple.md` — concise cleanup
+  prompt for small models that can't reliably follow complex
+  conditional logic. Core cleanup rules only: filler words, misheards,
+  spoken punctuation. No reasoning channel, no assistant mode.
+
 ## [0.13.8] - 2026-04-18
 
 ### Fixed
