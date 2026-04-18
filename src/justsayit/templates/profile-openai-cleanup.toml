@@ -88,9 +88,12 @@ model = "gpt-4o-mini"
 # append_to_system_prompt = ""
 
 # Extra kwargs forwarded into the chat template, included in the JSON
-# body under `chat_template_kwargs`. Default already enables Qwen 3.5's
-# thinking mode (off by default in its template); OpenAI and most
-# hosted providers ignore unknown body fields. Set to `{}` to suppress.
+# body under `chat_template_kwargs`. Default is `{}` because OpenAI
+# proper rejects unknown fields with HTTP 400 ("Unrecognized request
+# argument supplied: chat_template_kwargs") — most hosted providers
+# follow the same strict-validation route. Only enable when pointing
+# at a self-hosted / template-aware server (Ollama, vLLM, SGLang, LM
+# Studio, llama.cpp-server). For Qwen 3.5 over such a server, opt in:
 # chat_template_kwargs = { enable_thinking = true }
 
 # User-context lives in ~/.config/justsayit/context.toml (shared across

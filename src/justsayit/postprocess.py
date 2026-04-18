@@ -644,8 +644,10 @@ class LLMPostprocessor:
         }
         if self.profile.chat_template_kwargs:
             # Forwarded to the server's template renderer. Supported by
-            # Ollama, vLLM, SGLang, LM Studio, llama.cpp-server; OpenAI
-            # ignores unknown fields, so this is safe to include.
+            # Ollama, vLLM, SGLang, LM Studio, llama.cpp-server. OpenAI
+            # proper rejects unknown fields with HTTP 400, so the remote
+            # default is {} — opt in only when pointing at a server that
+            # understands the field.
             body["chat_template_kwargs"] = dict(self.profile.chat_template_kwargs)
         attempts = 1 + max(0, self.profile.remote_retries)
         last_error: RuntimeError | None = None

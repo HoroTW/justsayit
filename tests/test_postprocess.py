@@ -700,6 +700,29 @@ def test_chat_template_kwargs_default_enables_thinking():
     assert profile.chat_template_kwargs == {"enable_thinking": True}
 
 
+def test_remote_default_chat_template_kwargs_is_empty(tmp_path, monkeypatch):
+    """A profile that just sets ``base = "remote"`` (or has an endpoint
+    inferred to remote) MUST inherit an empty ``chat_template_kwargs``
+    from remote-defaults.toml. OpenAI proper rejects unknown body
+    fields with HTTP 400 ("Unrecognized request argument supplied:
+    chat_template_kwargs"); the empty default is what keeps the
+    out-of-the-box openai-cleanup profile working."""
+    import justsayit.postprocess as pp_mod
+
+    monkeypatch.setattr(pp_mod, "profiles_dir", lambda: tmp_path)
+    p = tmp_path / "openai.toml"
+    p.write_text(
+        'base = "remote"\n'
+        'endpoint = "https://api.openai.com/v1"\n'
+        'model = "gpt-4o-mini"\n',
+        encoding="utf-8",
+    )
+    profile = load_profile("openai")
+    assert profile.chat_template_kwargs == {}, (
+        "remote-defaults must not seed chat_template_kwargs — OpenAI 400s on it"
+    )
+
+
 def test_dynamic_context_script_empty_stdout_omitted(monkeypatch):
     import justsayit.postprocess as pp_mod
 

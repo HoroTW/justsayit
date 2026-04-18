@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.8] - 2026-04-18
+
+### Fixed
+
+- Remote (OpenAI-compatible) backend crashed with HTTP 400
+  (``Unrecognized request argument supplied: chat_template_kwargs``)
+  on every request to the real OpenAI API. 0.13.5 introduced
+  ``chat_template_kwargs = { enable_thinking = true }`` as the default
+  in *both* ``builtin-defaults.toml`` and ``remote-defaults.toml`` on
+  the assumption OpenAI would silently drop unknown body fields — it
+  doesn't, the API strictly validates the body and 400s. Most other
+  hosted OpenAI-compatible providers do the same. The remote default
+  is now ``{}``; the builtin default keeps ``{enable_thinking = true}``
+  so local Qwen 3.5 still has thinking on out of the box. Self-hosted
+  template-aware servers (Ollama, vLLM, SGLang, LM Studio,
+  llama.cpp-server) can opt back in per profile.
+
+### Added
+
+- Real-OpenAI burn smoke test (``test_burn_openai_default_profile_round_trips``)
+  that goes through ``load_profile`` end-to-end and POSTs to
+  ``https://api.openai.com/v1/chat/completions`` with ``gpt-4o-mini``.
+  Pairs with ``test_burn_openai_explicit_chat_template_kwargs_400s``,
+  which confirms the 400 still happens when the field is opted back
+  in — so we'll know if OpenAI ever loosens the validation. Both
+  skip cleanly when ``OPENAI_API_KEY`` is unset. This is the test
+  that would have caught the 0.13.5 regression on the first run.
+- Unit guardrail (``test_remote_default_chat_template_kwargs_is_empty``)
+  that loads a minimal ``base = "remote"`` profile via
+  ``load_profile`` and asserts the remote default stays empty —
+  catches the regression without needing an API key.
+
 ## [0.13.7] - 2026-04-18
 
 ### Fixed

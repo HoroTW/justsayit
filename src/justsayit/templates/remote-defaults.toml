@@ -94,13 +94,14 @@ append_to_system_prompt = ""
 
 # Extra kwargs forwarded into the server's chat-template renderer,
 # included in the JSON body under `chat_template_kwargs`. Empty {} →
-# nothing forwarded. Supported by Ollama, vLLM, SGLang, LM Studio, and
-# llama.cpp-server; OpenAI and most hosted providers ignore unknown
-# body fields so it's safe to leave on.
+# nothing forwarded.
 #
-# `enable_thinking = true` is on by default so Qwen 3.5 served over
-# Ollama/vLLM actually thinks (it ships OFF by default). Providers
-# that don't recognise the flag drop it; templates that don't use it
-# (e.g. Gemma over Ollama) render unchanged.
-chat_template_kwargs = { enable_thinking = true }
+# Defaults to {} because OpenAI proper *rejects* the field with
+# HTTP 400 ("Unrecognized request argument: chat_template_kwargs") —
+# that's the strict-validation route most hosted providers take. For
+# self-hosted / template-aware servers (Ollama, vLLM, SGLang, LM
+# Studio, llama.cpp-server) opt in per profile, e.g. set
+# `chat_template_kwargs = { enable_thinking = true }` to turn on
+# Qwen 3.5's thinking (which ships OFF in its template).
+chat_template_kwargs = {}
 
