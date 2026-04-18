@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.7] - 2026-04-18
+
+### Fixed
+
+- Built-in profiles silently disappeared from the tray's LLM submenu
+  after running ``setup-llm`` under 0.13.6. Pre-0.13.6
+  ``update_profile_model`` couldn't see the commented
+  ``# model_path = …`` example in the seeded template, so it
+  *appended* a fresh active line at the bottom of every legacy
+  profile. 0.13.6's regex finally matched the commented example and
+  replaced it — but ``count=1`` left the appended duplicate intact,
+  yielding two ``model_path = …`` lines and a TOML duplicate-key
+  parse error. The tray's ``except Exception: log.debug`` around
+  ``load_profile`` then swallowed the error silently, and the whole
+  profile vanished from the menu. ``_set_toml_key`` now upserts with
+  full de-duplication (replace first match, drop the rest), so
+  re-seeding heals legacy files in place.
+- Ships with a regression test that constructs a legacy-shape file
+  and asserts both ``tomllib.loads`` and ``load_profile`` succeed
+  after ``update_profile_model`` runs again. (The earlier mock-style
+  tests only checked the happy-path template, missing the
+  legacy-state path that real users actually had on disk.)
+
 ## [0.13.6] - 2026-04-18
 
 ### Added

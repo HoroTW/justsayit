@@ -866,15 +866,36 @@ def _format_toml_scalar(value: Any) -> str:
 
 
 def _set_toml_key(src: str, key: str, value: Any) -> str:
-    formatted = _format_toml_scalar(value)
-    # Match both active (``key = …``) and commented-out defaults
-    # (``# key = …``) so seeded templates flip to the override value.
-    pattern = rf"^(?:#\s*)?{re.escape(key)}\s*=\s*.*$"
-    result, n = re.subn(
-        pattern, f"{key} = {formatted}", src, count=1, flags=re.MULTILINE
-    )
-    if n == 0:
-        result = src.rstrip() + f"\n{key} = {formatted}\n"
+    # Upsert *key* = *value* in *src*, matching active (``key = …``) and
+    # commented-default (``# key = …``) lines alike. Any existing
+    # occurrences — whether commented or active — beyond the first are
+    # DELETED. That's load-bearing: pre-0.13.6 ``update_profile_model``
+    # appended a fresh override line at the bottom when the regex
+    # couldn't see the commented example, so legacy profiles now
+    # contain the commented example *and* an appended active line.
+    # Without the dedupe, a re-run seeds a second active line and the
+    # profile parses as a duplicate-key TOML error — which the tray
+    # silently swallows, making the whole profile disappear.
+    formatted = f"{key} = {_format_toml_scalar(value)}"
+    pattern = re.compile(rf"^(?:#\s*)?{re.escape(key)}\s*=\s*.*$")
+    lines = src.splitlines()
+    out: list[str] = []
+    replaced = False
+    for line in lines:
+        if pattern.match(line):
+            if not replaced:
+                out.append(formatted)
+                replaced = True
+            # else: drop duplicate
+        else:
+            out.append(line)
+    if not replaced:
+        if out and out[-1].strip():
+            out.append("")  # blank line before an appended key
+        out.append(formatted)
+    result = "\n".join(out)
+    if src.endswith("\n"):
+        result += "\n"
     return result
 
 

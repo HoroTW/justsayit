@@ -1009,6 +1009,49 @@ def test_apply_profile_overrides_flips_commented_defaults(tmp_path):
     assert text.count("presence_penalty = ") == 1
 
 
+def test_update_profile_model_heals_legacy_duplicate_keys(tmp_path):
+    """Regression: pre-0.13.6 ``update_profile_model`` could not match
+    the commented ``# model_path = …`` line in the template, so it
+    appended a fresh active ``model_path = …`` at the bottom. Re-
+    running ``setup-llm`` after 0.13.6 would then create a second
+    active line (replacing the commented one), producing a TOML
+    duplicate-key parse error — which the tray silently swallows,
+    making the whole profile vanish from the LLM submenu. The upsert
+    must de-dupe so re-seeding heals the legacy file in place."""
+    import tomllib
+
+    profile = tmp_path / "gemma4-cleanup.toml"
+    profile.write_text(
+        _CLEANUP_PROFILE_TOML
+        + (
+            '\nmodel_path = "/old/path.gguf"\n'
+            'hf_repo = "old-repo"\n'
+            'hf_filename = "old.gguf"\n'
+        ),
+        encoding="utf-8",
+    )
+
+    from justsayit.postprocess import update_profile_model
+
+    update_profile_model(
+        profile,
+        Path("/new/path.gguf"),
+        "new-repo",
+        "new.gguf",
+    )
+
+    text = profile.read_text(encoding="utf-8")
+    active = [
+        line for line in text.splitlines() if line.startswith("model_path = ")
+    ]
+    assert active == ['model_path = "/new/path.gguf"']
+    # Must parse cleanly — this is the bit the tray's try/except hides.
+    parsed = tomllib.loads(text)
+    assert parsed["model_path"] == "/new/path.gguf"
+    assert parsed["hf_repo"] == "new-repo"
+    assert parsed["hf_filename"] == "new.gguf"
+
+
 def test_apply_profile_overrides_appends_missing_keys(tmp_path):
     """If the seeded template doesn't mention a key yet (e.g. a brand
     new profile schema where the TOML template lags the dataclass),
