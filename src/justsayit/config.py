@@ -292,10 +292,10 @@ class OverlayConfig:
     # displayed in the visualizer bar. Increase above 1.0 if your mic
     # records quietly and the bar barely moves; decrease below 1.0 if
     # the bar clips on every word.
-    visualizer_sensitivity: float = 1.0
+    visualizer_sensitivity: float = 2.5
     # Background opacity of the overlay pill (0.0 = fully transparent,
     # 1.0 = fully opaque).
-    opacity: float = 0.78
+    opacity: float = 0.7
     # How long (ms) the overlay stays visible after a successful paste so
     # the user can read the transcribed / LLM-cleaned text.
     # 0 = hide immediately after paste (original behaviour).
