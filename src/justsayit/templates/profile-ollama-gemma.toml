@@ -55,4 +55,12 @@ paste_strip_regex = '<\|channel>thought(.*?)<channel\|>'
 # max_tokens = 4096
 # user_template = "{text}"
 
+# Extra text appended to the resolved system prompt (blank-line joined).
+# append_to_system_prompt = ""
+
+# Chat-template kwargs forwarded to Ollama. Gemma's template ignores
+# `enable_thinking`, so the default is harmless here. Useful if you
+# point this profile at a Qwen-based model in Ollama instead.
+# chat_template_kwargs = { enable_thinking = true }
+
 # context = ""

@@ -43,6 +43,13 @@ paste_strip_regex = ""
 # max_tokens = 4096
 # user_template = "{text}"
 
+# Extra text appended to the resolved system prompt (blank-line joined).
+# append_to_system_prompt = ""
+
+# Chat-template kwargs (Qwen `enable_thinking`, …). Default is on; set
+# to `{}` to suppress entirely.
+# chat_template_kwargs = { enable_thinking = true }
+
 # User-context lives in ~/.config/justsayit/context.toml (shared across
 # profiles). Uncomment to override the sidecar for this profile only:
 # context = ""

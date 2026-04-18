@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-04-18
+
+### Fixed
+
+- The new `chat_template_kwargs` and `append_to_system_prompt` keys
+  introduced in 0.13.0 weren't documented in any of the four shipped
+  user-facing profile templates (`gemma4-cleanup`, `gemma4-fun`,
+  `openai-cleanup`, `ollama-gemma`), so users letting a profile
+  re-create from the template never saw the new options. Added
+  commented-out example lines for both keys to all four templates.
+  (Existing on-disk profiles need to be backed up + deleted +
+  re-initialised to pick up the documentation; the runtime defaults
+  themselves apply unchanged either way.)
+
 ## [0.13.0] - 2026-04-18
 
 ### Added

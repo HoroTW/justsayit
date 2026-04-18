@@ -70,6 +70,17 @@ model = "gpt-4o-mini"
 # You are a transcription cleanup assistant. ...
 # """
 
+# Extra text appended to the resolved system prompt (joined with a
+# blank line). Useful for adding small instructions without forking
+# the whole prompt.
+# append_to_system_prompt = "Always reply in English."
+
+# Extra kwargs forwarded into the chat template, included in the JSON
+# body under `chat_template_kwargs`. Default already enables Qwen 3.5's
+# thinking mode (off by default in its template); OpenAI and most
+# hosted providers ignore unknown body fields. Set to `{}` to suppress.
+# chat_template_kwargs = { enable_thinking = true }
+
 # User-context lives in ~/.config/justsayit/context.toml (shared across
 # profiles). Uncomment to override the sidecar for this profile only:
 # context = """
