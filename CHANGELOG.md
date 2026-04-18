@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.2] - 2026-04-18
+
+### Fixed
+
+- The commented example lines for `append_to_system_prompt` in
+  `profile-gemma4-cleanup.toml` and `profile-openai-cleanup.toml`
+  showed `"Always reply in English."` as the assignment value —
+  uncommenting that line literally would have silently activated that
+  instruction instead of the intended empty default. Moved the example
+  into the comment text and made the commented assignment line show
+  the actual default (`""`), matching the convention used elsewhere in
+  these templates.
+
 ## [0.13.1] - 2026-04-18
 
 ### Fixed

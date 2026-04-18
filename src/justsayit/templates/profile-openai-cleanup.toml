@@ -72,8 +72,9 @@ model = "gpt-4o-mini"
 
 # Extra text appended to the resolved system prompt (joined with a
 # blank line). Useful for adding small instructions without forking
-# the whole prompt.
-# append_to_system_prompt = "Always reply in English."
+# the whole prompt — e.g. set it to `"Always reply in English."` to
+# force the language.
+# append_to_system_prompt = ""
 
 # Extra kwargs forwarded into the chat template, included in the JSON
 # body under `chat_template_kwargs`. Default already enables Qwen 3.5's

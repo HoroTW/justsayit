@@ -68,8 +68,9 @@ base = "builtin"
 
 # Extra text appended to the resolved system prompt (joined with a
 # blank line). Handy when you want the default prompt plus a small
-# addition without copying the whole prompt into a new file.
-# append_to_system_prompt = "Always reply in English."
+# addition without copying the whole prompt into a new file —
+# e.g. set it to `"Always reply in English."` to force the language.
+# append_to_system_prompt = ""
 
 # Extra kwargs forwarded into the chat template. Default already enables
 # Qwen 3.5's thinking mode (off in its default template) and is a no-op
