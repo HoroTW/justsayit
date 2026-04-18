@@ -103,31 +103,21 @@ def _comment_block(text: str) -> str:
 # "commented defaults" convention: every value line is commented out
 # so the file acts as in-place documentation. Users uncomment + edit
 # only the keys they actually want to override; everything else tracks
-# the dataclass default. Two ``{{NAME}}`` markers are substituted: the
-# header marker line and (for the cleanup profiles) the commented-out
-# default system prompt.
-_CLEANUP_PROFILE_TOML = (
-    _load_template("profile-gemma4-cleanup.toml")
-    .replace("{{COMMENTED_FORM_MARKER}}", _PROFILE_COMMENTED_FORM_MARKER)
-    .replace(
-        "{{COMMENTED_DEFAULT_SYSTEM_PROMPT}}",
-        _comment_block(_DEFAULT_SYSTEM_PROMPT.rstrip()),
-    )
+# the dataclass default. The remaining ``{{NAME}}`` markers in the
+# cleanup profiles embed the default system prompt as commented-out
+# documentation so the .md file stays the single source of truth.
+_CLEANUP_PROFILE_TOML = _load_template("profile-gemma4-cleanup.toml").replace(
+    "{{COMMENTED_DEFAULT_SYSTEM_PROMPT}}",
+    _comment_block(_DEFAULT_SYSTEM_PROMPT.rstrip()),
 )
 
-_FUN_PROFILE_TOML = (
-    _load_template("profile-gemma4-fun.toml")
-    .replace("{{COMMENTED_FORM_MARKER}}", _PROFILE_COMMENTED_FORM_MARKER)
-    .replace("{{FUN_SYSTEM_PROMPT}}", _FUN_SYSTEM_PROMPT)
+_FUN_PROFILE_TOML = _load_template("profile-gemma4-fun.toml").replace(
+    "{{FUN_SYSTEM_PROMPT}}", _FUN_SYSTEM_PROMPT
 )
 
-_OPENAI_PROFILE_TOML = (
-    _load_template("profile-openai-cleanup.toml")
-    .replace("{{COMMENTED_FORM_MARKER}}", _PROFILE_COMMENTED_FORM_MARKER)
-    .replace(
-        "{{COMMENTED_DEFAULT_SYSTEM_PROMPT}}",
-        _comment_block(_DEFAULT_SYSTEM_PROMPT.rstrip()),
-    )
+_OPENAI_PROFILE_TOML = _load_template("profile-openai-cleanup.toml").replace(
+    "{{COMMENTED_DEFAULT_SYSTEM_PROMPT}}",
+    _comment_block(_DEFAULT_SYSTEM_PROMPT.rstrip()),
 )
 
 

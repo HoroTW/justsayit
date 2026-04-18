@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.16] - 2026-04-18
+
+### Changed
+
+- Inlined the `commented-defaults form` marker literal directly into
+  the three profile templates (`profile-gemma4-cleanup.toml`,
+  `profile-gemma4-fun.toml`, `profile-openai-cleanup.toml`) instead of
+  injecting it via a `{{COMMENTED_FORM_MARKER}}` placeholder. The
+  marker never varies, so the substitution machinery added no value.
+  No behavioral change — generated files remain byte-identical.
+
 ## [0.11.15] - 2026-04-18
 
 ### Changed

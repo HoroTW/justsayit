@@ -1,4 +1,4 @@
-{{COMMENTED_FORM_MARKER}}
+# justsayit postprocess profile (commented-defaults form).
 # Profile: gemma4-cleanup (recommended everyday default).
 #
 # Every key below is commented out — that means "use the shipped default".

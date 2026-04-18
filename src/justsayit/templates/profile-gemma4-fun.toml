@@ -1,4 +1,4 @@
-{{COMMENTED_FORM_MARKER}}
+# justsayit postprocess profile (commented-defaults form).
 # Profile: gemma4-fun (playful sibling of gemma4-cleanup).
 #
 # Same commented-defaults convention as gemma4-cleanup.toml: comment =

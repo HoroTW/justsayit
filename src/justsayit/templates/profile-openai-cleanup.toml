@@ -1,4 +1,4 @@
-{{COMMENTED_FORM_MARKER}}
+# justsayit postprocess profile (commented-defaults form).
 # Profile: openai-cleanup (OpenAI-compatible /chat/completions backend).
 #
 # Same commented-defaults convention as gemma4-cleanup.toml: comment =
