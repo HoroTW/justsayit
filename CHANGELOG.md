@@ -21,6 +21,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behavior as best-effort prompt semantics rather than deterministic app
   logic.
 
+## [0.11.13] - 2026-04-18
+
+### Added
+
+- `killall justsayit` (and `pgrep justsayit` without `-f`, `htop`,
+  `top`, etc.) now actually find the running process. The installed
+  `justsayit` entry-point is a tiny Python shim, which means the
+  kernel's `comm` field for the running process was `python3` — so any
+  tool that matches by short name (`killall`, `pgrep` without `-f`)
+  saw nothing. `cli.main()` now calls `prctl(PR_SET_NAME, "justsayit")`
+  via `ctypes` at startup so the comm field is correct. Linux-only,
+  no new dependencies. Has to run from `main()` (not module-import
+  time) because the two re-execs at the top of `cli.py`
+  (systemd-scope wrapping + LD_PRELOAD for gtk4-layer-shell) reset
+  comm back to `python3`; setting it in `main()` runs after both.
+
+### Fixed
+
+- Stale assertion in `test_default_overlay_fields` (commit `89c4f65`
+  changed `OverlayConfig.visualizer_sensitivity` 1.0 → 2.5 and
+  `opacity` 0.78 → 0.7 but didn't update the test). Test now matches
+  the shipped defaults.
+
 ## [0.11.12] - 2026-04-18
 
 ### Fixed

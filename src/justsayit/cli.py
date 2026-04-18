@@ -32,6 +32,27 @@ def _reexec_cmd() -> list[str]:
     return [_sys.executable, *_sys.argv]
 
 
+def _set_process_name(name: str) -> None:
+    """Set the kernel-visible ``comm`` field via ``prctl(PR_SET_NAME)`` so
+    ``killall`` / ``pgrep`` (without ``-f``) / ``htop`` / ``top`` show
+    *name* instead of ``python3``. Without this the entry-point shim
+    leaves us running as ``python3`` and ``killall justsayit`` finds
+    nothing. Linux-only (matches our overall deployment target);
+    quietly no-ops if libc.prctl can't be reached, in which case the
+    user can still fall back to ``pkill -f justsayit``."""
+    if _sys.platform != "linux":
+        return
+    try:
+        import ctypes
+
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        # PR_SET_NAME == 15. The kernel comm field is truncated to 15
+        # bytes + NUL, so trim defensively before passing.
+        libc.prctl(15, name.encode("ascii", "replace")[:15], 0, 0, 0)
+    except Exception:
+        pass
+
+
 def _app_id() -> str:
     """Portal application id used for D-Bus / systemd scoping. Can be
     overridden via ``JUSTSAYIT_APP_ID`` so a dev build can run in
@@ -1434,6 +1455,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Set the kernel comm field so `killall justsayit` / `pgrep justsayit`
+    # work. Has to happen here (not at module import) because the two
+    # re-execs at the top of this module reset comm back to `python3`.
+    _set_process_name("justsayit")
+
     args = _build_parser().parse_args(argv)
 
     console_level = getattr(logging, args.log_level)

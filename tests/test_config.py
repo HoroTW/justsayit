@@ -53,8 +53,8 @@ def test_default_paste_space_fields():
 
 def test_default_overlay_fields():
     o = OverlayConfig()
-    assert o.visualizer_sensitivity == 1.0
-    assert o.opacity == 0.78
+    assert o.visualizer_sensitivity == 2.5
+    assert o.opacity == 0.7
 
 
 def test_default_short_segment_skip_field():
