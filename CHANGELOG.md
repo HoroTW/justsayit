@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.4] - 2026-04-18
+
+### Fixed
+
+- Local LLM load crashed with
+  ``LlamaChatCompletionHandlerNotFoundException: Invalid chat handler:
+  chat_template.default`` on every GGUF that ships with a bundled
+  Jinja chat template (Gemma 4, Qwen 3.5, Llama 3.x, …). The wrapper
+  installed in 0.13.3 was skipping the per-Llama ``_chat_handlers``
+  dict — where llama-cpp-python stores the GGUF-embedded template
+  under the magic name ``chat_template.default`` — and falling
+  straight through to the static registry. Now mirrors the same
+  three-tier lookup ``Llama.create_chat_completion()`` uses
+  internally.
+
+### Added
+
+- New ``burn`` pytest marker for end-to-end tests that load a real
+  GGUF via llama-cpp-python. Skipped by default
+  (``addopts = "-m 'not burn'"``); run explicitly with
+  ``pytest -m burn``. First suite at ``tests/test_burn_postprocess.py``
+  exercises ``process()`` against locally cached Gemma 4 and
+  Qwen 3.5 0.8B models — both the 0.13.3 crash *and* the earlier
+  0.13.0 ``chat_template_kwargs=`` kwarg crash would have tripped on
+  the first burn run. The previous mock-only tests accepted arbitrary
+  kwargs and resolved no real handlers, so integration bugs kept
+  slipping through.
+
 ## [0.13.3] - 2026-04-18
 
 ### Fixed

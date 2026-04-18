@@ -702,9 +702,21 @@ class LLMPostprocessor:
         from llama_cpp import llama_chat_format
 
         template_kwargs = dict(self.profile.chat_template_kwargs)
-        base_handler = self._llm.chat_handler or (
-            llama_chat_format.get_chat_completion_handler(self._llm.chat_format)
-        )
+        # Mirror the lookup order in ``Llama.create_chat_completion``:
+        # (1) explicit chat_handler, (2) the per-instance
+        # ``_chat_handlers`` dict (where GGUF-embedded Jinja templates
+        # live under the magic name ``chat_template.default``), then
+        # (3) the global static registry. Skipping (2) blows up on
+        # every modern GGUF with a bundled template — Gemma, Qwen 3.5,
+        # Llama 3.x — because their ``chat_format`` isn't in the
+        # static registry.
+        base_handler = self._llm.chat_handler
+        if base_handler is None:
+            base_handler = self._llm._chat_handlers.get(self._llm.chat_format)
+        if base_handler is None:
+            base_handler = llama_chat_format.get_chat_completion_handler(
+                self._llm.chat_format
+            )
 
         def _handler(**call_kwargs: Any):
             merged = dict(template_kwargs)

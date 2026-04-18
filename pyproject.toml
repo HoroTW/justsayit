@@ -1,6 +1,6 @@
 [project]
 name = "justsayit"
-version = "0.13.3"
+version = "0.13.4"
 description = "Local Parakeet-powered voice dictation with a Wayland layer-shell overlay"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -41,7 +41,10 @@ packages = ["src/justsayit"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra -q"
+addopts = "-ra -q -m 'not burn'"
+markers = [
+    "burn: integration tests that load a real GGUF via llama-cpp-python (slow, skipped by default; run with `pytest -m burn`)",
+]
 
 [tool.uv]
 # PyGObject builds against system headers; rely on system-site-packages venv
