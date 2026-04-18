@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.15] - 2026-04-18
+
+### Changed
+
+- Simplified the postprocess template loader: `_load_template` is now a
+  thin `read_text` wrapper, and the three profile-TOML templates do
+  their `{{NAME}}` substitution inline via plain `.replace()` chains.
+  The two static templates (`context-sidecar.toml`,
+  `dynamic-context.sh`) no longer pretend to take substitutions they
+  never had. No behavioral change — generated files remain
+  byte-identical.
+
 ## [0.11.14] - 2026-04-17
 
 ### Changed

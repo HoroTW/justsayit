@@ -41,7 +41,12 @@ log = logging.getLogger(__name__)
 # this module so they can be edited in a content-aware editor (Markdown
 # for prompts, TOML for profile templates, shell for the dynamic-context
 # helper) without Python-string escaping or f-string brace doubling.
-# See ``src/justsayit/prompts/`` and ``src/justsayit/templates/``.
+# See ``src/justsayit/prompts/`` and ``src/justsayit/templates/``. The
+# three profile TOMLs include ``{{NAME}}`` markers that are substituted
+# at module-import time via plain ``str.replace`` (literal, not
+# ``str.format``) so naturally-occurring braces in the template body
+# — e.g. ``{text}`` in commented-out ``user_template`` examples —
+# pass through unchanged.
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 
@@ -50,18 +55,8 @@ def _load_prompt(name: str) -> str:
     return (_PROMPTS_DIR / name).read_text(encoding="utf-8")
 
 
-def _load_template(name: str, **subst: str) -> str:
-    """Read a packaged template file and substitute ``{{NAME}}`` markers.
-
-    Uses literal ``str.replace`` (not ``str.format`` or any templating
-    engine) so braces that occur naturally in the template body — e.g.
-    ``{text}`` in commented-out user_template documentation — pass
-    through unchanged. Only the exact ``{{NAME}}`` token (double braces,
-    matching key) is substituted."""
-    text = (_TEMPLATES_DIR / name).read_text(encoding="utf-8")
-    for key, value in subst.items():
-        text = text.replace("{{" + key + "}}", value)
-    return text
+def _load_template(name: str) -> str:
+    return (_TEMPLATES_DIR / name).read_text(encoding="utf-8")
 
 
 # Default cleanup prompt — written for Gemma 3 / 4. Uses the model's
@@ -108,23 +103,31 @@ def _comment_block(text: str) -> str:
 # "commented defaults" convention: every value line is commented out
 # so the file acts as in-place documentation. Users uncomment + edit
 # only the keys they actually want to override; everything else tracks
-# the dataclass default.
-_CLEANUP_PROFILE_TOML = _load_template(
-    "profile-gemma4-cleanup.toml",
-    COMMENTED_FORM_MARKER=_PROFILE_COMMENTED_FORM_MARKER,
-    COMMENTED_DEFAULT_SYSTEM_PROMPT=_comment_block(_DEFAULT_SYSTEM_PROMPT.rstrip()),
+# the dataclass default. Two ``{{NAME}}`` markers are substituted: the
+# header marker line and (for the cleanup profiles) the commented-out
+# default system prompt.
+_CLEANUP_PROFILE_TOML = (
+    _load_template("profile-gemma4-cleanup.toml")
+    .replace("{{COMMENTED_FORM_MARKER}}", _PROFILE_COMMENTED_FORM_MARKER)
+    .replace(
+        "{{COMMENTED_DEFAULT_SYSTEM_PROMPT}}",
+        _comment_block(_DEFAULT_SYSTEM_PROMPT.rstrip()),
+    )
 )
 
-_FUN_PROFILE_TOML = _load_template(
-    "profile-gemma4-fun.toml",
-    COMMENTED_FORM_MARKER=_PROFILE_COMMENTED_FORM_MARKER,
-    FUN_SYSTEM_PROMPT=_FUN_SYSTEM_PROMPT,
+_FUN_PROFILE_TOML = (
+    _load_template("profile-gemma4-fun.toml")
+    .replace("{{COMMENTED_FORM_MARKER}}", _PROFILE_COMMENTED_FORM_MARKER)
+    .replace("{{FUN_SYSTEM_PROMPT}}", _FUN_SYSTEM_PROMPT)
 )
 
-_OPENAI_PROFILE_TOML = _load_template(
-    "profile-openai-cleanup.toml",
-    COMMENTED_FORM_MARKER=_PROFILE_COMMENTED_FORM_MARKER,
-    COMMENTED_DEFAULT_SYSTEM_PROMPT=_comment_block(_DEFAULT_SYSTEM_PROMPT.rstrip()),
+_OPENAI_PROFILE_TOML = (
+    _load_template("profile-openai-cleanup.toml")
+    .replace("{{COMMENTED_FORM_MARKER}}", _PROFILE_COMMENTED_FORM_MARKER)
+    .replace(
+        "{{COMMENTED_DEFAULT_SYSTEM_PROMPT}}",
+        _comment_block(_DEFAULT_SYSTEM_PROMPT.rstrip()),
+    )
 )
 
 
