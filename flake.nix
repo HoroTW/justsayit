@@ -54,7 +54,7 @@
 
       mkJustsayit = { withLlm ? false, withVulkan ? false, llamaCppPython ? llama-cpp-python-new }: pkgs.python3Packages.buildPythonApplication {
         pname = "justsayit";
-        version = "0.11.11";
+        version = "0.11.12";
         pyproject = true;
 
         src = pkgs.lib.cleanSource ./.;

@@ -1002,10 +1002,11 @@ def test_warmup_skipped_for_remote_endpoint():
 
 
 def test_remote_endpoint_swaps_default_prompt_to_channel_free_variant():
-    """The shipped Gemma default uses `<|think|>` and tells the model to
-    write `No changes.` when nothing changes — generic LLMs would echo
-    that literally.  When endpoint is set AND the user kept the dataclass
-    default, the prompt must auto-swap to the channel-free variant."""
+    """The shipped Gemma default uses `<|think|>` for hidden reasoning —
+    generic LLMs have no such channel and would emit the channel literal
+    or leak reasoning into the visible reply.  When endpoint is set AND
+    the user kept the dataclass default, the prompt must auto-swap to
+    the channel-free variant."""
     from justsayit.postprocess import (
         _DEFAULT_SYSTEM_PROMPT,
         _REMOTE_CLEANUP_SYSTEM_PROMPT,
@@ -1021,12 +1022,17 @@ def test_remote_endpoint_swaps_default_prompt_to_channel_free_variant():
     assert out == _REMOTE_CLEANUP_SYSTEM_PROMPT.strip()
     # Sanity: the swap actually drops the Gemma channel directive…
     assert "<|think|>" not in out
-    # …and explicitly forbids the literal "No changes." reply that the
-    # original prompt asked for via the channel.
+    # …and both prompts explicitly forbid the literal "No changes." reply
+    # (older versions of the local prompt told Gemma to write that as a
+    # shortcut, and Gemma sometimes leaked it into the visible reply —
+    # the bug we're guarding against here on both paths).
     assert "do NOT write `No changes.`" in out
-    # Original default still mentions both — proves we swapped, not edited.
+    # Original default still mentions <|think|> — proves we swapped, not edited.
     assert "<|think|>" in _DEFAULT_SYSTEM_PROMPT
-    assert "just write `No changes.`" in _DEFAULT_SYSTEM_PROMPT
+    # And the local default ALSO forbids `No changes.` as visible output
+    # (it used to instruct the model to write it; that shortcut leaked).
+    assert "NEVER respond with a status string" in _DEFAULT_SYSTEM_PROMPT
+    assert "`No changes.`" in _DEFAULT_SYSTEM_PROMPT
 
 
 def test_remote_endpoint_keeps_user_overridden_prompt():

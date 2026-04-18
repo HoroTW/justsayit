@@ -21,6 +21,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behavior as best-effort prompt semantics rather than deterministic app
   logic.
 
+## [0.11.12] - 2026-04-18
+
+### Fixed
+
+- The shipped local Gemma cleanup prompt previously instructed the
+  model: *"If nothing needs changing, just write `No changes.` and
+  stop."* (commit 984c78b). That instruction lived inside the
+  `<|think|>` channel block, but Gemma sometimes treated `No changes.`
+  as the visible reply — so the user pasted a literal `No changes.`
+  into their document instead of getting their text back. Removed the
+  shortcut entirely. The prompt now states explicitly (mirroring the
+  remote/OpenAI variant) that the visible reply is ALWAYS the
+  transcript itself — cleaned where edits apply, otherwise verbatim —
+  and lists `No changes.` / `Already clean.` / `OK.` as forbidden
+  meta-strings. The `# Output` section repeats the same backstop.
+
+### Changed
+
+- Loosened the `<|think|>` reasoning constraint in the local Gemma
+  prompt. Commit 984c78b had tightened it to *"at most ONE short
+  sentence (≤ 15 words)"* to fight bloated chain-of-thought, but the
+  cap was too aggressive — local Gemma cleanup quality benefits from
+  the model thinking through tricky inputs (mishears, modal particles,
+  punctuation collisions, trigger-or-not decisions). The channel is
+  now described as a working space where focused, multi-sentence
+  thinking is fine for tricky input, with the still-firm rules being
+  "no whole-input echo, no per-word enumeration." Bloat is bounded by
+  intent, not a hard word count.
+
 ## [0.11.11] - 2026-04-18
 
 ### Fixed
