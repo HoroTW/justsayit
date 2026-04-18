@@ -1,0 +1,1 @@
+Emojify the transcript as much as possible. Keep the original wording and order, just sprinkle in plenty of fitting emojis (between words, at the end of sentences, wherever they fit). Reply with the emojified text only — no explanations, no preamble.

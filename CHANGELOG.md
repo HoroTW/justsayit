@@ -21,6 +21,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behavior as best-effort prompt semantics rather than deterministic app
   logic.
 
+## [0.11.11] - 2026-04-18
+
+### Fixed
+
+- Hardened both shipped cleanup prompts against Gemma 3 answering bare
+  questions like `Wie viel Uhr ist es gerade?` instead of cleaning them
+  up. The Assistant-mode block now states explicitly that a bare
+  question (without the literal word `Computer` somewhere in the
+  transcript) is NEVER a trigger, and the examples list adds German
+  + English question counter-examples (`Wie viel Uhr ist es gerade?`,
+  `Was meinst du dazu?`, `What time is it?`, `Kannst du mir das Salz
+  reichen?`). The local-Gemma prompt also tells the model not to use
+  the `<|think|>` channel to deliberate "is the user asking me?" — that
+  deliberation is what was talking the model into responding.
+
+### Changed
+
+- Extracted the three shipped system prompts (local Gemma cleanup,
+  OpenAI-compatible cleanup, fun) out of inline Python triple-quoted
+  strings in `postprocess.py` and into standalone Markdown files under
+  `src/justsayit/prompts/`. The Python module now loads them via a
+  small `_load_prompt()` helper at import time. Same prompt text, just
+  much easier to read, diff, and edit. Hatchling already includes the
+  whole package directory in the wheel, so no packaging changes are
+  needed.
+
+### Tests
+
+- Added a parametrized regression test pinning the bare-question rule
+  and the German + English question counter-examples in both shipped
+  prompts.
+
 ## [0.11.10] - 2026-04-17
 
 ### Fixed

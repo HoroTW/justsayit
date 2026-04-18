@@ -281,6 +281,18 @@ def test_assistant_mode_requires_literal_word_computer(prompt):
     assert "Hey, ich habe gesehen" in prompt
 
 
+@pytest.mark.parametrize("prompt", [_DEFAULT_SYSTEM_PROMPT, _REMOTE_CLEANUP_SYSTEM_PROMPT])
+def test_bare_questions_are_not_assistant_triggers(prompt):
+    """Regression test for Gemma answering bare questions like `Wie viel
+    Uhr ist es gerade?` instead of cleaning them up. The prompt must
+    state explicitly that questions without `Computer` stay CLEANUP, and
+    must include German + English question counter-examples."""
+    assert "bare QUESTION" in prompt
+    assert "Wie viel Uhr ist es gerade?" in prompt
+    assert "What time is it?" in prompt
+    assert "Was meinst du dazu?" in prompt
+
+
 def test_warmup_loads_model(tmp_path):
     """warmup() should call _build() and cache the result in _llm."""
     profile = PostprocessProfile(model_path=str(tmp_path / "model.gguf"))
