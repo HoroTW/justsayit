@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.6] - 2026-04-18
+
+### Added
+
+- ``justsayit setup-llm`` now bakes Qwen-recommended sampling into
+  the Qwen 3.5 0.8B profile at creation time, so users don't land in
+  near-greedy defaults that drive the model into thinking loops. The
+  seeded ``qwen3-0.8b.toml`` gets ``temperature = 0.6``,
+  ``top_p = 0.95``, ``top_k = 20``, ``min_p = 0.0``, and
+  ``presence_penalty = 1.5`` — the exact thinking-mode combo from
+  Qwen's model card (https://huggingface.co/Qwen/Qwen3.5-0.8B).
+  Machinery is generic (``profile_overrides`` dict on each
+  ``KNOWN_LLM_MODELS`` entry), so per-model tuning for Qwen 3 4B or
+  any future addition is a one-line edit. Existing on-disk profiles
+  are not rewritten — back up and delete
+  ``~/.config/justsayit/postprocess/qwen3-0.8b.toml`` and re-run
+  ``setup-llm qwen3-0.8b`` to pick up the new defaults, or edit the
+  file by hand.
+
 ## [0.13.5] - 2026-04-18
 
 ### Added

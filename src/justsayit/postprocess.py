@@ -779,8 +779,11 @@ class LLMPostprocessor:
 # ---------------------------------------------------------------------------
 
 #: Built-in LLM choices offered by ``justsayit setup-llm``.
-#: Each entry maps a short key → display label + HuggingFace repo.
-KNOWN_LLM_MODELS: dict[str, dict[str, str]] = {
+#: Each entry: display label + HuggingFace repo, plus an optional
+#: ``profile_overrides`` dict of TOML values to bake into the seeded
+#: profile (sampling knobs, temperature, …) so users don't have to
+#: discover model-specific tuning on their own.
+KNOWN_LLM_MODELS: dict[str, dict[str, Any]] = {
     "gemma4": {
         "display": "gemma-4-E4B-it      (4B, ~3 GB)   — Google Gemma 4, highest quality  (recommended — tuned for best results)",
         "hf_repo": "unsloth/gemma-4-E4B-it-GGUF",
@@ -792,6 +795,20 @@ KNOWN_LLM_MODELS: dict[str, dict[str, str]] = {
     "qwen3-0.8b": {
         "display": "Qwen3.5-0.8B        (0.8B, ~600 MB) — fastest, smallest footprint",
         "hf_repo": "unsloth/Qwen3.5-0.8B-GGUF",
+        # Qwen's own recommended thinking-mode sampling for the 0.8B
+        # (see https://huggingface.co/Qwen/Qwen3.5-0.8B). The default
+        # ``temperature = 0.08`` is effectively greedy, which Qwen
+        # explicitly warns against — it drives the 0.8B into thinking
+        # loops. ``presence_penalty = 1.5`` is their named anti-loop
+        # knob; non-thinking mode would want 2.0, but we default to
+        # thinking on for Qwen 3.5 (see chat_template_kwargs).
+        "profile_overrides": {
+            "temperature": 0.6,
+            "top_p": 0.95,
+            "top_k": 20,
+            "min_p": 0.0,
+            "presence_penalty": 1.5,
+        },
     },
 }
 
@@ -840,6 +857,27 @@ def download_llm_model(hf_repo: str, hf_filename: str) -> Path:
     return dest
 
 
+def _format_toml_scalar(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    return f'"{value}"'
+
+
+def _set_toml_key(src: str, key: str, value: Any) -> str:
+    formatted = _format_toml_scalar(value)
+    # Match both active (``key = …``) and commented-out defaults
+    # (``# key = …``) so seeded templates flip to the override value.
+    pattern = rf"^(?:#\s*)?{re.escape(key)}\s*=\s*.*$"
+    result, n = re.subn(
+        pattern, f"{key} = {formatted}", src, count=1, flags=re.MULTILINE
+    )
+    if n == 0:
+        result = src.rstrip() + f"\n{key} = {formatted}\n"
+    return result
+
+
 def update_profile_model(
     profile_path: Path, model_path: Path, hf_repo: str, hf_filename: str
 ) -> None:
@@ -848,19 +886,23 @@ def update_profile_model(
     Uses regex substitution so comments and all other settings are preserved.
     """
     text = profile_path.read_text(encoding="utf-8")
+    text = _set_toml_key(text, "model_path", str(model_path))
+    text = _set_toml_key(text, "hf_repo", hf_repo)
+    text = _set_toml_key(text, "hf_filename", hf_filename)
+    profile_path.write_text(text, encoding="utf-8")
 
-    def _set(src: str, key: str, value: str) -> str:
-        result, n = re.subn(
-            rf"^{re.escape(key)}\s*=\s*.*$",
-            f'{key} = "{value}"',
-            src,
-            flags=re.MULTILINE,
-        )
-        if n == 0:
-            result = src.rstrip() + f'\n{key} = "{value}"\n'
-        return result
 
-    text = _set(text, "model_path", str(model_path))
-    text = _set(text, "hf_repo", hf_repo)
-    text = _set(text, "hf_filename", hf_filename)
+def apply_profile_overrides(profile_path: Path, overrides: dict[str, Any]) -> None:
+    """Write model-specific tuning into *profile_path*.
+
+    Each key/value in *overrides* replaces the matching (possibly
+    commented-out) line in the seeded template. Used by ``setup-llm``
+    to bake Qwen-recommended sampling knobs into a fresh Qwen 3.5 0.8B
+    profile so users aren't dropped into looping-prone defaults.
+    """
+    if not overrides:
+        return
+    text = profile_path.read_text(encoding="utf-8")
+    for key, value in overrides.items():
+        text = _set_toml_key(text, key, value)
     profile_path.write_text(text, encoding="utf-8")

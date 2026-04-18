@@ -20,6 +20,7 @@ from justsayit.postprocess import (
     _CLEANUP_PROFILE_TOML,
     _DYNAMIC_CONTEXT_SCRIPT,
     _FUN_PROFILE_TOML,
+    apply_profile_overrides,
     _load_prompt,
     context_file_path,
     dynamic_context_script_path,
@@ -975,6 +976,65 @@ def test_ensure_default_profile_re_migrates_marker_carrying_corrupt_file(
 # ---------------------------------------------------------------------------
 # Network: verify each built-in model repo exposes a Q4_K_M GGUF
 # ---------------------------------------------------------------------------
+
+
+def test_apply_profile_overrides_flips_commented_defaults(tmp_path):
+    """``apply_profile_overrides`` must uncomment + rewrite commented
+    default lines in the seeded template, not just append new entries
+    (which would leave the original commented line as documentation
+    clutter and confuse users reading the file later)."""
+    profile = tmp_path / "qwen3-0.8b.toml"
+    profile.write_text(
+        "base = \"builtin\"\n"
+        "# temperature = 0.08\n"
+        "# top_p = 0.95\n"
+        "# top_k = 40\n"
+        "# presence_penalty = 0.0\n",
+        encoding="utf-8",
+    )
+
+    apply_profile_overrides(
+        profile,
+        {"temperature": 0.6, "top_p": 0.95, "top_k": 20, "presence_penalty": 1.5},
+    )
+
+    text = profile.read_text(encoding="utf-8")
+    assert "temperature = 0.6" in text
+    assert "top_k = 20" in text
+    assert "presence_penalty = 1.5" in text
+    # Ensure we replaced the commented line, didn't duplicate it.
+    assert "# temperature = 0.08" not in text
+    assert text.count("temperature = ") == 1
+    assert text.count("top_k = ") == 1
+    assert text.count("presence_penalty = ") == 1
+
+
+def test_apply_profile_overrides_appends_missing_keys(tmp_path):
+    """If the seeded template doesn't mention a key yet (e.g. a brand
+    new profile schema where the TOML template lags the dataclass),
+    the override still lands — appended at the end instead of silently
+    dropped."""
+    profile = tmp_path / "p.toml"
+    profile.write_text('base = "builtin"\n', encoding="utf-8")
+
+    apply_profile_overrides(profile, {"presence_penalty": 1.5})
+
+    assert "presence_penalty = 1.5" in profile.read_text(encoding="utf-8")
+
+
+def test_qwen_08b_entry_has_anti_loop_overrides():
+    """Guardrail so future model-catalogue edits don't silently drop
+    the Qwen 3.5 0.8B sampling tuning. ``setup-llm`` needs these
+    bakeds into the seeded profile — without them, users land in
+    near-greedy decoding and hit the thinking-loop tendency Qwen's
+    own docs warn about."""
+    entry = KNOWN_LLM_MODELS["qwen3-0.8b"]
+    overrides = entry.get("profile_overrides")
+    assert overrides, "qwen3-0.8b lost its profile_overrides"
+    # The critical anti-loop knob per Qwen's docs:
+    assert overrides["presence_penalty"] == 1.5
+    # And the away-from-greedy temperature, also per Qwen:
+    assert overrides["temperature"] == 0.6
 
 
 @pytest.mark.network

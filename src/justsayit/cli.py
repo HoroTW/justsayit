@@ -221,6 +221,7 @@ from justsayit.postprocess import (
     _CONTEXT_SIDECAR_TEMPLATE,
     _FUN_PROFILE_TOML,
     _OPENAI_PROFILE_TOML,
+    apply_profile_overrides,
     download_llm_model,
     ensure_default_profile,
     ensure_default_profiles,
@@ -1363,6 +1364,13 @@ def _run_setup_llm(model_key: str | None = None, cpu: bool = False) -> int:
             profile_path = profiles_dir() / f"{key}.toml"
             ensure_default_profile(profile_path)
             update_profile_model(profile_path, model_path, hf_repo, hf_filename)
+            overrides = info.get("profile_overrides") or {}
+            if overrides:
+                apply_profile_overrides(profile_path, overrides)
+                print(
+                    "  Applied model-specific overrides: "
+                    + ", ".join(f"{k}={v}" for k, v in overrides.items())
+                )
             activate_options.append(key)
             print(f"  Profile: {profile_path}")
 
