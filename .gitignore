@@ -20,3 +20,5 @@ result-*
 
 # Claude Code user-local settings
 .claude/settings.local.json
+
+*.local
