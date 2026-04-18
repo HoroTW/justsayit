@@ -675,20 +675,11 @@ class App:
                     save_config(self.cfg)
                 except Exception:
                     log.exception("failed to save config after LLM profile switch")
-                # Swap the postprocessor (lazy — no warmup; loads on first use).
-                self.postprocessor = None
-                if self.cfg.postprocess.enabled:
-                    try:
-                        prof = load_profile(self.cfg.postprocess.profile)
-                        self.postprocessor = LLMPostprocessor(prof)
-                        log.info(
-                            "LLM profile switched to: %s", self.cfg.postprocess.profile
-                        )
-                    except Exception:
-                        log.exception(
-                            "failed to load LLM profile %s",
-                            self.cfg.postprocess.profile,
-                        )
+                # Reinitialize exactly like startup so dynamic-context and
+                # warmup behavior stay consistent after tray profile switches.
+                self.setup_postprocessor()
+                if self.cfg.postprocess.enabled and self.postprocessor is not None:
+                    log.info("LLM profile switched to: %s", self.cfg.postprocess.profile)
                 # Update radio states and parent label via ItemsPropertiesUpdated
                 # (not LayoutUpdated) so the client replaces its cached values
                 # directly — LayoutUpdated goes through a merge path that leaves
