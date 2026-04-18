@@ -70,3 +70,24 @@ system_prompt_file = "cleanup_remote.md"
 # Inline system prompt. When non-empty, takes precedence over
 # system_prompt_file.
 system_prompt = ""
+
+# Extra text appended to the resolved system prompt (joined with a
+# blank line). Handy when you want the default prompt plus a small
+# addition — e.g. "Always reply in English." — without copying the
+# whole prompt into a new file.
+append_to_system_prompt = ""
+
+# --- Chat-template passthrough ------------------------------------------
+
+# Extra kwargs forwarded into the server's chat-template renderer,
+# included in the JSON body under `chat_template_kwargs`. Empty {} →
+# nothing forwarded. Supported by Ollama, vLLM, SGLang, LM Studio, and
+# llama.cpp-server; OpenAI and most hosted providers ignore unknown
+# body fields so it's safe to leave on.
+#
+# `enable_thinking = true` is on by default so Qwen 3.5 served over
+# Ollama/vLLM actually thinks (it ships OFF by default). Providers
+# that don't recognise the flag drop it; templates that don't use it
+# (e.g. Gemma over Ollama) render unchanged.
+chat_template_kwargs = { enable_thinking = true }
+

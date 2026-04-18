@@ -55,3 +55,23 @@ system_prompt_file = "cleanup_local.md"
 # system_prompt_file. Useful for one-off overrides without creating a
 # new .md file.
 system_prompt = ""
+
+# Extra text appended to the resolved system prompt (joined with a
+# blank line). Handy when you want the default prompt plus a small
+# addition — e.g. "Always reply in English." — without copying the
+# whole prompt into a new file.
+append_to_system_prompt = ""
+
+# --- Chat-template passthrough ------------------------------------------
+
+# Extra kwargs forwarded into the Jinja chat template on the built-in
+# backend (reaches llama-cpp-python as `chat_template_kwargs=`). Empty
+# {} → nothing forwarded.
+#
+# `enable_thinking = true` is on by default: Qwen 3.5 needs it to turn
+# thinking on at all (it ships OFF by default), and Gemma 3/4's own
+# template renders a `<|think|>` channel whether the flag is present
+# or not — Jinja silently ignores unknown kwargs, so the default is
+# safe for every template we ship with.
+chat_template_kwargs = { enable_thinking = true }
+

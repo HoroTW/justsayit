@@ -478,6 +478,74 @@ def test_dynamic_context_empty_omits_state_block(monkeypatch):
     assert pp._system_prompt() == "Base prompt."
 
 
+def test_append_to_system_prompt_adds_paragraph_after_base():
+    profile = PostprocessProfile(
+        model_path="/fake/model.gguf",
+        system_prompt="Base prompt.",
+        append_to_system_prompt="Always reply in English.",
+    )
+    pp = LLMPostprocessor(profile)
+
+    assert pp._system_prompt() == "Base prompt.\n\nAlways reply in English."
+
+
+def test_append_to_system_prompt_works_without_base_prompt():
+    profile = PostprocessProfile(
+        model_path="/fake/model.gguf",
+        system_prompt_file="",
+        append_to_system_prompt="Only this.",
+    )
+    pp = LLMPostprocessor(profile)
+
+    assert pp._system_prompt() == "Only this."
+
+
+def test_append_to_system_prompt_sits_between_base_and_context():
+    profile = PostprocessProfile(
+        model_path="/fake/model.gguf",
+        system_prompt="Base prompt.",
+        append_to_system_prompt="Addition.",
+        context="Name: Alice",
+    )
+    pp = LLMPostprocessor(profile)
+
+    assert pp._system_prompt() == (
+        "Base prompt.\n\nAddition.\n\n# User context\nName: Alice"
+    )
+
+
+def test_chat_template_kwargs_forwarded_to_local_llama():
+    profile = PostprocessProfile(
+        model_path="/fake/model.gguf",
+        chat_template_kwargs={"enable_thinking": True},
+    )
+    pp = LLMPostprocessor(profile)
+    pp._llm = _make_mock_llama("ok")
+    pp.process("in")
+    call_kwargs = pp._llm.create_chat_completion.call_args[1]
+    assert call_kwargs["chat_template_kwargs"] == {"enable_thinking": True}
+
+
+def test_chat_template_kwargs_omitted_when_empty():
+    profile = PostprocessProfile(
+        model_path="/fake/model.gguf",
+        chat_template_kwargs={},
+    )
+    pp = LLMPostprocessor(profile)
+    pp._llm = _make_mock_llama("ok")
+    pp.process("in")
+    call_kwargs = pp._llm.create_chat_completion.call_args[1]
+    assert "chat_template_kwargs" not in call_kwargs
+
+
+def test_chat_template_kwargs_default_enables_thinking():
+    """Built-in defaults opt into thinking so Qwen 3.5 works out of the
+    box. Gemma ignores the flag (its Jinja template doesn't read it),
+    so the same default is safe for every shipped model."""
+    profile = PostprocessProfile(model_path="/fake/model.gguf")
+    assert profile.chat_template_kwargs == {"enable_thinking": True}
+
+
 def test_dynamic_context_script_empty_stdout_omitted(monkeypatch):
     import justsayit.postprocess as pp_mod
 
@@ -1096,3 +1164,87 @@ def test_ollama_gemma_combo_resolves_local_prompt_over_remote_backend(tmp_path):
     # Got the Gemma channel prompt, not the channel-free one.
     assert "<|think|>" in out
     assert out == _DEFAULT_SYSTEM_PROMPT.strip()
+
+
+def test_remote_process_forwards_chat_template_kwargs_when_set(monkeypatch):
+    """Non-empty chat_template_kwargs must land in the JSON body so
+    template toggles like Qwen 3.5's enable_thinking reach the server."""
+    import json
+    from unittest.mock import MagicMock
+    import justsayit.postprocess as pp_mod
+
+    profile = PostprocessProfile(
+        endpoint="https://api.example.com/v1",
+        model="qwen3.5-0.8b",
+        api_key="sk",
+        chat_template_kwargs={"enable_thinking": True},
+    )
+    pp = LLMPostprocessor(profile)
+
+    captured = {}
+
+    def fake_urlopen(req, timeout=None):
+        captured["body"] = json.loads(req.data.decode("utf-8"))
+        body = json.dumps(
+            {"choices": [{"message": {"content": "ok"}}]}
+        ).encode()
+        resp = MagicMock()
+        resp.read.return_value = body
+        resp.__enter__ = lambda self: self
+        resp.__exit__ = lambda self, *a: False
+        return resp
+
+    monkeypatch.setattr(pp_mod.urllib.request, "urlopen", fake_urlopen)
+
+    pp.process("in")
+    assert captured["body"]["chat_template_kwargs"] == {"enable_thinking": True}
+
+
+def test_remote_process_omits_chat_template_kwargs_when_empty(monkeypatch):
+    """Empty dict → key must NOT appear in the body, so providers that
+    don't understand it aren't confused (and we don't risk 400s from
+    stricter gateways)."""
+    import json
+    from unittest.mock import MagicMock
+    import justsayit.postprocess as pp_mod
+
+    profile = PostprocessProfile(
+        endpoint="https://api.example.com/v1",
+        model="gpt-4o-mini",
+        api_key="sk",
+        chat_template_kwargs={},
+    )
+    pp = LLMPostprocessor(profile)
+
+    captured = {}
+
+    def fake_urlopen(req, timeout=None):
+        captured["body"] = json.loads(req.data.decode("utf-8"))
+        body = json.dumps(
+            {"choices": [{"message": {"content": "ok"}}]}
+        ).encode()
+        resp = MagicMock()
+        resp.read.return_value = body
+        resp.__enter__ = lambda self: self
+        resp.__exit__ = lambda self, *a: False
+        return resp
+
+    monkeypatch.setattr(pp_mod.urllib.request, "urlopen", fake_urlopen)
+
+    pp.process("in")
+    assert "chat_template_kwargs" not in captured["body"]
+
+
+def test_load_profile_chat_template_kwargs_from_toml(tmp_path, monkeypatch):
+    """User profiles can set chat_template_kwargs via inline TOML table."""
+    import justsayit.postprocess as pp_mod
+
+    monkeypatch.setattr(pp_mod, "profiles_dir", lambda: tmp_path)
+    p = tmp_path / "qwen-thinking.toml"
+    p.write_text(
+        "model_path = '/m'\n"
+        "chat_template_kwargs = { enable_thinking = true }\n",
+        encoding="utf-8",
+    )
+    profile = load_profile("qwen-thinking")
+    assert profile.chat_template_kwargs == {"enable_thinking": True}

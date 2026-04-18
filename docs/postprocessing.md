@@ -204,6 +204,8 @@ The dataclass keys you can override:
 | `base` | Picks the backend defaults to overlay (`"builtin"` or `"remote"`). Defaults to `"builtin"`; legacy profiles without `base` are auto-treated as `"remote"` if `endpoint` is set. |
 | `system_prompt_file` | Path to a `.md` prompt file. Bare names (e.g. `cleanup_local.md`) resolve against the packaged `src/justsayit/prompts/` directory; paths with a slash or `~` load as-is. |
 | `system_prompt` | Inline override. When non-empty, takes precedence over `system_prompt_file`. Multi-line strings welcome. |
+| `append_to_system_prompt` | Extra text glued onto the end of the resolved system prompt (separated by a blank line). Use this to extend a shipped prompt without forking it — e.g. `"Always reply in English."` |
+| `chat_template_kwargs` | Inline table forwarded into the chat template. On the built-in backend it reaches llama-cpp-python as `chat_template_kwargs=`; on the remote backend it's included in the JSON body under the same key. Default is `{ enable_thinking = true }` — required to turn on Qwen 3.5's thinking (off by default) and a no-op for Gemma (its template ignores the flag). Set to `{}` to suppress the passthrough entirely. |
 | `temperature` | Lower = deterministic (cleanup); higher = creative (emoji, rewriting). |
 | `max_tokens` | Hard cap on the generated reply. |
 | `user_template` | Template wrapping the transcript. `{text}` is substituted. |
@@ -211,6 +213,31 @@ The dataclass keys you can override:
 | `context` | Per-profile context that overrides the sidecar. |
 | **Built-in backend** (`base = "builtin"`) | `model_path`, `hf_repo`, `hf_filename`, `n_gpu_layers`, `n_ctx` |
 | **Remote backend** (`base = "remote"`) | `endpoint`, `model`, `api_key`, `api_key_env`, `request_timeout`, `remote_retries`, `remote_retry_delay_seconds` |
+
+### Thinking mode (Qwen 3.5, Gemma, …)
+
+Thinking mode is on by default via
+`chat_template_kwargs = { enable_thinking = true }` in both shipped
+defaults files.
+
+- **Qwen 3.5 (all sizes, incl. 0.8B)**: ships with thinking *off* by
+  default. The flag is what turns it on. The soft switch (`/think` in
+  the user prompt) also works but is less reliable across llama.cpp
+  builds.
+- **Gemma 3/4**: the Jinja template doesn't read `enable_thinking`, so
+  the flag is a no-op there — Gemma's `<|think|>`-channel prompt is
+  prompt-driven and already in `cleanup_local.md`.
+- **OpenAI-proper / most hosted providers**: drop unknown body fields
+  silently, so the flag doesn't hurt. Ollama, vLLM, SGLang, LM Studio,
+  and llama.cpp-server all honour it.
+
+To turn thinking off for a specific model, override per profile:
+
+```toml
+chat_template_kwargs = { enable_thinking = false }
+# or suppress the field entirely:
+# chat_template_kwargs = {}
+```
 
 ### Custom-prompt examples
 

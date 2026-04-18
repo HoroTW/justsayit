@@ -24,7 +24,7 @@ import time
 import tomllib
 import urllib.error
 import urllib.request
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -132,6 +132,22 @@ class PostprocessProfile:
     )
     # Inline override. When non-empty, takes precedence over the file.
     system_prompt: str = _builtin_default("system_prompt", "")
+    # Extra text appended to the resolved system prompt — convenient for
+    # tweaking the shipped default without forking it into a custom file.
+    # Joined with "\n\n" so it reads as its own paragraph.
+    append_to_system_prompt: str = _builtin_default(
+        "append_to_system_prompt", ""
+    )
+
+    # Passthrough dict forwarded to the chat template. On llama-cpp-python
+    # it reaches the Jinja renderer via ``chat_template_kwargs=``; on the
+    # remote OpenAI-compatible path it's included in the JSON body under
+    # the same key. Empty → not forwarded at all (keeps requests clean for
+    # providers that don't understand it). Typical use: toggling
+    # per-model features like Qwen 3.5's ``enable_thinking``.
+    chat_template_kwargs: dict[str, Any] = field(
+        default_factory=lambda: dict(_builtin_default("chat_template_kwargs", {}))
+    )
 
     # --- User context (also see context.toml sidecar) -------------------
     context: str = _builtin_default("context", "")
@@ -568,6 +584,9 @@ class LLMPostprocessor:
             prompt = _resolve_system_prompt_file(
                 self.profile.system_prompt_file
             ).strip()
+        extra = self.profile.append_to_system_prompt.strip()
+        if extra:
+            prompt = f"{prompt}\n\n{extra}" if prompt else extra
         dynamic = self._dynamic_context()
         if dynamic:
             prompt = f"# STATE (DYNAMIC CONTEXT):\n{dynamic}\n\n----\n\n{prompt}"
@@ -601,12 +620,17 @@ class LLMPostprocessor:
                 "set 'model' in the profile (e.g. \"gpt-4o-mini\")."
             )
         url = self.profile.endpoint.rstrip("/") + "/chat/completions"
-        body = {
+        body: dict[str, Any] = {
             "model": self.profile.model,
             "messages": self._build_messages(text),
             "temperature": self.profile.temperature,
             "max_tokens": self.profile.max_tokens,
         }
+        if self.profile.chat_template_kwargs:
+            # Forwarded to the server's template renderer. Supported by
+            # Ollama, vLLM, SGLang, LM Studio, llama.cpp-server; OpenAI
+            # ignores unknown fields, so this is safe to include.
+            body["chat_template_kwargs"] = dict(self.profile.chat_template_kwargs)
         attempts = 1 + max(0, self.profile.remote_retries)
         last_error: RuntimeError | None = None
         for attempt in range(1, attempts + 1):
@@ -669,11 +693,20 @@ class LLMPostprocessor:
         with self._lock:
             if self._llm is None:
                 self._llm = self._build()
-            resp = self._llm.create_chat_completion(
-                messages=self._build_messages(text),
-                temperature=self.profile.temperature,
-                max_tokens=self.profile.max_tokens,
-            )
+            kwargs: dict[str, Any] = {
+                "messages": self._build_messages(text),
+                "temperature": self.profile.temperature,
+                "max_tokens": self.profile.max_tokens,
+            }
+            if self.profile.chat_template_kwargs:
+                # Forwarded into the Jinja chat template (e.g. Qwen 3.5's
+                # ``enable_thinking`` flag). Empty → not forwarded, so we
+                # don't trigger ``TypeError: unexpected keyword argument``
+                # on older llama-cpp-python builds.
+                kwargs["chat_template_kwargs"] = dict(
+                    self.profile.chat_template_kwargs
+                )
+            resp = self._llm.create_chat_completion(**kwargs)
         return resp["choices"][0]["message"]["content"].strip()
 
     def process(self, text: str) -> str:

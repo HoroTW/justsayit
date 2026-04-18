@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-04-18
+
+### Added
+
+- **`chat_template_kwargs`** (new profile field, default
+  `{ enable_thinking = true }`) — inline TOML table forwarded into the
+  chat template on both backends. On the built-in backend it reaches
+  llama-cpp-python as `chat_template_kwargs=`; on the remote backend
+  it's included in the JSON body under the same key. Motivated by
+  Qwen 3.5 (all sizes, including the 0.8B) which ships with thinking
+  **disabled** by default and needs this flag to turn it on at all.
+  The soft switch (`/think` / `/no_think` in the user prompt) was too
+  fragile across llama.cpp versions — the chat-template kwarg is the
+  reliable route. Default is safe for Gemma (its template ignores the
+  flag) and for OpenAI / most hosted providers (they drop unknown body
+  fields). Set to `{}` or `{ enable_thinking = false }` to opt out
+  per-profile. Documented in `docs/postprocessing.md` under
+  *"Thinking mode (Qwen 3.5, Gemma, …)"*.
+
+- **`append_to_system_prompt`** (new profile field, default `""`) —
+  extra text glued onto the end of the resolved system prompt
+  (separated by a blank line). Makes it trivial to extend a shipped
+  prompt with a small addition (e.g. `"Always reply in English."`)
+  without forking the whole `.md` file. Sits between the base prompt
+  and the `context` block.
+
 ## [0.12.1] - 2026-04-18
 
 ### Added
