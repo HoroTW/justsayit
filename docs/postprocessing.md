@@ -99,18 +99,20 @@ collapse to just the emoji, including slight STT mishears. Example:
 
 ## Shipped profiles
 
-`justsayit init` writes three profiles into `~/.config/justsayit/postprocess/`:
+`justsayit init` writes four profiles into `~/.config/justsayit/postprocess/`:
 
-| Profile | Backend | What it does |
+| Profile | Backend (`base`) | What it does |
 |---------|---------|--------------|
-| `gemma4-cleanup` | Local Gemma 4 E4B via `llama-cpp-python` | Recommended. Conservative DE/EN cleanup tuned for Gemma. Treats `Hey Computer` as a best-effort assistant cue anywhere in the transcript, while quoted/reported/incidental uses should remain cleanup-only. |
-| `gemma4-fun` | Same local Gemma model | Keeps your wording but sprinkles emojis. Great for chat / social. |
-| `openai-cleanup` | Any OpenAI-compatible `/chat/completions` endpoint | Same cleanup contract, including the same best-effort `Hey Computer` semantics in the shipped prompt, no GPU required. Pre-configured for `https://api.openai.com/v1` + `gpt-4o-mini`; just point it elsewhere if you prefer another provider. |
+| `gemma4-cleanup` | `builtin` (Gemma 4 E4B via `llama-cpp-python`) | Recommended. Conservative DE/EN cleanup tuned for Gemma. Treats `Hey Computer` as a best-effort assistant cue anywhere in the transcript, while quoted/reported/incidental uses should remain cleanup-only. |
+| `gemma4-fun` | `builtin` (same local Gemma model) | Keeps your wording but sprinkles emojis. Great for chat / social. |
+| `openai-cleanup` | `remote` (any OpenAI-compatible `/chat/completions`) | Same cleanup contract, including the same best-effort `Hey Computer` semantics in the shipped prompt, no GPU required. Pre-configured for `https://api.openai.com/v1` + `gpt-4o-mini`; just point it elsewhere if you prefer another provider. |
+| `ollama-gemma` | `remote` (local Ollama on `:11434/v1`) | Demonstrates that backend (`base`) and prompt (`system_prompt_file`) are independent: HTTP backend talking to Ollama, but the Gemma `<|think|>` cleanup prompt and channel stripper. Useful when you'd rather have Ollama manage the GGUF than llama-cpp-python. |
 
-All three use the **commented-defaults** form: every key is shipped
-commented out, with the dataclass default tracked automatically. Lines
-you uncomment are overrides for that profile only — future updates that
-tweak a default flow through unless you've taken ownership of the line.
+All four use the **commented-defaults** form: every key is shipped
+commented out, tracking the canonical default in the matching
+`builtin-defaults.toml` / `remote-defaults.toml`. Lines you uncomment
+are overrides for that profile only — future updates that tweak a
+default flow through unless you've taken ownership of the line.
 
 To download / install the local model interactively:
 
@@ -138,11 +140,31 @@ model = "llama-3.3-70b-versatile"
 # api_key_env = "GROQ_API_KEY"   # default OPENAI_API_KEY also fine
 ```
 
-When `endpoint` is set AND `system_prompt` is left at the dataclass
-default (commented out), justsayit auto-swaps the Gemma `<|think|>`
-channel cleanup prompt for a channel-free variant. Generic models don't
-have that channel and would otherwise reply literally `No changes.` or
-leak reasoning into the output.
+### Backend vs. prompt are orthogonal
+
+Two independent knobs control the postprocess behaviour:
+
+- `base = "builtin" | "remote"` picks the inference backend (loads
+  defaults from `templates/builtin-defaults.toml` or
+  `templates/remote-defaults.toml` respectively).
+- `system_prompt_file = "..."` picks which prompt the model sees. Bare
+  filenames resolve against the packaged `src/justsayit/prompts/`
+  directory (`cleanup_local.md` for Gemma's `<|think|>`-channel
+  variant, `cleanup_remote.md` for the channel-free variant,
+  `fun.md` for the emoji profile). Paths with a slash (or `~`) are
+  loaded as-is.
+- `system_prompt = "..."` is an inline override that takes precedence
+  over `system_prompt_file`. Useful for one-off tweaks without
+  creating a new `.md` file.
+
+The shipped `openai-cleanup` profile uses `base = "remote"` +
+`system_prompt_file = "cleanup_remote.md"` (channel-free) because most
+hosted providers don't have Gemma's `<|think|>` channel. The
+`ollama-gemma` profile uses `base = "remote"` +
+`system_prompt_file = "cleanup_local.md"` because Ollama is in fact
+serving Gemma, so the channel directives apply — and it re-enables
+`paste_strip_regex` to strip the channel block. This is what we mean
+by "orthogonal": you can mix any backend with any prompt.
 
 ## Personal-context sidecar
 
@@ -179,14 +201,16 @@ The dataclass keys you can override:
 
 | Key | Purpose |
 |-----|---------|
-| `system_prompt` | The instruction sent to the model. Multi-line strings welcome. |
+| `base` | Picks the backend defaults to overlay (`"builtin"` or `"remote"`). Defaults to `"builtin"`; legacy profiles without `base` are auto-treated as `"remote"` if `endpoint` is set. |
+| `system_prompt_file` | Path to a `.md` prompt file. Bare names (e.g. `cleanup_local.md`) resolve against the packaged `src/justsayit/prompts/` directory; paths with a slash or `~` load as-is. |
+| `system_prompt` | Inline override. When non-empty, takes precedence over `system_prompt_file`. Multi-line strings welcome. |
 | `temperature` | Lower = deterministic (cleanup); higher = creative (emoji, rewriting). |
 | `max_tokens` | Hard cap on the generated reply. |
 | `user_template` | Template wrapping the transcript. `{text}` is substituted. |
 | `paste_strip_regex` | Regex (`re.DOTALL`) applied to the LLM output before paste but not before overlay display. Useful to hide reasoning preambles. |
 | `context` | Per-profile context that overrides the sidecar. |
-| **Local LLM** | `model_path`, `hf_repo`, `hf_filename`, `n_gpu_layers`, `n_ctx` |
-| **Remote LLM** | `endpoint`, `model`, `api_key`, `api_key_env`, `request_timeout`, `remote_retries`, `remote_retry_delay_seconds` |
+| **Built-in backend** (`base = "builtin"`) | `model_path`, `hf_repo`, `hf_filename`, `n_gpu_layers`, `n_ctx` |
+| **Remote backend** (`base = "remote"`) | `endpoint`, `model`, `api_key`, `api_key_env`, `request_timeout`, `remote_retries`, `remote_retry_delay_seconds` |
 
 ### Custom-prompt examples
 

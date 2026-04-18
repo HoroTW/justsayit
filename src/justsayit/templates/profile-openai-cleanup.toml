@@ -1,28 +1,34 @@
 # justsayit postprocess profile (commented-defaults form).
+#
 # Profile: openai-cleanup (OpenAI-compatible /chat/completions backend).
 #
 # Same commented-defaults convention as gemma4-cleanup.toml: comment =
-# uses default, uncommented line = override. The two uncommented keys
-# below (endpoint, model) are what makes this the "openai" profile —
-# point them at your provider, drop your API key into
-# ~/.config/justsayit/.env (KEY=VALUE format), and activate this
-# profile from the tray's LLM submenu.
+# uses the value from `templates/remote-defaults.toml`, uncommented
+# line = override. The two uncommented keys below (endpoint, model)
+# are what makes this the "openai" profile — point them at your
+# provider, drop your API key into ~/.config/justsayit/.env (KEY=VALUE
+# format), and activate this profile from the tray's LLM submenu.
 #
 # Works with anything that speaks the OpenAI chat-completions schema:
 # OpenAI, OpenRouter, Groq, Together, vLLM, Ollama (`/v1`), LM Studio,
-# llama.cpp's bundled server, etc.
-#
-# Because `endpoint` is set AND `system_prompt` is left at the dataclass
-# default (commented-out below), justsayit auto-swaps the Gemma
-# `<|think|>`-channel cleanup prompt for a channel-free variant —
-# generic OpenAI-compatible models don't have that channel and would
-# otherwise reply literally `No changes.` or leak reasoning.
+# llama.cpp's bundled server, etc. (For Ollama serving Gemma, prefer
+# the dedicated `ollama-gemma.toml` profile — it points
+# `system_prompt_file` at `cleanup_local.md` and re-enables
+# `paste_strip_regex` so the channel markers are stripped.)
+
+# Backend: HTTP POST to an OpenAI-compatible /chat/completions.
+# Defaults loaded from `templates/remote-defaults.toml`.
+base = "remote"
 
 # Endpoint base URL (no trailing /chat/completions — that's appended).
 endpoint = "https://api.openai.com/v1"
 
 # Model name. Pick whatever your provider supports.
 model = "gpt-4o-mini"
+
+# --- Override any remote-defaults.toml value below ---------------------
+# (Reference for the full list of overridable keys lives in the
+# canonical defaults file — see `src/justsayit/templates/remote-defaults.toml`.)
 
 # API key — three places to put it, in priority order:
 #   1. Inline below (lowest friction; commit risk).
@@ -35,12 +41,10 @@ model = "gpt-4o-mini"
 # request_timeout = 60.0
 
 # Retry transient HTTP / network failures on the remote path.
-# `remote_retries` counts retries after the first attempt.
 # remote_retries = 3
 # remote_retry_delay_seconds = 1.0
 
-# Cleanup tuning. Defaults are tuned for deterministic STT cleanup —
-# raise temperature for more creative output.
+# Cleanup tuning. Raise temperature for more creative output.
 # temperature = 0.08
 # max_tokens = 4096
 
@@ -48,16 +52,22 @@ model = "gpt-4o-mini"
 # user_template = "{text}"
 
 # Regex (re.DOTALL) applied to the LLM output before paste, but NOT
-# before display in the overlay. Default strips Gemma's thinking-channel
-# block — a no-op against generic LLM responses, harmless to leave on.
-# paste_strip_regex = '<\|channel>thought(.*?)<channel\|>'
+# before display in the overlay. Empty by default for the remote
+# backend — generic OpenAI-compatible models don't emit Gemma's
+# thinking-channel markers, so there's nothing to strip.
+# paste_strip_regex = ""
 
-# System prompt — left at the dataclass default. Because `endpoint` is
-# set above, justsayit auto-swaps in a channel-free variant of the
-# cleanup prompt. Uncomment the block below to override it for this
-# profile. The shipped default is mirrored here for reference.
+# System prompt. Bare names resolve against the packaged
+# `src/justsayit/prompts/` directory; paths with a slash (or ~) are
+# loaded as-is. The default `cleanup_remote.md` is a channel-free
+# variant of the cleanup prompt — generic models would otherwise leak
+# the literal `No changes.` instruction or hidden reasoning into the
+# visible reply.
+# system_prompt_file = "cleanup_remote.md"
+
+# Inline override (takes precedence over system_prompt_file).
 # system_prompt = """
-{{COMMENTED_DEFAULT_SYSTEM_PROMPT}}
+# You are a transcription cleanup assistant. ...
 # """
 
 # User-context lives in ~/.config/justsayit/context.toml (shared across

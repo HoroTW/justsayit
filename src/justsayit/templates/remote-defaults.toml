@@ -1,0 +1,72 @@
+# justsayit postprocess: HTTP / OpenAI-compatible backend defaults.
+#
+# These values populate the PostprocessProfile dataclass at runtime
+# when a user profile sets `base = "remote"`. Works with any provider
+# that speaks the OpenAI chat-completions schema: OpenAI, OpenRouter,
+# Groq, Together, vLLM, Ollama (`/v1`), LM Studio, llama.cpp's bundled
+# server, etc.
+#
+# This file is THE source of truth for remote-backend defaults — both
+# the runtime defaults and the documentation in shipped user-facing
+# profile templates derive from it.
+
+# --- Inference backend (HTTP) -------------------------------------------
+
+# Endpoint base URL (no trailing /chat/completions — that's appended).
+# Empty by default — user profiles MUST set this.
+endpoint = ""
+
+# Model name passed in the JSON body. Empty by default — user profiles
+# MUST set this (e.g. "gpt-4o-mini", "openai/gpt-4o", "gemma3:4b").
+model = ""
+
+# API key — three places to put it, in priority order:
+#   1. `api_key` here (lowest friction; commit risk).
+#   2. The env var named by `api_key_env` below.
+#   3. ~/.config/justsayit/.env (KEY=VALUE format, python-dotenv style).
+api_key = ""
+api_key_env = "OPENAI_API_KEY"
+
+# HTTP timeout (seconds) for the chat-completions request.
+request_timeout = 60.0
+
+# Retry transient HTTP / network failures. `remote_retries` counts
+# retries after the first attempt.
+remote_retries = 3
+remote_retry_delay_seconds = 1.0
+
+# --- Cleanup tuning -----------------------------------------------------
+
+# Temperature. Keep very low (≤ 0.1) for deterministic cleanup.
+temperature = 0.08
+
+# Hard cap on generated tokens.
+max_tokens = 4096
+
+# User message template. {text} is replaced with the raw transcription.
+user_template = "{text}"
+
+# Regex (re.DOTALL) applied to the LLM output before paste, but NOT
+# before display in the overlay. Empty by default — generic OpenAI-
+# compatible models don't emit Gemma's thinking-channel markers, so
+# there's nothing to strip. If you point this profile at an Ollama-
+# served Gemma (set `system_prompt_file = "cleanup_local.md"`), set
+# this to '<\|channel>thought(.*?)<channel\|>' to strip the channel.
+paste_strip_regex = ""
+
+# --- System prompt ------------------------------------------------------
+
+# Path to a Markdown file containing the system prompt. Bare filenames
+# resolve against the packaged `src/justsayit/prompts/` directory.
+# `cleanup_remote.md` is the channel-free variant — generic OpenAI-
+# compatible models don't have Gemma's `<|think|>` channel and would
+# leak reasoning into the visible reply with the local prompt.
+#
+# To run Gemma over an OpenAI-compatible endpoint (e.g. Ollama), set
+# `system_prompt_file = "cleanup_local.md"` AND set `paste_strip_regex`
+# above to the Gemma channel pattern. See `ollama-gemma.toml`.
+system_prompt_file = "cleanup_remote.md"
+
+# Inline system prompt. When non-empty, takes precedence over
+# system_prompt_file.
+system_prompt = ""

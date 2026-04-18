@@ -7,6 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-04-18
+
+### Changed (BREAKING — see "Migration" below for legacy behaviour)
+
+- **Postprocess defaults are now sourced from canonical TOML files**,
+  not duplicated as Python dataclass fields. Two new files under
+  `src/justsayit/templates/`:
+  - `builtin-defaults.toml` — defaults for the built-in
+    `llama-cpp-python` + GGUF backend.
+  - `remote-defaults.toml` — defaults for the HTTP / OpenAI-compatible
+    backend (works with OpenAI, OpenRouter, Groq, Together, vLLM,
+    Ollama, LM Studio, llama.cpp's bundled server, etc.).
+  These are THE source of truth: `PostprocessProfile` field defaults
+  are derived from `builtin-defaults.toml` at module import time, and
+  the user-facing profile templates document them by reference rather
+  than embedding values. Editing one of these files is all it takes to
+  change a shipped default.
+
+- **Backend selection is now explicit via `base = "builtin" |
+  "remote"`** in the user's profile TOML. The loader reads `base`,
+  loads the matching defaults file, and overlays the user's overrides
+  on top. Routing in `LLMPostprocessor` is now driven by `base` rather
+  than an implicit "is `endpoint` set?" check.
+
+- **System prompt selection is decoupled from backend selection**. The
+  old auto-swap (`endpoint set + system_prompt unchanged → swap to
+  channel-free variant`) is gone — it conflated two orthogonal axes
+  and broke the case where a user wanted Gemma's `<|think|>`-channel
+  prompt over an HTTP backend (e.g. Ollama serving Gemma). Replaced by
+  an explicit `system_prompt_file = "..."` field on the profile. Bare
+  filenames resolve against the packaged `src/justsayit/prompts/`
+  directory; paths with a slash or `~` are loaded as-is. The inline
+  `system_prompt = "..."` field still wins when non-empty.
+
+- **New `ollama-gemma.toml` profile** demonstrates the orthogonality:
+  `base = "remote"` + `system_prompt_file = "cleanup_local.md"` +
+  `paste_strip_regex = '<\|channel>thought(.*?)<channel\|>'` runs
+  Gemma's `<|think|>` cleanup prompt over an HTTP backend talking to a
+  local Ollama install. `justsayit init` now writes four shipped
+  profiles (`gemma4-cleanup`, `gemma4-fun`, `openai-cleanup`,
+  `ollama-gemma`); `ensure_default_profiles()` returns a 4-tuple.
+
+- The shipped profile templates no longer embed the default system
+  prompt as a 50-line commented block. They reference it by file name
+  (`system_prompt_file = "cleanup_local.md"` etc.) and document the
+  override pattern in two short comment lines instead.
+
+### Removed
+
+- `_DEFAULT_SYSTEM_PROMPT`, `_REMOTE_CLEANUP_SYSTEM_PROMPT`,
+  `_FUN_SYSTEM_PROMPT` module constants — the prompts now live only on
+  disk under `src/justsayit/prompts/` and are loaded on demand by
+  `_resolve_system_prompt_file()`.
+- `_comment_block` helper — no longer needed; nothing embeds the
+  prompt as commented documentation.
+- The `endpoint`-triggered system-prompt auto-swap in
+  `LLMPostprocessor._system_prompt`.
+
+### Migration
+
+- Existing user profiles without an explicit `base` field but with
+  `endpoint` set are auto-treated as `base = "remote"`, so legacy
+  setups keep working without intervention. `load_profile()` logs
+  nothing in this case — it's silent backward-compat.
+- Legacy fully-populated profile files (no commented-defaults marker)
+  get backed up + rewritten on the next `init` / `setup-llm`, same as
+  before. Once the backup is taken, the new shape is in place.
+
 ## [0.11.16] - 2026-04-18
 
 ### Changed

@@ -1070,11 +1070,12 @@ def _write_default_config(force: bool = False, backend: str | None = None) -> No
                 f.write(f'\n[model]\nbackend = "{backend}"\n')
         print(f"wrote {cfg_path}")
 
-    cleanup_path, fun_path, openai_path = ensure_default_profiles()
+    cleanup_path, fun_path, openai_path, ollama_gemma_path = ensure_default_profiles()
     dynamic_context_path = ensure_dynamic_context_script()
-    print(f"postprocess profile: {cleanup_path}  (recommended)")
-    print(f"postprocess profile: {fun_path}      (emoji-heavy variant)")
-    print(f"postprocess profile: {openai_path}   (OpenAI-compatible endpoint)")
+    print(f"postprocess profile: {cleanup_path}    (recommended)")
+    print(f"postprocess profile: {fun_path}        (emoji-heavy variant)")
+    print(f"postprocess profile: {openai_path}     (OpenAI-compatible endpoint)")
+    print(f"postprocess profile: {ollama_gemma_path}  (Ollama-served Gemma)")
     print(f"dynamic-context script: {dynamic_context_path}")
 
     filters_pre_existed = filters_path.exists()
@@ -1350,7 +1351,9 @@ def _run_setup_llm(model_key: str | None = None, cpu: bool = False) -> int:
             # gemma4 ships two profiles (-cleanup and -fun) that share the
             # same model file. Reuse them instead of creating a third
             # generic gemma4.toml that would only confuse users.
-            cleanup_path, fun_path, _openai_path = ensure_default_profiles()
+            cleanup_path, fun_path, _openai_path, _ollama_path = (
+                ensure_default_profiles()
+            )
             update_profile_model(cleanup_path, model_path, hf_repo, hf_filename)
             update_profile_model(fun_path, model_path, hf_repo, hf_filename)
             activate_options.extend(["gemma4-cleanup", "gemma4-fun"])

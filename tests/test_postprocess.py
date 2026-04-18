@@ -18,10 +18,9 @@ from justsayit.postprocess import (
     LLMPostprocessor,
     PostprocessProfile,
     _CLEANUP_PROFILE_TOML,
-    _DEFAULT_SYSTEM_PROMPT,
     _DYNAMIC_CONTEXT_SCRIPT,
     _FUN_PROFILE_TOML,
-    _REMOTE_CLEANUP_SYSTEM_PROMPT,
+    _load_prompt,
     context_file_path,
     dynamic_context_script_path,
     ensure_context_file,
@@ -33,6 +32,12 @@ from justsayit.postprocess import (
     load_profile,
     profiles_dir,
 )
+
+# Convenience: read the shipped prompt files exactly the way the
+# postprocess module does. Tests assert on prompt content, so we want
+# the same text the runtime sees.
+_DEFAULT_SYSTEM_PROMPT = _load_prompt("cleanup_local.md")
+_REMOTE_CLEANUP_SYSTEM_PROMPT = _load_prompt("cleanup_remote.md")
 
 
 # ---------------------------------------------------------------------------
@@ -101,66 +106,90 @@ def test_ensure_default_profile_creates_file(tmp_path, monkeypatch):
     assert path.exists()
     assert path.name == "gemma4-cleanup.toml"
     content = path.read_text(encoding="utf-8")
-    assert "system_prompt" in content
+    # The recommended cleanup profile picks the builtin backend and
+    # references the canonical prompt by file rather than embedding it.
+    assert 'base = "builtin"' in content
+    assert "system_prompt_file" in content
     assert "temperature" in content
-    # The recommended cleanup prompt has the conservative guardrails baked in
-    assert "CONSERVATIVE CLEANUP" in content
-    assert "modal particles" in content
-    assert "punkt punkt punkt" in content
-    assert "dot dot dot" in content
+    assert "cleanup_local.md" in content
 
 
-def test_ensure_default_profiles_writes_all_three(tmp_path, monkeypatch):
-    """`init` ships three profiles side-by-side: the recommended local
-    Gemma cleanup profile, the playful emoji sibling, and the OpenAI-
-    compatible endpoint variant.  All three must exist after a single
-    call so the tray menu has them to offer."""
+def test_ensure_default_profiles_writes_all_four(tmp_path, monkeypatch):
+    """`init` ships four profiles side-by-side: the recommended local
+    Gemma cleanup profile, the playful emoji sibling, the OpenAI-
+    compatible endpoint variant, and the Ollama-served-Gemma example.
+    All four must exist after a single call so the tray menu has them
+    to offer."""
     monkeypatch.setattr("justsayit.postprocess.config_dir", lambda: tmp_path)
     from justsayit.postprocess import ensure_default_profiles
 
-    cleanup, fun, openai = ensure_default_profiles()
+    cleanup, fun, openai, ollama_gemma = ensure_default_profiles()
     assert cleanup.name == "gemma4-cleanup.toml"
     assert fun.name == "gemma4-fun.toml"
     assert openai.name == "openai-cleanup.toml"
-    assert cleanup.exists() and fun.exists() and openai.exists()
+    assert ollama_gemma.name == "ollama-gemma.toml"
+    assert (
+        cleanup.exists() and fun.exists() and openai.exists() and ollama_gemma.exists()
+    )
     fun_text = fun.read_text(encoding="utf-8")
-    # Fun profile is the emojify stub and points users back at cleanup.
-    assert "Emojify" in fun_text
+    # Fun profile points users back at cleanup and disables the strip
+    # regex (the fun prompt has no <|think|> channel).
     assert "gemma4-cleanup" in fun_text
-    # No <|think|> in fun → no strip regex needed.
     assert 'paste_strip_regex = ""' in fun_text
+    assert 'system_prompt_file = "fun.md"' in fun_text
 
 
-def test_openai_profile_template_has_endpoint_and_model_uncommented(
+def test_openai_profile_template_has_base_endpoint_and_model_uncommented(
     tmp_path, monkeypatch
 ):
-    """The openai-cleanup.toml ships with `endpoint` + `model` already
-    uncommented (they're what makes this the openai variant); everything
-    else stays commented so users only override what they need.  The
-    cleanup prompt must remain commented out — that's how the auto-swap
-    to the channel-free remote variant kicks in."""
+    """The openai-cleanup.toml ships with `base = "remote"`, `endpoint`,
+    and `model` already uncommented (they're what makes this the openai
+    variant); everything else stays commented so users only override
+    what they need. The system prompt comes from `cleanup_remote.md`
+    via the `remote-defaults.toml` overlay — no auto-swap, no
+    embedded copy."""
     monkeypatch.setattr("justsayit.postprocess.config_dir", lambda: tmp_path)
     from justsayit.postprocess import ensure_openai_profile, load_profile
 
     p = ensure_openai_profile()
     text = p.read_text(encoding="utf-8")
     # Defining keys live as bare assignments at the top of the file.
+    assert '\nbase = "remote"' in text
     assert '\nendpoint = "https://api.openai.com/v1"' in text
     assert '\nmodel = "gpt-4o-mini"' in text
     assert "# remote_retries = 3" in text
     assert "# remote_retry_delay_seconds = 1.0" in text
-    # System prompt stays commented; the auto-swap handles the rest.
-    assert "# system_prompt = " in text
+    # No embedded system prompt block — `system_prompt_file` is the
+    # source of truth, and it's set in remote-defaults.toml.
     assert "\nsystem_prompt =" not in text
-    # Loads cleanly + carries the right backend marker fields.
+    # Loads cleanly + carries the right backend defaults.
     profile = load_profile("openai-cleanup")
+    assert profile.base == "remote"
     assert profile.endpoint == "https://api.openai.com/v1"
     assert profile.model == "gpt-4o-mini"
     assert profile.api_key == ""  # falls through to env / .env
-    # System prompt = dataclass default → triggers the remote auto-swap.
-    from justsayit.postprocess import _DEFAULT_SYSTEM_PROMPT
+    # System prompt: file reference picked up from remote-defaults.toml.
+    assert profile.system_prompt_file == "cleanup_remote.md"
+    assert profile.system_prompt == ""  # inline override empty
 
-    assert profile.system_prompt == _DEFAULT_SYSTEM_PROMPT
+
+def test_ollama_gemma_profile_demonstrates_orthogonal_backend_and_prompt(
+    tmp_path, monkeypatch
+):
+    """Backend (`base = "remote"`) and prompt (`system_prompt_file =
+    "cleanup_local.md"`) are independent. The ollama-gemma profile is
+    the worked example: HTTP backend (Ollama), Gemma's <|think|>
+    cleanup prompt, channel stripper re-enabled."""
+    monkeypatch.setattr("justsayit.postprocess.config_dir", lambda: tmp_path)
+    from justsayit.postprocess import ensure_ollama_gemma_profile, load_profile
+
+    p = ensure_ollama_gemma_profile()
+    profile = load_profile("ollama-gemma")
+    assert profile.base == "remote"
+    assert profile.endpoint == "http://localhost:11434/v1"
+    assert profile.system_prompt_file == "cleanup_local.md"
+    # Re-enables the channel stripper that remote-defaults.toml leaves blank.
+    assert profile.paste_strip_regex == r"<\|channel>thought(.*?)<channel\|>"
 
 
 def test_ensure_default_profile_idempotent(tmp_path, monkeypatch):
@@ -1001,44 +1030,36 @@ def test_warmup_skipped_for_remote_endpoint():
     assert pp._llm is None  # never tried to build
 
 
-def test_remote_endpoint_swaps_default_prompt_to_channel_free_variant():
-    """The shipped Gemma default uses `<|think|>` for hidden reasoning —
-    generic LLMs have no such channel and would emit the channel literal
-    or leak reasoning into the visible reply.  When endpoint is set AND
-    the user kept the dataclass default, the prompt must auto-swap to
-    the channel-free variant."""
-    from justsayit.postprocess import (
-        _DEFAULT_SYSTEM_PROMPT,
-        _REMOTE_CLEANUP_SYSTEM_PROMPT,
-    )
-
+def test_remote_default_resolves_channel_free_prompt_via_file_reference():
+    """A profile loaded with `base = "remote"` (or with `endpoint` set,
+    auto-inferred to remote) should resolve `system_prompt_file =
+    "cleanup_remote.md"` from `remote-defaults.toml` and emit the
+    channel-free prompt — no auto-swap, just an overlay lookup."""
     profile = PostprocessProfile(
+        base="remote",
         endpoint="https://api.example.com/v1",
         model="gpt-4o-mini",
         api_key="sk",
+        system_prompt_file="cleanup_remote.md",
     )
     pp = LLMPostprocessor(profile)
     out = pp._system_prompt()
     assert out == _REMOTE_CLEANUP_SYSTEM_PROMPT.strip()
-    # Sanity: the swap actually drops the Gemma channel directive…
+    # The remote prompt drops Gemma's `<|think|>` channel and explicitly
+    # forbids the literal `No changes.` shortcut on both paths.
     assert "<|think|>" not in out
-    # …and both prompts explicitly forbid the literal "No changes." reply
-    # (older versions of the local prompt told Gemma to write that as a
-    # shortcut, and Gemma sometimes leaked it into the visible reply —
-    # the bug we're guarding against here on both paths).
     assert "do NOT write `No changes.`" in out
-    # Original default still mentions <|think|> — proves we swapped, not edited.
+    # Local prompt stays distinct — proves the resolution actually
+    # picked the remote file rather than colliding with the local one.
     assert "<|think|>" in _DEFAULT_SYSTEM_PROMPT
-    # And the local default ALSO forbids `No changes.` as visible output
-    # (it used to instruct the model to write it; that shortcut leaked).
     assert "NEVER respond with a status string" in _DEFAULT_SYSTEM_PROMPT
     assert "`No changes.`" in _DEFAULT_SYSTEM_PROMPT
 
 
 def test_remote_endpoint_keeps_user_overridden_prompt():
     """If the user customised system_prompt, respect it verbatim — even
-    on the remote path.  The auto-swap is a safety net for the default,
-    not a hijack."""
+    on the remote path. The inline override always beats the file
+    reference."""
     profile = PostprocessProfile(
         endpoint="https://api.example.com/v1",
         model="gpt-4o-mini",
@@ -1053,8 +1074,25 @@ def test_local_endpoint_keeps_default_prompt_with_channel_directives():
     """Without an endpoint set, the local llama-cpp path must still see
     the Gemma `<|think|>`-channel prompt — that's what `paste_strip_regex`
     is paired with."""
-    from justsayit.postprocess import _DEFAULT_SYSTEM_PROMPT
-
-    profile = PostprocessProfile()  # no endpoint
+    profile = PostprocessProfile()  # no endpoint → builtin base
     pp = LLMPostprocessor(profile)
     assert pp._system_prompt() == _DEFAULT_SYSTEM_PROMPT.strip()
+
+
+def test_ollama_gemma_combo_resolves_local_prompt_over_remote_backend(tmp_path):
+    """The whole point of the orthogonal design: `base = "remote"`
+    routes the call to the HTTP backend, but `system_prompt_file =
+    "cleanup_local.md"` makes the model see Gemma's <|think|>-channel
+    prompt. This is what makes Ollama-served Gemma work."""
+    profile = PostprocessProfile(
+        base="remote",
+        endpoint="http://localhost:11434/v1",
+        model="gemma3:4b",
+        api_key="ollama",
+        system_prompt_file="cleanup_local.md",
+    )
+    pp = LLMPostprocessor(profile)
+    out = pp._system_prompt()
+    # Got the Gemma channel prompt, not the channel-free one.
+    assert "<|think|>" in out
+    assert out == _DEFAULT_SYSTEM_PROMPT.strip()

@@ -1,0 +1,58 @@
+# justsayit postprocess profile (commented-defaults form).
+#
+# Profile: ollama-gemma (Gemma served by a local Ollama instance over
+# the OpenAI-compatible /v1 endpoint).
+#
+# Demonstrates the orthogonality of backend vs. system prompt:
+#   - `base = "remote"`             → HTTP backend (talks to Ollama)
+#   - `system_prompt_file = "cleanup_local.md"`
+#                                   → Gemma's `<|think|>`-channel
+#                                     prompt (NOT the channel-free
+#                                     remote default), because Ollama
+#                                     is in fact serving Gemma.
+#   - `paste_strip_regex = '<\|channel>thought(.*?)<channel\|>'`
+#                                   → re-enable the channel stripper
+#                                     since the Gemma prompt produces
+#                                     the channel markers.
+#
+# Setup:
+#   1. Install Ollama: https://ollama.com
+#   2. Pull a Gemma model:  `ollama pull gemma3:4b`
+#   3. Activate this profile from the tray's LLM submenu, or set:
+#      ~/.config/justsayit/state.toml:
+#        [postprocess]
+#        enabled = true
+#        profile = "ollama-gemma"
+
+# Backend: HTTP POST to an OpenAI-compatible /chat/completions.
+base = "remote"
+
+# Local Ollama OpenAI-compatible endpoint.
+endpoint = "http://localhost:11434/v1"
+
+# Adjust to whatever Gemma tag you've pulled (`ollama list` to check).
+model = "gemma3:4b"
+
+# Local Ollama doesn't need a key — but the dataclass field has to be
+# non-empty to bypass the "no API key" guard. Any placeholder works.
+api_key = "ollama"
+
+# Use Gemma's `<|think|>`-channel prompt even though we're on the
+# remote backend. This is the whole point of the profile.
+system_prompt_file = "cleanup_local.md"
+
+# Re-enable the channel stripper so the `<|channel>thought…<channel|>`
+# block doesn't leak into pasted output.
+paste_strip_regex = '<\|channel>thought(.*?)<channel\|>'
+
+# --- Other overrides (commented = use remote-defaults.toml) ------------
+
+# Local inference is slow — bump timeout if needed.
+# request_timeout = 60.0
+# remote_retries = 3
+# remote_retry_delay_seconds = 1.0
+# temperature = 0.08
+# max_tokens = 4096
+# user_template = "{text}"
+
+# context = ""

@@ -1,11 +1,13 @@
 # justsayit postprocess profile (commented-defaults form).
+#
 # Profile: gemma4-fun (playful sibling of gemma4-cleanup).
 #
 # Same commented-defaults convention as gemma4-cleanup.toml: comment =
-# uses default, uncommented line = override. The three uncommented keys
-# below (system_prompt, temperature, paste_strip_regex) are what makes
-# this the "fun" profile — leave them as-is unless you want to customise
-# the playful flavor.
+# uses the value from `templates/builtin-defaults.toml`, uncommented
+# line = override. The three uncommented keys below
+# (system_prompt_file, temperature, paste_strip_regex) are what makes
+# this the "fun" profile — leave them as-is unless you want to
+# customise the playful flavor.
 #
 # For everyday cleanup, switch back to the recommended default:
 #   profile = "gemma4-cleanup"
@@ -16,26 +18,30 @@
 #   enabled = true
 #   profile = "gemma4-fun"
 
+# Backend: built-in llama-cpp-python loading a local GGUF.
 # Same model file as gemma4-cleanup — if you ran `setup-llm` once you
 # already have it on disk and no extra download happens.
-# model_path = "~/.cache/justsayit/models/llm/gemma-4-E4B-it-Q4_K_M.gguf"
-# hf_repo = "unsloth/gemma-4-E4B-it-GGUF"
-# hf_filename = "gemma-4-E4B-it-Q4_K_M.gguf"
+base = "builtin"
 
-# n_gpu_layers = -1
-# n_ctx = 4096
-# max_tokens = 4096
-# user_template = "{text}"
+# Override: this is the "fun" prompt. Edit `prompts/fun.md` (packaged)
+# or point at your own .md file.
+system_prompt_file = "fun.md"
 
 # Slightly higher temperature so emoji choice has some variety.
 temperature = 0.4
 
-# No `<|think|>` in the prompt → no channel block to strip.
+# No `<|think|>` channel in the fun prompt → nothing to strip.
 paste_strip_regex = ""
 
-# Override: this is the "fun" prompt. Edit freely.
-system_prompt = """
-{{FUN_SYSTEM_PROMPT}}"""
+# --- Other overrides (commented = use builtin-defaults.toml) -----------
+
+# model_path = "~/.cache/justsayit/models/llm/gemma-4-E4B-it-Q4_K_M.gguf"
+# hf_repo = "unsloth/gemma-4-E4B-it-GGUF"
+# hf_filename = "gemma-4-E4B-it-Q4_K_M.gguf"
+# n_gpu_layers = -1
+# n_ctx = 4096
+# max_tokens = 4096
+# user_template = "{text}"
 
 # User-context lives in ~/.config/justsayit/context.toml (shared across
 # profiles). Uncomment to override the sidecar for this profile only:

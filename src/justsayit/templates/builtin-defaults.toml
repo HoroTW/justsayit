@@ -1,0 +1,57 @@
+# justsayit postprocess: built-in inference backend defaults.
+#
+# These values populate the PostprocessProfile dataclass at runtime.
+# User profiles inherit them by setting `base = "builtin"` (or omitting
+# `base` entirely — "builtin" is the default). User profiles override
+# any field by setting it; absent fields fall through to the values
+# below.
+#
+# This file is THE source of truth for built-in-backend defaults — both
+# the runtime defaults and the documentation in shipped user-facing
+# profile templates derive from it.
+
+# --- Inference backend (built-in via llama-cpp-python + GGUF) -----------
+
+# Path to the GGUF model file. ~ is expanded.
+model_path = "~/.cache/justsayit/models/llm/gemma-4-E4B-it-Q4_K_M.gguf"
+
+# HuggingFace source for auto-download via `justsayit setup-llm`.
+hf_repo = "unsloth/gemma-4-E4B-it-GGUF"
+hf_filename = "gemma-4-E4B-it-Q4_K_M.gguf"
+
+# GPU layer offloading. -1 = all layers on GPU (fastest). 0 = CPU only.
+n_gpu_layers = -1
+
+# Context window size in tokens.
+n_ctx = 4096
+
+# --- Cleanup tuning -----------------------------------------------------
+
+# Temperature. Keep very low (≤ 0.1) for deterministic cleanup.
+temperature = 0.08
+
+# Hard cap on generated tokens.
+max_tokens = 4096
+
+# User message template. {text} is replaced with the raw transcription.
+user_template = "{text}"
+
+# Regex (re.DOTALL) applied to the LLM output before paste, but NOT
+# before display in the overlay. Default strips Gemma's thinking-channel
+# block. Set to "" if you swap to a system prompt without `<|think|>`.
+paste_strip_regex = '<\|channel>thought(.*?)<channel\|>'
+
+# --- System prompt ------------------------------------------------------
+
+# Path to a Markdown file containing the system prompt. Bare filenames
+# resolve against the packaged `src/justsayit/prompts/` directory; paths
+# with a slash (or starting with ~) are loaded as-is. The default
+# `cleanup_local.md` uses Gemma 3/4's `<|think|>` channel to keep
+# reasoning out of the visible reply — pair changes here with
+# `paste_strip_regex` above.
+system_prompt_file = "cleanup_local.md"
+
+# Inline system prompt. When non-empty, takes precedence over
+# system_prompt_file. Useful for one-off overrides without creating a
+# new .md file.
+system_prompt = ""

@@ -40,13 +40,8 @@ log = logging.getLogger(__name__)
 # Shipped prompt + config templates live as plain text files alongside
 # this module so they can be edited in a content-aware editor (Markdown
 # for prompts, TOML for profile templates, shell for the dynamic-context
-# helper) without Python-string escaping or f-string brace doubling.
-# See ``src/justsayit/prompts/`` and ``src/justsayit/templates/``. The
-# three profile TOMLs include ``{{NAME}}`` markers that are substituted
-# at module-import time via plain ``str.replace`` (literal, not
-# ``str.format``) so naturally-occurring braces in the template body
-# — e.g. ``{text}`` in commented-out ``user_template`` examples —
-# pass through unchanged.
+# helper) without Python-string escaping. See ``src/justsayit/prompts/``
+# and ``src/justsayit/templates/``.
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 
@@ -59,123 +54,125 @@ def _load_template(name: str) -> str:
     return (_TEMPLATES_DIR / name).read_text(encoding="utf-8")
 
 
-# Default cleanup prompt — written for Gemma 3 / 4. Uses the model's
-# `<|think|>` channel to keep reasoning out of the visible reply.
-_DEFAULT_SYSTEM_PROMPT = _load_prompt("cleanup_local.md")
-
-# Variant of the cleanup prompt for OpenAI-compatible endpoints.  The
-# Gemma default leans on the `<|think|>` channel to hide reasoning from
-# the final reply; a generic LLM has no such channel and would happily
-# echo the literal `No changes.` instruction or leak reasoning into the
-# visible output.  This variant drops the channel directives and tells
-# the model to silently emit the input verbatim instead — same cleanup
-# rules, no Gemma-specific scaffolding.  ``_system_prompt`` swaps it in
-# automatically when ``profile.endpoint`` is set and ``system_prompt``
-# is left at the dataclass default.
-_REMOTE_CLEANUP_SYSTEM_PROMPT = _load_prompt("cleanup_remote.md")
-
-# Minimal "fun" profile prompt — written to disk as gemma4-fun.toml so users
-# can flip to a playful, emoji-heavy variant without having to compose a
-# prompt themselves.  Intentionally tiny: the recommended everyday default
-# is gemma4-cleanup, this one is the silly sibling.
-_FUN_SYSTEM_PROMPT = _load_prompt("fun.md")
+# Canonical defaults for each inference backend. These TOML files are
+# the single source of truth: the dataclass defaults below are derived
+# from them at module-import time, AND the user-facing profile
+# templates document them by reference. Editing one of these files is
+# all it takes to change a shipped default.
+_BASE_DEFAULTS: dict[str, dict[str, Any]] = {
+    "builtin": tomllib.loads(_load_template("builtin-defaults.toml")),
+    "remote": tomllib.loads(_load_template("remote-defaults.toml")),
+}
 
 
-# Distinctive header line embedded in commented-defaults profile files.
-# Used by ``ensure_default_profile`` / ``ensure_fun_profile`` to recognise
-# files we've already migrated to the commented form (so we don't keep
-# backing them up on each install). Mirrors the marker in config.py.
+def _builtin_default(name: str, fallback: Any) -> Any:
+    """Look up a default value for *name* from ``builtin-defaults.toml``.
+
+    Used to populate dataclass field defaults so the TOML stays the
+    single source of truth. The *fallback* is what the dataclass uses
+    if the key happens to be absent from the builtin defaults file —
+    i.e. for fields that only make sense on the ``remote`` base
+    (``endpoint``, ``model``, ``api_key``, …)."""
+    return _BASE_DEFAULTS["builtin"].get(name, fallback)
+
+
+# Distinctive header line embedded in profile files. Used by the
+# migration check in ``ensure_commented_form_file`` to recognise files
+# we've already written (so we don't keep backing them up on each
+# install). The literal must match the first line of every shipped
+# profile template under ``templates/``.
 _PROFILE_COMMENTED_FORM_MARKER = (
     "# justsayit postprocess profile (commented-defaults form)."
 )
 
 
-def _comment_block(text: str) -> str:
-    """Return *text* with every line prefixed by ``# `` (or ``#`` for
-    empties).  Used to safely embed multi-line defaults (system prompts,
-    code samples) inside a commented-defaults TOML file without leaking
-    raw lines that would otherwise break TOML parsing."""
-    return "\n".join(f"# {line}" if line else "#" for line in text.splitlines())
+def _load_profile_template(name: str) -> str:
+    """Read a packaged user-facing profile template by name.
+
+    Profile templates are static — they document the canonical defaults
+    files by reference (``base = "builtin"``, ``system_prompt_file =
+    "cleanup_local.md"``) rather than embedding values, so no
+    substitution is needed."""
+    return _load_template(name)
 
 
-# Profile templates written to disk on first ``justsayit init`` (and
-# refreshed on each install via ensure_default_profiles). Use the
-# "commented defaults" convention: every value line is commented out
-# so the file acts as in-place documentation. Users uncomment + edit
-# only the keys they actually want to override; everything else tracks
-# the dataclass default. The remaining ``{{NAME}}`` markers in the
-# cleanup profiles embed the default system prompt as commented-out
-# documentation so the .md file stays the single source of truth.
-_CLEANUP_PROFILE_TOML = _load_template("profile-gemma4-cleanup.toml").replace(
-    "{{COMMENTED_DEFAULT_SYSTEM_PROMPT}}",
-    _comment_block(_DEFAULT_SYSTEM_PROMPT.rstrip()),
-)
-
-_FUN_PROFILE_TOML = _load_template("profile-gemma4-fun.toml").replace(
-    "{{FUN_SYSTEM_PROMPT}}", _FUN_SYSTEM_PROMPT
-)
-
-_OPENAI_PROFILE_TOML = _load_template("profile-openai-cleanup.toml").replace(
-    "{{COMMENTED_DEFAULT_SYSTEM_PROMPT}}",
-    _comment_block(_DEFAULT_SYSTEM_PROMPT.rstrip()),
-)
+_CLEANUP_PROFILE_TOML = _load_profile_template("profile-gemma4-cleanup.toml")
+_FUN_PROFILE_TOML = _load_profile_template("profile-gemma4-fun.toml")
+_OPENAI_PROFILE_TOML = _load_profile_template("profile-openai-cleanup.toml")
+_OLLAMA_GEMMA_PROFILE_TOML = _load_profile_template("profile-ollama-gemma.toml")
 
 
 @dataclass
 class PostprocessProfile:
-    model_path: str = "~/.cache/justsayit/models/llm/gemma-4-E4B-it-Q4_K_M.gguf"
-    hf_repo: str = "unsloth/gemma-4-E4B-it-GGUF"
-    hf_filename: str = "gemma-4-E4B-it-Q4_K_M.gguf"
-    n_gpu_layers: int = -1
-    n_ctx: int = 4096
-    temperature: float = 0.08
-    max_tokens: int = 4096
-    system_prompt: str = _DEFAULT_SYSTEM_PROMPT
-    user_template: str = "{text}"
-    # Regex applied (re.DOTALL) to the LLM output before it is pasted
-    # but NOT before it is shown in the overlay. Useful to strip the
-    # reasoning preamble produced by "thinking" models (e.g. Gemma's
-    # asymmetric `<|channel>...<channel|>` block) so the user sees the
-    # full reply in the overlay but only the final message lands in the
-    # focused window.
-    #
-    # If the pattern includes a capture group, only the captured content
-    # is shown as the "thought" in the overlay (the full match — tags
-    # included — is still stripped from paste). Without a group, the
-    # whole match is shown.
-    #
-    # Default matches Gemma 4 with the `<|think|>` markers in the prompt
-    # and captures the inner content so the framing tags AND the literal
-    # `thought` channel label don't appear in the overlay; set to "" if
-    # you remove `<|think|>` from system_prompt.
-    paste_strip_regex: str = r"<\|channel>thought(.*?)<channel\|>"
-    # Free-form text appended to the system prompt under a "User context"
-    # heading so the model knows who's dictating (name, language, country,
-    # technical interests, etc.). Empty by default; users can fill in via
-    # a multi-line TOML string. Only sent if non-empty.
-    context: str = ""
-    # --- OpenAI-compatible /chat/completions endpoint --------------------
-    # When ``endpoint`` is set, the LLM call goes over HTTP instead of
-    # loading a local GGUF via llama-cpp-python. Works with any provider
-    # that speaks the OpenAI chat-completions schema: OpenAI, OpenRouter,
-    # Groq, Together, vLLM, Ollama (/v1), LM Studio, llama.cpp's server …
-    # Local GGUF fields above (model_path, hf_repo, n_gpu_layers, n_ctx)
-    # are ignored on the remote path.
+    # Which backend defaults file to overlay user values onto.
+    # "builtin" → llama-cpp-python loads a local GGUF.
+    # "remote"  → HTTP POST to an OpenAI-compatible /chat/completions.
+    base: str = _builtin_default("base", "builtin")
+
+    # --- Inference backend (built-in via llama-cpp-python + GGUF) -------
+    model_path: str = _builtin_default("model_path", "")
+    hf_repo: str = _builtin_default("hf_repo", "")
+    hf_filename: str = _builtin_default("hf_filename", "")
+    n_gpu_layers: int = _builtin_default("n_gpu_layers", -1)
+    n_ctx: int = _builtin_default("n_ctx", 4096)
+
+    # --- Cleanup tuning -------------------------------------------------
+    temperature: float = _builtin_default("temperature", 0.08)
+    max_tokens: int = _builtin_default("max_tokens", 4096)
+    user_template: str = _builtin_default("user_template", "{text}")
+    paste_strip_regex: str = _builtin_default(
+        "paste_strip_regex", r"<\|channel>thought(.*?)<channel\|>"
+    )
+
+    # --- System prompt (orthogonal to backend) --------------------------
+    # Path to a .md prompt file. Bare names resolve against the packaged
+    # ``prompts/`` dir; paths with a slash (or ~) are loaded as-is.
+    system_prompt_file: str = _builtin_default(
+        "system_prompt_file", "cleanup_local.md"
+    )
+    # Inline override. When non-empty, takes precedence over the file.
+    system_prompt: str = _builtin_default("system_prompt", "")
+
+    # --- User context (also see context.toml sidecar) -------------------
+    context: str = _builtin_default("context", "")
+
+    # --- HTTP / OpenAI-compatible backend (used when base = "remote") ---
     endpoint: str = ""
-    # Model name passed in the JSON body (e.g. "gpt-4o-mini",
-    # "openai/gpt-4o", "qwen2.5-7b-instruct"). Required when endpoint is set.
     model: str = ""
-    # Inline API key. Empty by default — prefer api_key_env / .env.
     api_key: str = ""
-    # Process env var to read the key from when api_key is empty.
-    # Falls through to ``<config_dir>/.env`` (loaded once into os.environ).
     api_key_env: str = "OPENAI_API_KEY"
-    # HTTP timeout (seconds) for the chat-completions request.
     request_timeout: float = 60.0
-    # Retry transient remote request failures after the first attempt.
     remote_retries: int = 3
-    # Delay (seconds) between remote retries.
     remote_retry_delay_seconds: float = 1.0
+
+    def __post_init__(self) -> None:
+        # Auto-infer remote backend when endpoint is set and base wasn't
+        # explicitly bumped off the default. Mirrors the load_profile()
+        # inference for direct dataclass construction (notably tests and
+        # programmatic users who instantiate PostprocessProfile directly
+        # with an endpoint).
+        if self.base == "builtin" and self.endpoint:
+            self.base = "remote"
+
+
+def _resolve_system_prompt_file(value: str) -> str:
+    """Load a prompt file from *value* (a path or bare name).
+
+    - Bare name (no slash) → packaged ``src/justsayit/prompts/`` dir.
+    - Anything else → expanded path (``~`` resolved).
+
+    Returns the file contents as a string. Raises ``FileNotFoundError``
+    with a hint if the file is missing."""
+    p = Path(value).expanduser()
+    if "/" not in value and "\\" not in value and not p.is_absolute():
+        p = _PROMPTS_DIR / value
+    if not p.exists():
+        raise FileNotFoundError(
+            f"system_prompt_file not found: {p}\n"
+            "Bare names resolve against the packaged prompts/ dir; "
+            "use a full path (e.g. ~/my-prompt.md) for files outside it."
+        )
+    return p.read_text(encoding="utf-8")
 
 
 def profiles_dir() -> Path:
@@ -292,10 +289,10 @@ def ensure_openai_profile(path: Path | None = None) -> Path:
     """Write the ``openai-cleanup.toml`` profile if it's missing.
 
     Same commented-defaults convention as ``gemma4-cleanup.toml`` but
-    with ``endpoint`` and ``model`` uncommented as the keys that DEFINE
-    the OpenAI-compatible variant. The cleanup prompt itself stays
-    commented out so it tracks the dataclass default — which auto-swaps
-    to a channel-free variant when ``endpoint`` is set.
+    with ``base = "remote"`` and ``endpoint`` / ``model`` uncommented
+    as the keys that DEFINE the OpenAI-compatible variant. The system
+    prompt is selected via ``system_prompt_file = "cleanup_remote.md"``
+    in ``remote-defaults.toml``.
     """
     if path is None:
         path = profiles_dir() / "openai-cleanup.toml"
@@ -308,10 +305,30 @@ def ensure_openai_profile(path: Path | None = None) -> Path:
     return path
 
 
-def ensure_default_profiles() -> tuple[Path, Path, Path]:
-    """Write the cleanup, fun, and openai default profiles.
+def ensure_ollama_gemma_profile(path: Path | None = None) -> Path:
+    """Write the ``ollama-gemma.toml`` profile if it's missing.
 
-    Returns ``(cleanup, fun, openai)``.
+    Demonstrates that backend (``base = "remote"``) and prompt
+    (``system_prompt_file = "cleanup_local.md"``, the Gemma
+    ``<|think|>`` channel variant) are independent. Useful when running
+    Gemma through a local Ollama install over the OpenAI-compatible
+    /v1 endpoint.
+    """
+    if path is None:
+        path = profiles_dir() / "ollama-gemma.toml"
+    ensure_commented_form_file(
+        path,
+        _OLLAMA_GEMMA_PROFILE_TOML,
+        _PROFILE_COMMENTED_FORM_MARKER,
+        validator=_toml_validator,
+    )
+    return path
+
+
+def ensure_default_profiles() -> tuple[Path, Path, Path, Path]:
+    """Write the cleanup, fun, openai, and ollama-gemma default profiles.
+
+    Returns ``(cleanup, fun, openai, ollama_gemma)``.
     """
     ensure_context_file()
     ensure_dynamic_context_script()
@@ -319,6 +336,7 @@ def ensure_default_profiles() -> tuple[Path, Path, Path]:
         ensure_default_profile(),
         ensure_fun_profile(),
         ensure_openai_profile(),
+        ensure_ollama_gemma_profile(),
     )
 
 
@@ -328,6 +346,14 @@ def load_profile(name_or_path: str) -> PostprocessProfile:
     If the argument looks like a file path (contains a separator or ends
     with ``.toml``) it is used directly; otherwise it is resolved to
     ``config_dir()/postprocess/<name>.toml``.
+
+    Resolution order: ``<base>-defaults.toml`` (where *base* comes from
+    the user file's ``base`` field, defaulting to ``"builtin"``) is the
+    starting point; the user file's keys are then overlaid on top. Any
+    field not in the merged result falls through to the dataclass
+    default. Legacy profiles without a ``base`` field but with
+    ``endpoint`` set are auto-treated as ``base = "remote"`` so existing
+    setups keep working.
 
     If the loaded profile's ``context`` field is empty, the personal-context
     sidecar (``~/.config/justsayit/context.toml``) is consulted so updates
@@ -344,8 +370,21 @@ def load_profile(name_or_path: str) -> PostprocessProfile:
         )
     with p.open("rb") as f:
         raw: dict[str, Any] = tomllib.load(f)
+
+    base = raw.get("base")
+    if base is None:
+        # Legacy profiles: infer from ``endpoint`` so existing files
+        # don't silently regress to the wrong defaults after upgrade.
+        base = "remote" if raw.get("endpoint") else "builtin"
+    if base not in _BASE_DEFAULTS:
+        log.warning(
+            "profile %s: unknown base %r, falling back to 'builtin'", p, base
+        )
+        base = "builtin"
+
+    merged: dict[str, Any] = {**_BASE_DEFAULTS[base], **raw, "base": base}
     valid = {fld.name for fld in fields(PostprocessProfile)}
-    kwargs = {k: v for k, v in raw.items() if k in valid}
+    kwargs = {k: v for k, v in merged.items() if k in valid}
     profile = PostprocessProfile(**kwargs)
     # Profile-level `context` (if non-empty) wins over the sidecar so
     # users with per-profile overrides keep working unchanged.
@@ -512,20 +551,23 @@ class LLMPostprocessor:
         """Eagerly load the local model so the first transcription is not
         slow.  No-op for the remote endpoint path — there is nothing to
         load locally and a probe request would cost real money / latency."""
-        if self.profile.endpoint:
+        if self.profile.base == "remote":
             return
         with self._lock:
             if self._llm is None:
                 self._llm = self._build()
 
     def _system_prompt(self) -> str:
+        # Inline ``system_prompt`` wins; otherwise resolve from the
+        # ``system_prompt_file`` (the canonical mechanism — Gemma's
+        # ``<|think|>`` prompt and the channel-free OpenAI variant are
+        # both just .md files on disk, picked per-profile rather than
+        # auto-swapped based on backend).
         prompt = self.profile.system_prompt.strip()
-        # The shipped default leans on Gemma's `<|think|>` channel to hide
-        # reasoning; generic OpenAI-compatible models don't have it and end
-        # up replying literally `No changes.` or leaking reasoning. Swap in
-        # a channel-free variant when the user hasn't customised the prompt.
-        if self.profile.endpoint and prompt == _DEFAULT_SYSTEM_PROMPT.strip():
-            prompt = _REMOTE_CLEANUP_SYSTEM_PROMPT.strip()
+        if not prompt and self.profile.system_prompt_file.strip():
+            prompt = _resolve_system_prompt_file(
+                self.profile.system_prompt_file
+            ).strip()
         dynamic = self._dynamic_context()
         if dynamic:
             prompt = f"# STATE (DYNAMIC CONTEXT):\n{dynamic}\n\n----\n\n{prompt}"
@@ -637,12 +679,12 @@ class LLMPostprocessor:
     def process(self, text: str) -> str:
         """Run the LLM on *text* and return the cleaned result.
 
-        Routes to the remote OpenAI-compatible endpoint when
-        ``profile.endpoint`` is set; otherwise loads a local GGUF via
-        llama-cpp-python.  Returns the original *text* unchanged if the
+        Routes by ``profile.base``: ``"remote"`` POSTs to the
+        OpenAI-compatible endpoint, ``"builtin"`` loads a GGUF via
+        llama-cpp-python. Returns the original *text* unchanged if the
         model produces an empty response.
         """
-        if self.profile.endpoint:
+        if self.profile.base == "remote":
             result = self._remote_process(text)
         else:
             result = self._local_process(text)
