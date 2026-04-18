@@ -155,6 +155,32 @@ skip_clipboard_history = true   # wl-copy --sensitive
 restore_clipboard = true        # restore your previous clipboard after paste
 ```
 
+### Paste timing — when pasting drops characters or pastes the wrong text
+
+If pasting is unreliable in slow apps (Electron, web-based IDEs, remote
+desktops), raise the relevant delay. Each setting is the wait time
+*from* the first event *until* the second:
+
+| Setting                  | Wait starts when…              | …and ends when                   | Default |
+| ------------------------ | ------------------------------ | -------------------------------- | ------- |
+| `paste.release_delay_ms` | the stop-hotkey is released    | the synthetic paste keystroke fires | 250 ms  |
+| `paste.settle_ms`        | `wl-copy` finishes writing the clipboard | the synthetic paste keystroke fires | 40 ms   |
+| `paste.restore_delay_ms` | the synthetic paste keystroke has fired | the previous clipboard is restored  | 250 ms  |
+
+Symptoms vs. knob:
+
+- **Paste produces stray modifier characters** (Super/Ctrl/Shift leaking
+  into the keystroke) → raise `release_delay_ms`.
+- **Paste pastes the wrong / previous clipboard** → raise `settle_ms`.
+- **Paste pastes your old clipboard instead of the dictation** → raise
+  `restore_delay_ms` (the app read the clipboard *after* we restored
+  it).
+
+`release_delay_ms` is a target, not an additive wait — if transcription
++ LLM cleanup already took longer than that, paste fires immediately.
+`restore_delay_ms` is a no-op when `restore_clipboard = false` or
+`type_directly = true`.
+
 For continuous dictation:
 
 ```toml

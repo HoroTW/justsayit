@@ -150,6 +150,19 @@ justsayit init
   ```
 - If the Parakeet model URL has moved, override `model.parakeet_archive_url`
   and `model.parakeet_archive_dir` in `config.toml`.
+- **Paste sometimes drops characters / pastes the wrong text?** Slow
+  apps (Electron-based ones are the usual suspect) need a bit more
+  breathing room. Raise the relevant delay in `[paste]` — each value
+  is the wait *from* the first event *until* the second:
+
+  | Setting                  | From                                     | Until                               | Default |
+  | ------------------------ | ---------------------------------------- | ----------------------------------- | ------- |
+  | `paste.release_delay_ms` | stop-hotkey released                     | synthetic paste keystroke fires     | 250 ms  |
+  | `paste.settle_ms`        | `wl-copy` finishes writing the clipboard | synthetic paste keystroke fires     | 40 ms   |
+  | `paste.restore_delay_ms` | synthetic paste keystroke has fired      | previous clipboard is restored      | 250 ms  |
+
+  See [docs/configuration.md → Paste timing](docs/configuration.md#paste-timing--when-pasting-drops-characters-or-pastes-the-wrong-text)
+  for symptom-by-symptom guidance.
 
 ## Layout
 

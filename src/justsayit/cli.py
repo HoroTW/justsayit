@@ -446,6 +446,7 @@ class App:
             skip_clipboard_history=self.cfg.paste.skip_clipboard_history,
             type_directly=self.cfg.paste.type_directly,
             restore_clipboard=self.cfg.paste.restore_clipboard,
+            restore_delay_ms=self.cfg.paste.restore_delay_ms,
         )
         try:
             self.paster.start()

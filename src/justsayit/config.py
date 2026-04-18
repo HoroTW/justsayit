@@ -209,6 +209,12 @@ class PasteConfig:
     # copied content is not clobbered by dictation.  Primary/selection
     # clipboard is not restored.  No-op when type_directly is True.
     restore_clipboard: bool = True
+    # Delay (ms) between the synthetic paste keystroke firing and the
+    # previous clipboard being restored. Needs to be long enough for the
+    # target app to actually read the dictated text off the clipboard
+    # before we overwrite it — 250ms covers most slow Electron apps.
+    # No-op when restore_clipboard is False or type_directly is True.
+    restore_delay_ms: int = 250
 
 
 @dataclass

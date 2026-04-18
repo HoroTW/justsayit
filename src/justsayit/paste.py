@@ -189,10 +189,12 @@ class Paster:
         skip_clipboard_history: bool = False,
         type_directly: bool = False,
         restore_clipboard: bool = True,
+        restore_delay_ms: int = 250,
     ) -> None:
         self.backend = backend
         self.combo = combo
         self.settle_ms = settle_ms
+        self.restore_delay_ms = restore_delay_ms
         self.timeout = timeout
         # type_directly takes precedence: inject via ``dotool type``, no clipboard.
         # skip_clipboard_history: use wl-copy --sensitive so text lands in the
@@ -272,7 +274,8 @@ class Paster:
             # Restore the previous clipboard after a brief pause so the target
             # app has time to read it before we overwrite it.
             if old_clip is not None:
-                time.sleep(0.15)
+                if self.restore_delay_ms > 0:
+                    time.sleep(self.restore_delay_ms / 1000)
                 try:
                     restore_clipboard(old_clip, timeout=self.timeout, sensitive=self._sensitive)
                 except PasteError as e:

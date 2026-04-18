@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-04-18
+
+### Added
+
+- **`paste.restore_delay_ms`** (default `250`) — delay in milliseconds
+  between the synthetic paste keystroke firing and the previous
+  clipboard being restored. Previously hardcoded at 150 ms; the new
+  default of 250 ms is more forgiving of slow Electron / web-based
+  apps that read the clipboard a beat late and would otherwise paste
+  the restored content. Drop it to `0` if your target app is fast and
+  you want the clipboard back sooner. No-op when
+  `restore_clipboard = false` or `type_directly = true`.
+
+### Changed
+
+- README and `docs/configuration.md` now have a dedicated
+  paste-timing section that calls out the three knobs together
+  (`release_delay_ms`, `settle_ms`, `restore_delay_ms`) with
+  symptom-by-symptom guidance for unreliable paste. All three stages
+  of the paste pipeline are now tunable; previously the third was
+  hardcoded.
+
 ## [0.12.0] - 2026-04-18
 
 ### Changed (BREAKING — see "Migration" below for legacy behaviour)
