@@ -458,32 +458,36 @@ class App:
             log.error("paster failed to start: %s", e)
             self.paster = None
 
+    def toggle(self) -> None:
+        """Toggle recording. Called by the global shortcut hotkey and the DBus action."""
+        if self.engine is None:
+            log.warning("toggle fired before audio engine ready")
+            return
+        state = self.engine.state
+        log.info("TOGGLE fired (state=%s)", state.value)
+        if self.engine.vad_enabled:
+            # Auto-listen ON: hotkey pauses / resumes VAD triggering
+            # (transient, not persisted). Stop any in-flight recording
+            # first so the user lands in a quiet state with one press.
+            if state in (State.VALIDATING, State.RECORDING, State.MANUAL):
+                self.engine.stop_manual()
+            self.engine.set_vad_paused(not self.engine.vad_paused)
+            self._sync_tray_and_icon()
+            if self.sound_player is not None:
+                if self.engine.vad_paused:
+                    self.sound_player.play_mute()
+                else:
+                    self.sound_player.play_unmute()
+        else:
+            # Auto-listen OFF: hotkey starts / stops a manual recording.
+            if state in (State.IDLE, State.VALIDATING):
+                self.engine.start_manual()
+            else:
+                self.engine.stop_manual()
+
     def setup_shortcut(self) -> None:
         def on_activated(shortcut_id: str) -> None:
-            if self.engine is None:
-                log.warning("hotkey fired before audio engine ready")
-                return
-            state = self.engine.state
-            log.info("HOTKEY %s fired (state=%s)", shortcut_id, state.value)
-            if self.engine.vad_enabled:
-                # Auto-listen ON: hotkey pauses / resumes VAD triggering
-                # (transient, not persisted). Stop any in-flight recording
-                # first so the user lands in a quiet state with one press.
-                if state in (State.VALIDATING, State.RECORDING, State.MANUAL):
-                    self.engine.stop_manual()
-                self.engine.set_vad_paused(not self.engine.vad_paused)
-                self._sync_tray_and_icon()
-                if self.sound_player is not None:
-                    if self.engine.vad_paused:
-                        self.sound_player.play_mute()
-                    else:
-                        self.sound_player.play_unmute()
-            else:
-                # Auto-listen OFF: hotkey starts / stops a manual recording.
-                if state in (State.IDLE, State.VALIDATING):
-                    self.engine.start_manual()
-                else:
-                    self.engine.stop_manual()
+            self.toggle()
 
         def on_needs_rebinding(shortcut_id: str, reason: str) -> None:
             self._notify_shortcut_unbound(shortcut_id, reason)
@@ -977,6 +981,10 @@ class App:
         # normal state now: overlay only shows while recording).
         app.hold()
         self.gtk_app = app
+
+        toggle_action = Gio.SimpleAction.new("toggle", None)
+        toggle_action.connect("activate", lambda _a, _p: self.toggle())
+        app.add_action(toggle_action)
         if not self.no_overlay:
 
             def _on_overlay_abort() -> None:
