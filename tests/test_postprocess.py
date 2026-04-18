@@ -514,28 +514,88 @@ def test_append_to_system_prompt_sits_between_base_and_context():
     )
 
 
-def test_chat_template_kwargs_forwarded_to_local_llama():
+def _make_strict_llama(response_text: str):
+    """Mock Llama whose ``create_chat_completion`` mirrors the real
+    fixed-signature behaviour (no ``**kwargs``), so any attempt to pass
+    ``chat_template_kwargs=`` straight in raises ``TypeError`` exactly
+    like llama-cpp-python 0.3.x does in production. Forwards the call
+    into ``llm.chat_handler(**kwargs)`` so the wrapper installed by
+    ``_install_chat_template_kwargs`` is exercised end-to-end."""
+    llm = MagicMock()
+    llm.chat_format = "stub"
+    # Pre-install a permissive base handler so the wrapper's
+    # ``llama_chat_format.get_chat_completion_handler(chat_format)``
+    # fallback isn't exercised (no real "stub" handler exists).
+    llm.chat_handler = MagicMock()
+
+    def _create_chat_completion(
+        *,
+        messages,
+        temperature=0.2,
+        max_tokens=None,
+    ):
+        # Forward into the (possibly wrapped) handler so the test can
+        # observe the kwargs the handler ultimately sees.
+        llm.chat_handler(messages=messages, temperature=temperature, max_tokens=max_tokens)
+        return {"choices": [{"message": {"content": response_text}}]}
+
+    llm.create_chat_completion = MagicMock(side_effect=_create_chat_completion)
+    return llm
+
+
+def test_chat_template_kwargs_not_passed_to_create_chat_completion():
+    """Regression: ``Llama.create_chat_completion()`` rejects
+    ``chat_template_kwargs`` (no ``**kwargs`` in its signature). The
+    wrapper must inject the template kwargs at chat-handler level
+    instead, leaving the top-level call clean."""
     profile = PostprocessProfile(
         model_path="/fake/model.gguf",
         chat_template_kwargs={"enable_thinking": True},
     )
     pp = LLMPostprocessor(profile)
-    pp._llm = _make_mock_llama("ok")
-    pp.process("in")
+    pp._llm = _make_strict_llama("ok")
+    pp._install_chat_template_kwargs()
+
+    pp.process("in")  # would raise TypeError without the wrapper
+
     call_kwargs = pp._llm.create_chat_completion.call_args[1]
-    assert call_kwargs["chat_template_kwargs"] == {"enable_thinking": True}
+    assert "chat_template_kwargs" not in call_kwargs
 
 
-def test_chat_template_kwargs_omitted_when_empty():
+def test_chat_template_kwargs_reach_chat_handler():
+    """Wrapper must surface template kwargs (e.g. ``enable_thinking``)
+    to the underlying chat handler, since that's where the Jinja
+    template picks them up."""
+    profile = PostprocessProfile(
+        model_path="/fake/model.gguf",
+        chat_template_kwargs={"enable_thinking": True},
+    )
+    pp = LLMPostprocessor(profile)
+    pp._llm = _make_strict_llama("ok")
+    handler_mock = MagicMock()
+    pp._llm.chat_handler = handler_mock
+    pp._install_chat_template_kwargs()
+
+    pp.process("in")
+
+    handler_call = handler_mock.call_args[1]
+    assert handler_call["enable_thinking"] is True
+
+
+def test_chat_template_kwargs_install_noop_when_empty():
+    """Empty ``chat_template_kwargs`` must leave the chat_handler
+    untouched so we don't pay wrapping cost or risk breaking the
+    default handler path."""
     profile = PostprocessProfile(
         model_path="/fake/model.gguf",
         chat_template_kwargs={},
     )
     pp = LLMPostprocessor(profile)
-    pp._llm = _make_mock_llama("ok")
-    pp.process("in")
-    call_kwargs = pp._llm.create_chat_completion.call_args[1]
-    assert "chat_template_kwargs" not in call_kwargs
+    pp._llm = _make_strict_llama("ok")
+    sentinel = pp._llm.chat_handler
+    pp._install_chat_template_kwargs()
+
+    assert pp._llm.chat_handler is sentinel
 
 
 def test_chat_template_kwargs_default_enables_thinking():

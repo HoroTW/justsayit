@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.3] - 2026-04-18
+
+### Fixed
+
+- Local (built-in llama-cpp-python) backend crashed with
+  ``TypeError: Llama.create_chat_completion() got an unexpected
+  keyword argument 'chat_template_kwargs'`` because that method has a
+  fixed keyword signature with no ``**kwargs`` passthrough. Switched
+  to wrapping the underlying ``chat_handler`` (which *does* accept
+  ``**kwargs`` and forwards them into the Jinja chat template), so
+  Qwen 3.5's ``enable_thinking`` flag — and any other template
+  kwargs — actually reach the template rather than blowing up the
+  request. Added a regression test using a strict mock that mirrors
+  the real fixed signature; the previous mock accepted arbitrary
+  kwargs and let the bug ship.
+
 ## [0.13.2] - 2026-04-18
 
 ### Fixed

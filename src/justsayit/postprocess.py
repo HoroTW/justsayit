@@ -572,6 +572,7 @@ class LLMPostprocessor:
         with self._lock:
             if self._llm is None:
                 self._llm = self._build()
+                self._install_chat_template_kwargs()
 
     def _system_prompt(self) -> str:
         # Inline ``system_prompt`` wins; otherwise resolve from the
@@ -689,23 +690,39 @@ class LLMPostprocessor:
             raise RuntimeError(f"LLM endpoint returned no choices: {str(data)[:300]}")
         return (choices[0].get("message") or {}).get("content", "").strip()
 
+    def _install_chat_template_kwargs(self) -> None:
+        # ``Llama.create_chat_completion()`` has a fixed keyword signature
+        # (no ``**kwargs``), so passing ``chat_template_kwargs=`` raises
+        # ``TypeError``. The chat handler underneath *does* accept
+        # ``**kwargs`` and forwards them into the Jinja template, so we
+        # wrap the handler to inject our profile's template kwargs at
+        # call time (e.g. Qwen 3.5's ``enable_thinking``).
+        if not self.profile.chat_template_kwargs:
+            return
+        from llama_cpp import llama_chat_format
+
+        template_kwargs = dict(self.profile.chat_template_kwargs)
+        base_handler = self._llm.chat_handler or (
+            llama_chat_format.get_chat_completion_handler(self._llm.chat_format)
+        )
+
+        def _handler(**call_kwargs: Any):
+            merged = dict(template_kwargs)
+            merged.update(call_kwargs)
+            return base_handler(**merged)
+
+        self._llm.chat_handler = _handler
+
     def _local_process(self, text: str) -> str:
         with self._lock:
             if self._llm is None:
                 self._llm = self._build()
+                self._install_chat_template_kwargs()
             kwargs: dict[str, Any] = {
                 "messages": self._build_messages(text),
                 "temperature": self.profile.temperature,
                 "max_tokens": self.profile.max_tokens,
             }
-            if self.profile.chat_template_kwargs:
-                # Forwarded into the Jinja chat template (e.g. Qwen 3.5's
-                # ``enable_thinking`` flag). Empty → not forwarded, so we
-                # don't trigger ``TypeError: unexpected keyword argument``
-                # on older llama-cpp-python builds.
-                kwargs["chat_template_kwargs"] = dict(
-                    self.profile.chat_template_kwargs
-                )
             resp = self._llm.create_chat_completion(**kwargs)
         return resp["choices"][0]["message"]["content"].strip()
 
