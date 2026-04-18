@@ -37,14 +37,31 @@ log = logging.getLogger(__name__)
 # Profile dataclass + loader
 # ---------------------------------------------------------------------------
 
-# Shipped prompt templates live as plain Markdown alongside this module
-# so they can be edited in a Markdown-aware editor without Python-string
-# escaping. See ``src/justsayit/prompts/`` for the source files.
+# Shipped prompt + config templates live as plain text files alongside
+# this module so they can be edited in a content-aware editor (Markdown
+# for prompts, TOML for profile templates, shell for the dynamic-context
+# helper) without Python-string escaping or f-string brace doubling.
+# See ``src/justsayit/prompts/`` and ``src/justsayit/templates/``.
 _PROMPTS_DIR = Path(__file__).parent / "prompts"
+_TEMPLATES_DIR = Path(__file__).parent / "templates"
 
 
 def _load_prompt(name: str) -> str:
     return (_PROMPTS_DIR / name).read_text(encoding="utf-8")
+
+
+def _load_template(name: str, **subst: str) -> str:
+    """Read a packaged template file and substitute ``{{NAME}}`` markers.
+
+    Uses literal ``str.replace`` (not ``str.format`` or any templating
+    engine) so braces that occur naturally in the template body — e.g.
+    ``{text}`` in commented-out user_template documentation — pass
+    through unchanged. Only the exact ``{{NAME}}`` token (double braces,
+    matching key) is substituted."""
+    text = (_TEMPLATES_DIR / name).read_text(encoding="utf-8")
+    for key, value in subst.items():
+        text = text.replace("{{" + key + "}}", value)
+    return text
 
 
 # Default cleanup prompt — written for Gemma 3 / 4. Uses the model's
@@ -86,233 +103,29 @@ def _comment_block(text: str) -> str:
     return "\n".join(f"# {line}" if line else "#" for line in text.splitlines())
 
 
-# Written to disk on first ``justsayit init``. Uses the "commented
-# defaults" convention: every value line is commented out so the file
-# acts as in-place documentation. Users uncomment + edit only the keys
-# they actually want to override; everything else tracks the dataclass
-# default. Embedded with single-quoted '''…''' so embedded """ aren't
-# parsed as the closing delimiter.
-_CLEANUP_PROFILE_TOML = f'''\
-{_PROFILE_COMMENTED_FORM_MARKER}
-# Profile: gemma4-cleanup (recommended everyday default).
-#
-# Every key below is commented out — that means "use the shipped default".
-# Uncomment a line and change the value to override it for this profile.
-# Lines you don't touch keep tracking the shipped defaults, so future
-# updates that tweak a default just work.
-#
-# Activate this profile from the tray's LLM submenu, or set in
-# ~/.config/justsayit/state.toml:
-#   [postprocess]
-#   enabled = true
-#   profile = "gemma4-cleanup"
-#
-# (See gemma4-fun.toml for an example with overrides uncommented.)
-#
-# Inference backend setup (with Vulkan GPU support):
-#   CMAKE_ARGS="-DGGML_VULKAN=1" uv pip install llama-cpp-python
-# Then run `justsayit setup-llm` to download a GGUF model.
-
-# Path to the GGUF model file. ~ is expanded.
-# model_path = "~/.cache/justsayit/models/llm/gemma-4-E4B-it-Q4_K_M.gguf"
-
-# HuggingFace source for auto-download via `justsayit setup-llm`.
-# hf_repo = "unsloth/gemma-4-E4B-it-GGUF"
-# hf_filename = "gemma-4-E4B-it-Q4_K_M.gguf"
-
-# GPU layer offloading. -1 = all layers on GPU (fastest). 0 = CPU only.
-# n_gpu_layers = -1
-
-# Context window size in tokens.
-# n_ctx = 4096
-
-# Temperature. Keep very low (≤ 0.1) for deterministic cleanup.
-# temperature = 0.08
-
-# Hard cap on generated tokens.
-# max_tokens = 4096
-
-# User message template. {{text}} is replaced with the raw transcription.
-# user_template = "{{text}}"
-
-# Regex (re.DOTALL) applied to the LLM output before paste, but NOT
-# before display in the overlay. Default strips Gemma's thinking-channel
-# block. Set to "" if you remove `<|think|>` from system_prompt.
-# paste_strip_regex = '<\\|channel>thought(.*?)<channel\\|>'
-
-# System prompt — the cleanup prompt is the dataclass default. Uncomment
-# the block below to override it for this profile. The default enables
-# Gemma's "thinking" channel (the `<|think|>` token makes the model emit
-# a `<|channel>...<channel|>` reasoning block); pair changes here with
-# `paste_strip_regex` above.
-# system_prompt = """
-{_comment_block(_DEFAULT_SYSTEM_PROMPT.rstrip())}
-# """
-
-# User-context lives in a shared sidecar so it's preserved across
-# profile updates: ~/.config/justsayit/context.toml. Uncomment to set
-# per-profile context that overrides the sidecar:
-# context = """
-# Name: Jane Doe
-# ...
-# """
-
-# --- OpenAI-compatible /chat/completions endpoint --------------------
-# When `endpoint` is set, the LLM call goes over HTTP instead of loading
-# a local GGUF.  The local GGUF fields above (model_path, hf_repo,
-# n_gpu_layers, n_ctx) are ignored on this path — no llama-cpp-python
-# is needed.  Works with OpenAI, OpenRouter, Groq, Together, vLLM,
-# Ollama (`/v1`), LM Studio, llama.cpp's bundled server, etc.
-#
-# API keys come from one of three places, in priority order:
-#   1. `api_key = "sk-..."` below (explicit, lowest-friction for tests)
-#   2. the env var named by `api_key_env` (default OPENAI_API_KEY)
-#   3. `~/.config/justsayit/.env` — same KEY=VALUE format as
-#      python-dotenv; lines you've already exported in your shell win.
-#
-# When `endpoint` is set AND `system_prompt` is left at the dataclass
-# default, justsayit auto-swaps the Gemma `<|think|>`-channel prompt for
-# a channel-free variant — generic OpenAI-compatible models don't have
-# that channel and would otherwise reply literally `No changes.` or leak
-# reasoning into the output. Override `system_prompt` to opt out.
-#
-# endpoint = "https://api.openai.com/v1"
-# model = "gpt-4o-mini"
-# api_key = ""
-# api_key_env = "OPENAI_API_KEY"
-# request_timeout = 60.0
-'''
-
-
-# Companion "fun" profile — emojifies the transcript. Demonstrates what
-# the commented-defaults form looks like with actual overrides: the
-# three keys that DEFINE the fun flavor (system_prompt, temperature,
-# paste_strip_regex) stay uncommented, everything else falls through to
+# Profile templates written to disk on first ``justsayit init`` (and
+# refreshed on each install via ensure_default_profiles). Use the
+# "commented defaults" convention: every value line is commented out
+# so the file acts as in-place documentation. Users uncomment + edit
+# only the keys they actually want to override; everything else tracks
 # the dataclass default.
-_FUN_PROFILE_TOML = f'''\
-{_PROFILE_COMMENTED_FORM_MARKER}
-# Profile: gemma4-fun (playful sibling of gemma4-cleanup).
-#
-# Same commented-defaults convention as gemma4-cleanup.toml: comment =
-# uses default, uncommented line = override. The three uncommented keys
-# below (system_prompt, temperature, paste_strip_regex) are what makes
-# this the "fun" profile — leave them as-is unless you want to customise
-# the playful flavor.
-#
-# For everyday cleanup, switch back to the recommended default:
-#   profile = "gemma4-cleanup"
-#
-# Activate from the tray's LLM submenu, or set in
-# ~/.config/justsayit/state.toml:
-#   [postprocess]
-#   enabled = true
-#   profile = "gemma4-fun"
+_CLEANUP_PROFILE_TOML = _load_template(
+    "profile-gemma4-cleanup.toml",
+    COMMENTED_FORM_MARKER=_PROFILE_COMMENTED_FORM_MARKER,
+    COMMENTED_DEFAULT_SYSTEM_PROMPT=_comment_block(_DEFAULT_SYSTEM_PROMPT.rstrip()),
+)
 
-# Same model file as gemma4-cleanup — if you ran `setup-llm` once you
-# already have it on disk and no extra download happens.
-# model_path = "~/.cache/justsayit/models/llm/gemma-4-E4B-it-Q4_K_M.gguf"
-# hf_repo = "unsloth/gemma-4-E4B-it-GGUF"
-# hf_filename = "gemma-4-E4B-it-Q4_K_M.gguf"
+_FUN_PROFILE_TOML = _load_template(
+    "profile-gemma4-fun.toml",
+    COMMENTED_FORM_MARKER=_PROFILE_COMMENTED_FORM_MARKER,
+    FUN_SYSTEM_PROMPT=_FUN_SYSTEM_PROMPT,
+)
 
-# n_gpu_layers = -1
-# n_ctx = 4096
-# max_tokens = 4096
-# user_template = "{{text}}"
-
-# Slightly higher temperature so emoji choice has some variety.
-temperature = 0.4
-
-# No `<|think|>` in the prompt → no channel block to strip.
-paste_strip_regex = ""
-
-# Override: this is the "fun" prompt. Edit freely.
-system_prompt = """
-{_FUN_SYSTEM_PROMPT}"""
-
-# User-context lives in ~/.config/justsayit/context.toml (shared across
-# profiles). Uncomment to override the sidecar for this profile only:
-# context = ""
-'''
-
-
-# Companion "openai" profile — same cleanup contract as gemma4-cleanup
-# but routed through an OpenAI-compatible HTTP endpoint instead of a
-# local GGUF.  Ships with `endpoint` and `model` uncommented (the keys
-# that DEFINE the variant) and a sensible OpenAI default; everything
-# else falls through to the dataclass default.  The cleanup prompt is
-# left commented out: with `endpoint` set, `_system_prompt()` auto-swaps
-# the Gemma `<|think|>`-channel default for `_REMOTE_CLEANUP_SYSTEM_PROMPT`,
-# the channel-free variant generic LLMs need.
-_OPENAI_PROFILE_TOML = f'''\
-{_PROFILE_COMMENTED_FORM_MARKER}
-# Profile: openai-cleanup (OpenAI-compatible /chat/completions backend).
-#
-# Same commented-defaults convention as gemma4-cleanup.toml: comment =
-# uses default, uncommented line = override. The two uncommented keys
-# below (endpoint, model) are what makes this the "openai" profile —
-# point them at your provider, drop your API key into
-# ~/.config/justsayit/.env (KEY=VALUE format), and activate this
-# profile from the tray's LLM submenu.
-#
-# Works with anything that speaks the OpenAI chat-completions schema:
-# OpenAI, OpenRouter, Groq, Together, vLLM, Ollama (`/v1`), LM Studio,
-# llama.cpp's bundled server, etc.
-#
-# Because `endpoint` is set AND `system_prompt` is left at the dataclass
-# default (commented-out below), justsayit auto-swaps the Gemma
-# `<|think|>`-channel cleanup prompt for a channel-free variant —
-# generic OpenAI-compatible models don't have that channel and would
-# otherwise reply literally `No changes.` or leak reasoning.
-
-# Endpoint base URL (no trailing /chat/completions — that's appended).
-endpoint = "https://api.openai.com/v1"
-
-# Model name. Pick whatever your provider supports.
-model = "gpt-4o-mini"
-
-# API key — three places to put it, in priority order:
-#   1. Inline below (lowest friction; commit risk).
-#   2. The env var named by `api_key_env` (default OPENAI_API_KEY).
-#   3. ~/.config/justsayit/.env (same KEY=VALUE format as python-dotenv).
-# api_key = "sk-..."
-# api_key_env = "OPENAI_API_KEY"
-
-# HTTP timeout (seconds) for the chat-completions request.
-# request_timeout = 60.0
-
-# Retry transient HTTP / network failures on the remote path.
-# `remote_retries` counts retries after the first attempt.
-# remote_retries = 3
-# remote_retry_delay_seconds = 1.0
-
-# Cleanup tuning. Defaults are tuned for deterministic STT cleanup —
-# raise temperature for more creative output.
-# temperature = 0.08
-# max_tokens = 4096
-
-# User message template. {{text}} is replaced with the raw transcription.
-# user_template = "{{text}}"
-
-# Regex (re.DOTALL) applied to the LLM output before paste, but NOT
-# before display in the overlay. Default strips Gemma's thinking-channel
-# block — a no-op against generic LLM responses, harmless to leave on.
-# paste_strip_regex = '<\\|channel>thought(.*?)<channel\\|>'
-
-# System prompt — left at the dataclass default. Because `endpoint` is
-# set above, justsayit auto-swaps in a channel-free variant of the
-# cleanup prompt. Uncomment the block below to override it for this
-# profile. The shipped default is mirrored here for reference.
-# system_prompt = """
-{_comment_block(_DEFAULT_SYSTEM_PROMPT.rstrip())}
-# """
-
-# User-context lives in ~/.config/justsayit/context.toml (shared across
-# profiles). Uncomment to override the sidecar for this profile only:
-# context = """
-# Name: Jane Doe
-# ...
-# """
-'''
+_OPENAI_PROFILE_TOML = _load_template(
+    "profile-openai-cleanup.toml",
+    COMMENTED_FORM_MARKER=_PROFILE_COMMENTED_FORM_MARKER,
+    COMMENTED_DEFAULT_SYSTEM_PROMPT=_comment_block(_DEFAULT_SYSTEM_PROMPT.rstrip()),
+)
 
 
 @dataclass
@@ -381,66 +194,13 @@ def profiles_dir() -> Path:
 # regexes) can be replaced without clobbering anything the user wrote.
 # Profile-level context still works (load_profile honors a non-empty
 # `context` field in the profile) and takes precedence over the sidecar.
-_CONTEXT_SIDECAR_TEMPLATE = '''\
-# Personal context for the LLM postprocessor.
-#
-# The string assigned to `context` below is appended to every postprocess
-# profile's system prompt under a "User context" heading on every
-# transcription.  Comments (lines starting with `#`) are NOT sent to the
-# model — only the value of `context`.
-#
-# Tips:
-# - Be concise; this is sent on every dictation.
-# - Spell out your name (so the model gets it right), country/languages,
-#   and any project / proper-noun spellings the model gets wrong.
-# - Don't put secrets here.
-#
-# Example:
-#   context = """
-#   Name: Jane Doe
-#   Country: Germany
-#   Languages: German (native), English (fluent), Python
-#   Notes: software engineer; often dictates code-related text.
-#   """
-
-context = ""
-'''
+_CONTEXT_SIDECAR_TEMPLATE = _load_template("context-sidecar.toml")
 
 
-_DYNAMIC_CONTEXT_SCRIPT = """#!/bin/sh
-set -eu
-
-local_time=$(date +%H:%M:%S)
-local_date=$(date +%F)
-timezone=""
-
-if [ -L /etc/localtime ]; then
-    localtime_target=$(readlink /etc/localtime 2>/dev/null || true)
-    case "$localtime_target" in
-        *zoneinfo/*)
-            timezone=${localtime_target##*zoneinfo/}
-            ;;
-    esac
-fi
-
-if [ -z "$timezone" ] && [ -r /etc/timezone ]; then
-    IFS= read -r timezone < /etc/timezone || true
-fi
-
-if [ -z "$timezone" ]; then
-    timezone=$(date +%Z)
-fi
-
-printf 'Local time: %s\n' "$local_time"
-printf 'Date: %s\n' "$local_date"
-printf 'Timezone: %s\n' "$timezone"
-
-locale_hint=${LC_ALL:-${LC_TIME:-${LANG:-}}}
-locale_hint=${locale_hint%%.*}
-if [ -n "$locale_hint" ] && [ "$locale_hint" != "C" ] && [ "$locale_hint" != "POSIX" ]; then
-    printf 'Locale hint: %s\n' "$locale_hint"
-fi
-"""
+# Default dynamic-context helper script written to ``<config_dir>/
+# dynamic-context.sh`` on first run. The script's stdout is captured
+# and prepended to every postprocess request as a STATE block.
+_DYNAMIC_CONTEXT_SCRIPT = _load_template("dynamic-context.sh")
 
 
 def context_file_path() -> Path:

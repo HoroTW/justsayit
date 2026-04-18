@@ -7,12 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.14] - 2026-04-17
+
 ### Changed
 
 - Loosened the shipped local and OpenAI-compatible cleanup prompts so
   `Hey Computer` anywhere in a transcript is generally treated as an
   assistant cue, while clearly quoted, reported, incidental, or
   otherwise nonsensical uses should still stay cleanup-only.
+
+- Refactored `postprocess.py`: the three TOML profile templates
+  (`gemma4-cleanup`, `gemma4-fun`, `openai-cleanup`), the
+  context-sidecar template, and the `dynamic-context.sh` script now
+  live as standalone files under `src/justsayit/templates/` instead of
+  inline Python f-strings. A new `_load_template(name, **subst)` helper
+  reads them from disk and substitutes `{{NAME}}` markers with literal
+  `str.replace`, so braces in the template body (e.g. `{text}` in
+  commented-out `user_template` examples) pass through unchanged.
+  No behavioral change — generated profile files are byte-identical.
 
 ### Documentation
 

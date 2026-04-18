@@ -5,7 +5,7 @@ Layout has two modes:
   Compact (recording / listening / processing):
     ┌──────────────────────────────────┐
     │  recording                       │  ← state label
-    │  ● ▓▓▓▓──────────────────▓▓▓▓   │  ← dot + meter
+    │  ● ▓▓▓▓──────────────────▓▓▓▓    │  ← dot + meter
     └──────────────────────────────────┘
 
   Expanded result view (after transcription):
@@ -14,7 +14,7 @@ Layout has two modes:
     │  ──────────────────────────────────────────────────  │
     │  This is the LLM-cleaned result.                     │  ← bottom field
     │  ──────────────────────────────────────────────────  │
-    │  ● ▓▓──────────────────────────────────────────▓▓   │  ← dot + flat meter
+    │  ● ▓▓──────────────────────────────────────────▓▓    │  ← dot + flat meter
     └──────────────────────────────────────────────────────┘
 
 All updates from non-UI threads must go through ``GLib.idle_add`` —

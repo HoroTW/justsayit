@@ -1,0 +1,68 @@
+{{COMMENTED_FORM_MARKER}}
+# Profile: openai-cleanup (OpenAI-compatible /chat/completions backend).
+#
+# Same commented-defaults convention as gemma4-cleanup.toml: comment =
+# uses default, uncommented line = override. The two uncommented keys
+# below (endpoint, model) are what makes this the "openai" profile —
+# point them at your provider, drop your API key into
+# ~/.config/justsayit/.env (KEY=VALUE format), and activate this
+# profile from the tray's LLM submenu.
+#
+# Works with anything that speaks the OpenAI chat-completions schema:
+# OpenAI, OpenRouter, Groq, Together, vLLM, Ollama (`/v1`), LM Studio,
+# llama.cpp's bundled server, etc.
+#
+# Because `endpoint` is set AND `system_prompt` is left at the dataclass
+# default (commented-out below), justsayit auto-swaps the Gemma
+# `<|think|>`-channel cleanup prompt for a channel-free variant —
+# generic OpenAI-compatible models don't have that channel and would
+# otherwise reply literally `No changes.` or leak reasoning.
+
+# Endpoint base URL (no trailing /chat/completions — that's appended).
+endpoint = "https://api.openai.com/v1"
+
+# Model name. Pick whatever your provider supports.
+model = "gpt-4o-mini"
+
+# API key — three places to put it, in priority order:
+#   1. Inline below (lowest friction; commit risk).
+#   2. The env var named by `api_key_env` (default OPENAI_API_KEY).
+#   3. ~/.config/justsayit/.env (same KEY=VALUE format as python-dotenv).
+# api_key = "sk-..."
+# api_key_env = "OPENAI_API_KEY"
+
+# HTTP timeout (seconds) for the chat-completions request.
+# request_timeout = 60.0
+
+# Retry transient HTTP / network failures on the remote path.
+# `remote_retries` counts retries after the first attempt.
+# remote_retries = 3
+# remote_retry_delay_seconds = 1.0
+
+# Cleanup tuning. Defaults are tuned for deterministic STT cleanup —
+# raise temperature for more creative output.
+# temperature = 0.08
+# max_tokens = 4096
+
+# User message template. {text} is replaced with the raw transcription.
+# user_template = "{text}"
+
+# Regex (re.DOTALL) applied to the LLM output before paste, but NOT
+# before display in the overlay. Default strips Gemma's thinking-channel
+# block — a no-op against generic LLM responses, harmless to leave on.
+# paste_strip_regex = '<\|channel>thought(.*?)<channel\|>'
+
+# System prompt — left at the dataclass default. Because `endpoint` is
+# set above, justsayit auto-swaps in a channel-free variant of the
+# cleanup prompt. Uncomment the block below to override it for this
+# profile. The shipped default is mirrored here for reference.
+# system_prompt = """
+{{COMMENTED_DEFAULT_SYSTEM_PROMPT}}
+# """
+
+# User-context lives in ~/.config/justsayit/context.toml (shared across
+# profiles). Uncomment to override the sidecar for this profile only:
+# context = """
+# Name: Jane Doe
+# ...
+# """

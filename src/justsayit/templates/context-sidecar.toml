@@ -1,0 +1,22 @@
+# Personal context for the LLM postprocessor.
+#
+# The string assigned to `context` below is appended to every postprocess
+# profile's system prompt under a "User context" heading on every
+# transcription.  Comments (lines starting with `#`) are NOT sent to the
+# model — only the value of `context`.
+#
+# Tips:
+# - Be concise; this is sent on every dictation.
+# - Spell out your name (so the model gets it right), country/languages,
+#   and any project / proper-noun spellings the model gets wrong.
+# - Don't put secrets here.
+#
+# Example:
+#   context = """
+#   Name: Jane Doe
+#   Country: Germany
+#   Languages: German (native), English (fluent), Python
+#   Notes: software engineer; often dictates code-related text.
+#   """
+
+context = ""

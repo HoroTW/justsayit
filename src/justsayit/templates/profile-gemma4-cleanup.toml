@@ -1,0 +1,88 @@
+{{COMMENTED_FORM_MARKER}}
+# Profile: gemma4-cleanup (recommended everyday default).
+#
+# Every key below is commented out — that means "use the shipped default".
+# Uncomment a line and change the value to override it for this profile.
+# Lines you don't touch keep tracking the shipped defaults, so future
+# updates that tweak a default just work.
+#
+# Activate this profile from the tray's LLM submenu, or set in
+# ~/.config/justsayit/state.toml:
+#   [postprocess]
+#   enabled = true
+#   profile = "gemma4-cleanup"
+#
+# (See gemma4-fun.toml for an example with overrides uncommented.)
+#
+# Inference backend setup (with Vulkan GPU support):
+#   CMAKE_ARGS="-DGGML_VULKAN=1" uv pip install llama-cpp-python
+# Then run `justsayit setup-llm` to download a GGUF model.
+
+# Path to the GGUF model file. ~ is expanded.
+# model_path = "~/.cache/justsayit/models/llm/gemma-4-E4B-it-Q4_K_M.gguf"
+
+# HuggingFace source for auto-download via `justsayit setup-llm`.
+# hf_repo = "unsloth/gemma-4-E4B-it-GGUF"
+# hf_filename = "gemma-4-E4B-it-Q4_K_M.gguf"
+
+# GPU layer offloading. -1 = all layers on GPU (fastest). 0 = CPU only.
+# n_gpu_layers = -1
+
+# Context window size in tokens.
+# n_ctx = 4096
+
+# Temperature. Keep very low (≤ 0.1) for deterministic cleanup.
+# temperature = 0.08
+
+# Hard cap on generated tokens.
+# max_tokens = 4096
+
+# User message template. {text} is replaced with the raw transcription.
+# user_template = "{text}"
+
+# Regex (re.DOTALL) applied to the LLM output before paste, but NOT
+# before display in the overlay. Default strips Gemma's thinking-channel
+# block. Set to "" if you remove `<|think|>` from system_prompt.
+# paste_strip_regex = '<\|channel>thought(.*?)<channel\|>'
+
+# System prompt — the cleanup prompt is the dataclass default. Uncomment
+# the block below to override it for this profile. The default enables
+# Gemma's "thinking" channel (the `<|think|>` token makes the model emit
+# a `<|channel>...<channel|>` reasoning block); pair changes here with
+# `paste_strip_regex` above.
+# system_prompt = """
+{{COMMENTED_DEFAULT_SYSTEM_PROMPT}}
+# """
+
+# User-context lives in a shared sidecar so it's preserved across
+# profile updates: ~/.config/justsayit/context.toml. Uncomment to set
+# per-profile context that overrides the sidecar:
+# context = """
+# Name: Jane Doe
+# ...
+# """
+
+# --- OpenAI-compatible /chat/completions endpoint --------------------
+# When `endpoint` is set, the LLM call goes over HTTP instead of loading
+# a local GGUF.  The local GGUF fields above (model_path, hf_repo,
+# n_gpu_layers, n_ctx) are ignored on this path — no llama-cpp-python
+# is needed.  Works with OpenAI, OpenRouter, Groq, Together, vLLM,
+# Ollama (`/v1`), LM Studio, llama.cpp's bundled server, etc.
+#
+# API keys come from one of three places, in priority order:
+#   1. `api_key = "sk-..."` below (explicit, lowest-friction for tests)
+#   2. the env var named by `api_key_env` (default OPENAI_API_KEY)
+#   3. `~/.config/justsayit/.env` — same KEY=VALUE format as
+#      python-dotenv; lines you've already exported in your shell win.
+#
+# When `endpoint` is set AND `system_prompt` is left at the dataclass
+# default, justsayit auto-swaps the Gemma `<|think|>`-channel prompt for
+# a channel-free variant — generic OpenAI-compatible models don't have
+# that channel and would otherwise reply literally `No changes.` or leak
+# reasoning into the output. Override `system_prompt` to opt out.
+#
+# endpoint = "https://api.openai.com/v1"
+# model = "gpt-4o-mini"
+# api_key = ""
+# api_key_env = "OPENAI_API_KEY"
+# request_timeout = 60.0
