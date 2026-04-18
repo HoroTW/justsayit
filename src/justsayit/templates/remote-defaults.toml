@@ -43,6 +43,19 @@ temperature = 0.08
 # Hard cap on generated tokens.
 max_tokens = 4096
 
+# Sampling knobs. Only the universally-portable subset is forwarded
+# over the HTTP body (`top_p`, `presence_penalty`, `frequency_penalty`);
+# OpenAI-family APIs ignore `top_k` / `min_p` / `repeat_penalty`, so
+# they're runtime-only for the builtin backend and harmless to set
+# here. Raise `presence_penalty` (e.g. 1.5) as the first lever
+# against repetition / looping on small self-hosted models.
+top_p = 0.95
+top_k = 40
+min_p = 0.05
+repeat_penalty = 1.0
+presence_penalty = 0.0
+frequency_penalty = 0.0
+
 # User message template. {text} is replaced with the raw transcription.
 user_template = "{text}"
 

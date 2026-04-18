@@ -41,6 +41,16 @@ paste_strip_regex = ""
 # n_gpu_layers = -1
 # n_ctx = 4096
 # max_tokens = 4096
+
+# Sampling knobs. Defaults match llama-cpp-python. Raise
+# `presence_penalty` (e.g. 1.5) if you see looping on small models.
+# top_p = 0.95
+# top_k = 40
+# min_p = 0.05
+# repeat_penalty = 1.0
+# presence_penalty = 0.0
+# frequency_penalty = 0.0
+
 # user_template = "{text}"
 
 # Extra text appended to the resolved system prompt (blank-line joined).

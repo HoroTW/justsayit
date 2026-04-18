@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.5] - 2026-04-18
+
+### Added
+
+- Six new profile fields expose llama-cpp-python's sampling knobs:
+  `top_p`, `top_k`, `min_p`, `repeat_penalty`, `presence_penalty`,
+  `frequency_penalty`. Motivated by Qwen 3.5 0.8B's documented
+  tendency to enter thinking loops — Qwen's own guidance is to raise
+  `presence_penalty` to 1.5 (thinking) or 2.0 (non-thinking) as the
+  single most effective lever, so it was missing and you couldn't
+  work around it short of editing the source. Defaults match
+  llama-cpp-python's `create_chat_completion` defaults (no behaviour
+  change for existing profiles). `top_p`, `presence_penalty`,
+  `frequency_penalty` go over HTTP for the remote backend; `top_k` /
+  `min_p` / `repeat_penalty` are llama.cpp-specific and runtime-only
+  for the built-in backend.
+- New "Looping / repetition on small models" section in
+  `docs/postprocessing.md` with the Qwen-recommended knob order
+  (temperature away from greedy, then `presence_penalty`) and a
+  ready-to-paste Qwen 3.5 thinking-mode override block.
+
 ## [0.13.4] - 2026-04-18
 
 ### Fixed

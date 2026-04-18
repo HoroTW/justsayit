@@ -533,10 +533,26 @@ def _make_strict_llama(response_text: str):
         messages,
         temperature=0.2,
         max_tokens=None,
+        top_p=0.95,
+        top_k=40,
+        min_p=0.05,
+        repeat_penalty=1.0,
+        presence_penalty=0.0,
+        frequency_penalty=0.0,
     ):
         # Forward into the (possibly wrapped) handler so the test can
         # observe the kwargs the handler ultimately sees.
-        llm.chat_handler(messages=messages, temperature=temperature, max_tokens=max_tokens)
+        llm.chat_handler(
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=top_p,
+            top_k=top_k,
+            min_p=min_p,
+            repeat_penalty=repeat_penalty,
+            presence_penalty=presence_penalty,
+            frequency_penalty=frequency_penalty,
+        )
         return {"choices": [{"message": {"content": response_text}}]}
 
     llm.create_chat_completion = MagicMock(side_effect=_create_chat_completion)
@@ -596,6 +612,83 @@ def test_chat_template_kwargs_install_noop_when_empty():
     pp._install_chat_template_kwargs()
 
     assert pp._llm.chat_handler is sentinel
+
+
+def test_sampling_params_forwarded_to_local_llama():
+    """Regression: the anti-loop sampling knobs (``presence_penalty``
+    in particular) must actually reach ``create_chat_completion`` —
+    otherwise users can raise the field in their profile without any
+    effect on the model's behaviour."""
+    profile = PostprocessProfile(
+        model_path="/fake/model.gguf",
+        presence_penalty=1.5,
+        frequency_penalty=0.3,
+        repeat_penalty=1.1,
+        top_p=0.8,
+        top_k=20,
+        min_p=0.0,
+    )
+    pp = LLMPostprocessor(profile)
+    pp._llm = _make_strict_llama("ok")
+    pp._install_chat_template_kwargs()
+
+    pp.process("in")
+
+    call_kwargs = pp._llm.create_chat_completion.call_args[1]
+    assert call_kwargs["presence_penalty"] == 1.5
+    assert call_kwargs["frequency_penalty"] == 0.3
+    assert call_kwargs["repeat_penalty"] == 1.1
+    assert call_kwargs["top_p"] == 0.8
+    assert call_kwargs["top_k"] == 20
+    assert call_kwargs["min_p"] == 0.0
+
+
+def test_sampling_params_forwarded_to_remote_body(monkeypatch):
+    """Regression: ``presence_penalty`` / ``frequency_penalty`` /
+    ``top_p`` have to land in the JSON body for the remote path — the
+    only portable anti-loop knobs across OpenAI-compatible servers.
+    ``top_k`` / ``min_p`` / ``repeat_penalty`` are llama.cpp-specific
+    and deliberately left out of the body so OpenAI doesn't 400."""
+    import json
+    import justsayit.postprocess as pp_mod
+
+    profile = PostprocessProfile(
+        endpoint="https://example.test/v1",
+        model="test-model",
+        api_key="sk-test",
+        presence_penalty=1.5,
+        frequency_penalty=0.3,
+        top_p=0.8,
+        top_k=20,
+        min_p=0.0,
+        repeat_penalty=1.1,
+    )
+    pp = LLMPostprocessor(profile)
+
+    captured: dict = {}
+
+    def fake_urlopen(req, timeout=None):
+        captured["body"] = json.loads(req.data.decode("utf-8"))
+        body = json.dumps(
+            {"choices": [{"message": {"content": "ok"}}]}
+        ).encode()
+        resp = MagicMock()
+        resp.read.return_value = body
+        resp.__enter__ = lambda self: self
+        resp.__exit__ = lambda self, *a: False
+        return resp
+
+    monkeypatch.setattr(pp_mod.urllib.request, "urlopen", fake_urlopen)
+
+    pp.process("in")
+
+    body = captured["body"]
+    assert body["presence_penalty"] == 1.5
+    assert body["frequency_penalty"] == 0.3
+    assert body["top_p"] == 0.8
+    # llama.cpp-specific knobs must NOT leak into the OpenAI body.
+    for k in ("top_k", "min_p", "repeat_penalty"):
+        assert k not in body, f"{k} must not be sent over HTTP"
 
 
 def test_chat_template_kwargs_default_enables_thinking():

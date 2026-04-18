@@ -206,8 +206,11 @@ The dataclass keys you can override:
 | `system_prompt` | Inline override. When non-empty, takes precedence over `system_prompt_file`. Multi-line strings welcome. |
 | `append_to_system_prompt` | Extra text glued onto the end of the resolved system prompt (separated by a blank line). Use this to extend a shipped prompt without forking it — e.g. `"Always reply in English."` |
 | `chat_template_kwargs` | Inline table forwarded into the chat template. On the built-in backend it reaches llama-cpp-python as `chat_template_kwargs=`; on the remote backend it's included in the JSON body under the same key. Default is `{ enable_thinking = true }` — required to turn on Qwen 3.5's thinking (off by default) and a no-op for Gemma (its template ignores the flag). Set to `{}` to suppress the passthrough entirely. |
-| `temperature` | Lower = deterministic (cleanup); higher = creative (emoji, rewriting). |
+| `temperature` | Lower = deterministic (cleanup); higher = creative (emoji, rewriting). Note: truly greedy decoding (`0.0`) can make small models loop — Qwen's docs explicitly warn against it. The shipped default `0.08` is close to that; raise to `0.6` if you see loops. |
 | `max_tokens` | Hard cap on the generated reply. |
+| `top_p` / `top_k` / `min_p` | Standard nucleus / top-k / min-p sampling. `top_p`/`top_k` are forwarded to both backends; `min_p` is llama.cpp-specific and runtime-only for the built-in backend. |
+| `repeat_penalty` | Per-token penalty on tokens already in the context. llama.cpp-specific (built-in backend only). Default `1.0` matches llama-cpp-python's default, not llama.cpp's `1.1`. |
+| `presence_penalty` / `frequency_penalty` | OpenAI-style repetition discouragement. Both forwarded to both backends. **Raise `presence_penalty` to `1.5` as the first lever against looping** on small models (per Qwen's official guidance for their 0.6B/0.8B). |
 | `user_template` | Template wrapping the transcript. `{text}` is substituted. |
 | `paste_strip_regex` | Regex (`re.DOTALL`) applied to the LLM output before paste but not before overlay display. Useful to hide reasoning preambles. |
 | `context` | Per-profile context that overrides the sidecar. |
@@ -238,6 +241,40 @@ chat_template_kwargs = { enable_thinking = false }
 # or suppress the field entirely:
 # chat_template_kwargs = {}
 ```
+
+### Looping / repetition on small models
+
+Qwen 3.5 0.8B (and to a lesser extent 0.6B) is known to enter
+thinking loops — the model repeats itself token-for-token instead of
+finishing. Qwen's own docs call out the fix order, so if you see it:
+
+1. **Don't run truly greedy** (`temperature = 0.0`). Qwen explicitly
+   warns this causes "endless repetitions" on small models. The
+   shipped default `0.08` is close to greedy — raise to `0.6` for
+   Qwen thinking mode or `0.7`–`1.0` for non-thinking.
+2. **Raise `presence_penalty`** to `1.5` (thinking mode) or up to
+   `2.0` (non-thinking). This is Qwen's single most effective knob;
+   higher values can cause slight language mixing, so stop once the
+   loops go away.
+3. Leave `repeat_penalty` at `1.0`. Qwen's recommended combo uses
+   `presence_penalty` *instead of* `repeat_penalty`, not both.
+
+Example override for a Qwen 3.5 0.8B profile that's prone to loops:
+
+```toml
+temperature = 0.6
+top_p = 0.95
+top_k = 20
+min_p = 0.0
+presence_penalty = 1.5
+```
+
+Gemma 4 doesn't have the same tendency — leave its sampling defaults
+alone unless you have a specific reason.
+
+Source: Qwen's own model cards
+([Qwen3.5-0.8B](https://huggingface.co/Qwen/Qwen3.5-0.8B),
+[Qwen3-0.6B](https://huggingface.co/Qwen/Qwen3-0.6B)).
 
 ### Custom-prompt examples
 

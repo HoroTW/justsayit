@@ -47,6 +47,20 @@ base = "builtin"
 # Hard cap on generated tokens.
 # max_tokens = 4096
 
+# Sampling knobs — defaults match llama-cpp-python's built-ins, so
+# leaving them alone reproduces pre-0.13.5 behaviour. If the model
+# starts looping (most likely with the small Qwen 3.5 0.8B profile —
+# not Gemma), raise `presence_penalty` first; Qwen's own docs call it
+# out as the most effective lever. A tight combo that matches Qwen's
+# recommendations for thinking mode: temperature=0.6, top_p=0.95,
+# top_k=20, min_p=0.0, presence_penalty=0.0 to 1.5.
+# top_p = 0.95
+# top_k = 40
+# min_p = 0.05
+# repeat_penalty = 1.0
+# presence_penalty = 0.0
+# frequency_penalty = 0.0
+
 # User message template. {text} is replaced with the raw transcription.
 # user_template = "{text}"
 

@@ -119,6 +119,18 @@ class PostprocessProfile:
     # --- Cleanup tuning -------------------------------------------------
     temperature: float = _builtin_default("temperature", 0.08)
     max_tokens: int = _builtin_default("max_tokens", 4096)
+    # Sampling knobs — defaults match llama-cpp-python's
+    # ``create_chat_completion`` defaults, so profiles that don't set
+    # them see the same behaviour as before. Raise ``presence_penalty``
+    # (e.g. 1.5) to break loops on small models; per Qwen's own docs
+    # this is the most effective single lever against their 0.6B/0.8B
+    # thinking-loop tendency.
+    top_p: float = _builtin_default("top_p", 0.95)
+    top_k: int = _builtin_default("top_k", 40)
+    min_p: float = _builtin_default("min_p", 0.05)
+    repeat_penalty: float = _builtin_default("repeat_penalty", 1.0)
+    presence_penalty: float = _builtin_default("presence_penalty", 0.0)
+    frequency_penalty: float = _builtin_default("frequency_penalty", 0.0)
     user_template: str = _builtin_default("user_template", "{text}")
     paste_strip_regex: str = _builtin_default(
         "paste_strip_regex", r"<\|channel>thought(.*?)<channel\|>"
@@ -626,6 +638,9 @@ class LLMPostprocessor:
             "messages": self._build_messages(text),
             "temperature": self.profile.temperature,
             "max_tokens": self.profile.max_tokens,
+            "top_p": self.profile.top_p,
+            "presence_penalty": self.profile.presence_penalty,
+            "frequency_penalty": self.profile.frequency_penalty,
         }
         if self.profile.chat_template_kwargs:
             # Forwarded to the server's template renderer. Supported by
@@ -734,6 +749,12 @@ class LLMPostprocessor:
                 "messages": self._build_messages(text),
                 "temperature": self.profile.temperature,
                 "max_tokens": self.profile.max_tokens,
+                "top_p": self.profile.top_p,
+                "top_k": self.profile.top_k,
+                "min_p": self.profile.min_p,
+                "repeat_penalty": self.profile.repeat_penalty,
+                "presence_penalty": self.profile.presence_penalty,
+                "frequency_penalty": self.profile.frequency_penalty,
             }
             resp = self._llm.create_chat_completion(**kwargs)
         return resp["choices"][0]["message"]["content"].strip()

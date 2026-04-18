@@ -33,6 +33,21 @@ temperature = 0.08
 # Hard cap on generated tokens.
 max_tokens = 4096
 
+# Sampling knobs. Defaults match llama-cpp-python's
+# `create_chat_completion` defaults, so leaving them alone reproduces
+# the pre-0.13.5 behaviour. Raise `presence_penalty` (e.g. 1.5) as the
+# first lever against repetition / thinking loops — per Qwen's own
+# docs, that's the most effective knob against their small models'
+# (0.6B / 0.8B) loop tendency. `repeat_penalty` is a per-token
+# variant; leave at 1.0 when you raise `presence_penalty` (Qwen's
+# recommended combination).
+top_p = 0.95
+top_k = 40
+min_p = 0.05
+repeat_penalty = 1.0
+presence_penalty = 0.0
+frequency_penalty = 0.0
+
 # User message template. {text} is replaced with the raw transcription.
 user_template = "{text}"
 
