@@ -654,14 +654,23 @@ class App:
                 return f"LLM: {self.cfg.postprocess.profile}"
             return "LLM: off"
 
-        # Discover profiles whose model file is actually on disk.
+        # Discover usable profiles. For ``base = "builtin"`` the GGUF must
+        # exist on disk; for ``base = "remote"`` ``model_path`` is irrelevant
+        # (it falls through to the builtin gemma default, which on a
+        # GPU-less / no-LLM-download laptop is missing) — gate on
+        # ``endpoint`` instead so OpenAI / OpenRouter / Ollama profiles
+        # show up even when no local GGUF is installed.
         pd = profiles_dir()
         profile_names: list[str] = []
         if pd.exists():
             for p in sorted(pd.glob("*.toml")):
                 try:
                     prof = load_profile(str(p))
-                    if Path(prof.model_path).expanduser().exists():
+                    if prof.base == "remote":
+                        usable = bool(prof.endpoint.strip())
+                    else:
+                        usable = Path(prof.model_path).expanduser().exists()
+                    if usable:
                         profile_names.append(p.stem)
                 except Exception:
                     log.debug("skipping profile %s in tray setup", p.name)

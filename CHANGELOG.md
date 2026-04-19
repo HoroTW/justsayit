@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.15] - 2026-04-19
+
+### Fixed
+
+- Tray "LLM profile" submenu silently hid `base = "remote"` profiles
+  on machines without the local Gemma GGUF downloaded. Discovery
+  filtered every profile by `model_path` existence, but for remote
+  profiles `model_path` is irrelevant — the dataclass default falls
+  through to the builtin gemma path, which on a GPU-less laptop that
+  never ran `setup-llm` doesn't exist. Manually editing the state
+  file activated the profile correctly, but the tray still wouldn't
+  list it. Discovery now gates by `prof.base`: remote profiles need
+  `endpoint` set, builtin profiles still need the GGUF on disk.
+
 ## [0.13.14] - 2026-04-19
 
 ### Changed
