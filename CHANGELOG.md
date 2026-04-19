@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.14] - 2026-04-19
+
+### Changed
+
+- Built-in backend default `n_ctx` raised from `4096` → `20480` so
+  longer prompts (clipboard-context arming, large user-context
+  sidecars, multi-line dictation paired with a verbose system prompt)
+  fit without silent truncation. KV-cache memory scales linearly with
+  this value — lower in the user profile if VRAM is tight. Commented
+  examples in `profile-gemma4-cleanup.toml` and `profile-gemma4-fun.toml`
+  updated to reflect the new default.
+
 ## [0.13.13] - 2026-04-19
 
 ### Fixed

@@ -22,8 +22,11 @@ hf_filename = "gemma-4-E4B-it-Q4_K_M.gguf"
 # GPU layer offloading. -1 = all layers on GPU (fastest). 0 = CPU only.
 n_gpu_layers = -1
 
-# Context window size in tokens.
-n_ctx = 4096
+# Context window size in tokens. Generous default so longer prompts
+# (clipboard-context arming, long user-context sidecars, multi-line
+# dictation) fit without being silently truncated. Lower if VRAM is
+# tight — KV-cache memory scales linearly with this value.
+n_ctx = 20480
 
 # --- Cleanup tuning -----------------------------------------------------
 

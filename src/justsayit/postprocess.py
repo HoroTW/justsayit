@@ -131,7 +131,7 @@ class PostprocessProfile:
     hf_repo: str = _builtin_default("hf_repo", "")
     hf_filename: str = _builtin_default("hf_filename", "")
     n_gpu_layers: int = _builtin_default("n_gpu_layers", -1)
-    n_ctx: int = _builtin_default("n_ctx", 4096)
+    n_ctx: int = _builtin_default("n_ctx", 20480)
 
     # --- Cleanup tuning -------------------------------------------------
     temperature: float = _builtin_default("temperature", 0.08)

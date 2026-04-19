@@ -1,6 +1,6 @@
 [project]
 name = "justsayit"
-version = "0.13.13"
+version = "0.13.14"
 description = "Local Parakeet-powered voice dictation with a Wayland layer-shell overlay"
 readme = "README.md"
 requires-python = ">=3.11"

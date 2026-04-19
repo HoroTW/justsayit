@@ -39,7 +39,7 @@ paste_strip_regex = ""
 # hf_repo = "unsloth/gemma-4-E4B-it-GGUF"
 # hf_filename = "gemma-4-E4B-it-Q4_K_M.gguf"
 # n_gpu_layers = -1
-# n_ctx = 4096
+# n_ctx = 20480
 # max_tokens = 4096
 
 # Sampling knobs. Defaults match llama-cpp-python. Raise
