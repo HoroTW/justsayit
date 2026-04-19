@@ -326,6 +326,10 @@ class App:
 
     def setup_postprocessor(self) -> None:
         if not self.cfg.postprocess.enabled:
+            # Critical: clear the field, otherwise toggling LLM off via the
+            # tray leaves the previous instance attached and _handle_segment
+            # keeps routing through it ("LLM: off" but text still cleaned).
+            self.postprocessor = None
             log.info("LLM postprocessor disabled")
             return
         try:
@@ -907,10 +911,13 @@ class App:
             llm_overlay_thought = ""
             paste_text = final
             extra_context = self._consume_clipboard_context()
+            t_llm0 = time.monotonic()
             try:
                 result = pp.process_with_reasoning(
                     final, extra_context=extra_context
                 )
+                t_llm1 = time.monotonic()
+                log.info("LLM call took %.0fms", (t_llm1 - t_llm0) * 1000)
                 cleaned = result.text
                 if cleaned != final:
                     log.info("LLM cleaned: %r -> %r", final, cleaned)
@@ -1024,7 +1031,9 @@ class App:
                 self.cfg.paste.paste_combo,
                 self.cfg.paste.backend,
             )
+            t_paste0 = time.monotonic()
             self.paster.paste(final)
+            log.info("paste call returned after %.0fms", (time.monotonic() - t_paste0) * 1000)
         except PasteError as e:
             log.error("paste failed: %s", e)
         finally:

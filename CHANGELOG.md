@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.17] - 2026-04-19
+
+### Fixed
+
+- Switching the LLM profile to "Off" via the tray didn't actually
+  disable postprocessing — the previous `LLMPostprocessor` instance
+  stayed attached and `_handle_segment` kept routing transcriptions
+  through it. `setup_postprocessor` now clears `self.postprocessor`
+  when `cfg.postprocess.enabled` is false, so the next segment skips
+  the LLM entirely.
+
+### Changed
+
+- Added timing logs around the LLM call in `_handle_segment` (`LLM
+  call took Nms`) and around the paste call (`paste call returned
+  after Nms`) so the gap between LLM completion and the actual
+  keystroke injection is no longer invisible. `Paster.paste` now also
+  logs the `wl-paste` clipboard-snapshot step (`snap=…`) alongside
+  the existing copy / settle / key segments — useful when a slow
+  source app makes `wl-paste` block.
+
 ## [0.13.16] - 2026-04-19
 
 ### Changed

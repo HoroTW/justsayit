@@ -251,10 +251,13 @@ class Paster:
                 (t_key - t0) * 1000,
             )
         else:
-            # Snapshot the current clipboard before overwriting it.
+            # Snapshot the current clipboard before overwriting it. wl-paste
+            # blocks until the source app responds — usually fast but worth
+            # surfacing in the timing line so we can spot stalls.
             old_clip: str | None = None
             if self._restore_clipboard:
                 old_clip = read_clipboard(timeout=self.timeout)
+            t_snap = time.monotonic()
 
             copy_to_clipboard(text, timeout=self.timeout, sensitive=self._sensitive)
             t_copy = time.monotonic()
@@ -264,8 +267,9 @@ class Paster:
             self._send_key(self.combo)
             t_key = time.monotonic()
             log.info(
-                "paste timings: copy=%.0fms settle=%.0fms key=%.0fms total=%.0fms",
-                (t_copy - t0) * 1000,
+                "paste timings: snap=%.0fms copy=%.0fms settle=%.0fms key=%.0fms total=%.0fms",
+                (t_snap - t0) * 1000,
+                (t_copy - t_snap) * 1000,
                 (t_settle - t_copy) * 1000,
                 (t_key - t_settle) * 1000,
                 (t_key - t0) * 1000,
