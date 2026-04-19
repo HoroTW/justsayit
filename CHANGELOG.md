@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.19] - 2026-04-19
+
+### Changed
+
+- `wl-copy` invocations now pass `--type text/plain`, skipping
+  wl-copy's automatic MIME inference (which forks `xdg-mime` per
+  call). Verified via `wl-paste --list-types` that the advertised
+  set (`text/plain`, `text/plain;charset=utf-8`, `UTF8_STRING`,
+  `TEXT`, `STRING`) is identical with or without the flag — wl-copy
+  always offers the standard text variants regardless. On a busy KDE
+  Plasma session this drops per-call latency from ~165 ms to ~64 ms;
+  combined with the parallel call structure (0.13.18) the
+  user-visible `copy=` segment in `Paster.paste` falls from ~330 ms
+  to ~64 ms (5× speedup).
+
 ## [0.13.18] - 2026-04-19
 
 ### Changed
