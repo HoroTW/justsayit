@@ -17,6 +17,7 @@ from justsayit.postprocess import (
     KNOWN_LLM_MODELS,
     LLMPostprocessor,
     PostprocessProfile,
+    ProcessResult,
     _CLEANUP_PROFILE_TOML,
     _DYNAMIC_CONTEXT_SCRIPT,
     _FUN_PROFILE_TOML,
@@ -1533,3 +1534,174 @@ def test_load_profile_chat_template_kwargs_from_toml(tmp_path, monkeypatch):
     )
     profile = load_profile("qwen-thinking")
     assert profile.chat_template_kwargs == {"enable_thinking": True}
+
+
+# ---------------------------------------------------------------------------
+# Remote reasoning capture (process_with_reasoning)
+# ---------------------------------------------------------------------------
+
+
+def _fake_remote_response(monkeypatch, payload: dict):
+    """Helper: monkeypatch urlopen to return *payload* once."""
+    import json
+    from unittest.mock import MagicMock
+    import justsayit.postprocess as pp_mod
+
+    def fake_urlopen(req, timeout=None):
+        body = json.dumps(payload).encode()
+        resp = MagicMock()
+        resp.read.return_value = body
+        resp.__enter__ = lambda self: self
+        resp.__exit__ = lambda self, *a: False
+        return resp
+
+    monkeypatch.setattr(pp_mod.urllib.request, "urlopen", fake_urlopen)
+
+
+def _remote_pp() -> LLMPostprocessor:
+    return LLMPostprocessor(
+        PostprocessProfile(
+            endpoint="https://api.example.com/v1",
+            model="reasoning-model",
+            api_key="sk",
+        )
+    )
+
+
+def test_process_with_reasoning_captures_reasoning_content_field(monkeypatch):
+    """DeepSeek + vLLM convention: separate ``reasoning_content`` field."""
+    _fake_remote_response(
+        monkeypatch,
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": "Hello, world.",
+                        "reasoning_content": "The user said hi; greet back.",
+                    }
+                }
+            ]
+        },
+    )
+    result = _remote_pp().process_with_reasoning("hi")
+    assert isinstance(result, ProcessResult)
+    assert result.text == "Hello, world."
+    assert result.reasoning == "The user said hi; greet back."
+
+
+def test_process_with_reasoning_captures_reasoning_field(monkeypatch):
+    """OpenRouter convention: reasoning lives under ``reasoning``."""
+    _fake_remote_response(
+        monkeypatch,
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": "42.",
+                        "reasoning": "User asked for a number.",
+                    }
+                }
+            ]
+        },
+    )
+    result = _remote_pp().process_with_reasoning("number please")
+    assert result.text == "42."
+    assert result.reasoning == "User asked for a number."
+
+
+def test_process_with_reasoning_empty_when_field_absent(monkeypatch):
+    """Plain OpenAI replies (no reasoning field) → empty reasoning string,
+    not a crash and not the literal string 'None'."""
+    _fake_remote_response(
+        monkeypatch,
+        {"choices": [{"message": {"content": "ok"}}]},
+    )
+    result = _remote_pp().process_with_reasoning("in")
+    assert result.text == "ok"
+    assert result.reasoning == ""
+
+
+def test_process_with_reasoning_local_path_returns_empty_reasoning():
+    """Local llama-cpp-python keeps thinking inline in ``content`` (handled
+    via paste_strip_regex). The ``reasoning`` field is reserved for backends
+    that expose structured reasoning, so the local path always returns ""."""
+    profile = PostprocessProfile(model_path="/fake/model.gguf")
+    pp = LLMPostprocessor(profile)
+
+    class _StubLlama:
+        def create_chat_completion(self, **kwargs):
+            return {"choices": [{"message": {"content": "  cleaned  "}}]}
+
+        chat_handler = None
+        chat_format = "gemma"
+        _chat_handlers: dict = {}
+
+    pp._llm = _StubLlama()
+    result = pp.process_with_reasoning("raw")
+    assert result.text == "cleaned"
+    assert result.reasoning == ""
+
+
+def test_process_returns_just_text_for_backwards_compat(monkeypatch):
+    """``process()`` is the back-compat thin wrapper; reasoning gets
+    dropped on the floor (callers that want it use ``process_with_reasoning``).
+    """
+    _fake_remote_response(
+        monkeypatch,
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": "answer",
+                        "reasoning_content": "secret thoughts",
+                    }
+                }
+            ]
+        },
+    )
+    out = _remote_pp().process("in")
+    assert out == "answer"
+    assert isinstance(out, str)
+
+
+def test_process_with_reasoning_falls_back_to_input_on_empty_text(monkeypatch):
+    """Mirror ``process()`` behaviour: empty model output → echo input
+    verbatim. Reasoning is preserved if the model emitted any."""
+    _fake_remote_response(
+        monkeypatch,
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": "",
+                        "reasoning_content": "thought hard but said nothing",
+                    }
+                }
+            ]
+        },
+    )
+    result = _remote_pp().process_with_reasoning("the original input")
+    assert result.text == "the original input"
+    assert result.reasoning == "thought hard but said nothing"
+
+
+def test_process_with_reasoning_handles_non_string_reasoning(monkeypatch):
+    """Defensive: some providers might return reasoning as a structured
+    object (list of blocks, dict). We can't render those in the overlay,
+    so coerce to empty string rather than crashing on .strip()."""
+    _fake_remote_response(
+        monkeypatch,
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": "ok",
+                        "reasoning_content": [{"type": "text", "text": "hmm"}],
+                    }
+                }
+            ]
+        },
+    )
+    result = _remote_pp().process_with_reasoning("in")
+    assert result.text == "ok"
+    assert result.reasoning == ""

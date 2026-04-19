@@ -14,6 +14,7 @@ import pytest
 
 from justsayit.audio import Segment
 from justsayit.config import Config
+from justsayit.postprocess import ProcessResult
 from justsayit.transcribe import TranscriberBase
 
 # Import App after conftest.py has set the env guards.
@@ -68,12 +69,31 @@ class _RaisingPostprocessor:
         self.message = message
         self.strip_calls = 0
 
-    def process(self, text: str) -> str:
+    def process_with_reasoning(self, text: str) -> ProcessResult:
         raise RuntimeError(self.message)
 
     def strip_for_paste(self, text: str) -> str:
         self.strip_calls += 1
         return text.replace("secret", "")
+
+    def find_strip_matches(self, text: str) -> list[str]:
+        return []
+
+
+class _StubPostprocessor:
+    """Returns a fixed ProcessResult — lets tests exercise reasoning wiring."""
+
+    def __init__(self, text: str, reasoning: str = "") -> None:
+        self._text = text
+        self._reasoning = reasoning
+        self.calls = 0
+
+    def process_with_reasoning(self, text: str) -> ProcessResult:
+        self.calls += 1
+        return ProcessResult(text=self._text, reasoning=self._reasoning)
+
+    def strip_for_paste(self, text: str) -> str:
+        return text
 
     def find_strip_matches(self, text: str) -> list[str]:
         return []
@@ -278,3 +298,36 @@ def test_llm_failure_does_not_strip_fallback_text(capsys):
 
     assert capsys.readouterr().out == "keep secret text\n"
     assert pp.strip_calls == 0
+
+
+def test_remote_reasoning_field_is_shown_in_overlay_thought(capsys):
+    """Structured reasoning from remote backends (DeepSeek/vLLM/OpenRouter)
+    should land in the overlay's `thought` slot — not the pasted body."""
+    cfg = Config()
+    app = _app(cfg)
+    app.overlay = _StubOverlay()
+    app.transcriber = _StubTranscriber("hello world")
+    app.postprocessor = _StubPostprocessor(
+        text="cleaned hello world",
+        reasoning="model decided punctuation needed a comma",
+    )
+
+    app._handle_segment(_make_seg())
+
+    assert capsys.readouterr().out == "cleaned hello world\n"
+    assert app.overlay.llm == [
+        ("cleaned hello world", "model decided punctuation needed a comma")
+    ]
+
+
+def test_no_reasoning_field_leaves_overlay_thought_empty(capsys):
+    cfg = Config()
+    app = _app(cfg)
+    app.overlay = _StubOverlay()
+    app.transcriber = _StubTranscriber("hello")
+    app.postprocessor = _StubPostprocessor(text="cleaned hello", reasoning="")
+
+    app._handle_segment(_make_seg())
+
+    assert capsys.readouterr().out == "cleaned hello\n"
+    assert app.overlay.llm == [("cleaned hello", "")]

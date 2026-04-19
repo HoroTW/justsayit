@@ -102,6 +102,23 @@ _OPENAI_PROFILE_TOML = _load_profile_template("profile-openai-cleanup.toml")
 _OLLAMA_GEMMA_PROFILE_TOML = _load_profile_template("profile-ollama-gemma.toml")
 
 
+@dataclass(frozen=True)
+class ProcessResult:
+    """Return value of :meth:`LLMPostprocessor.process_with_reasoning`.
+
+    ``text`` is the model's visible reply (the part that goes into the
+    paste pipeline). ``reasoning`` is the model's hidden thinking, when
+    the backend exposes it as a structured field — currently only the
+    remote backend, which reads OpenAI-style ``message.reasoning_content``
+    or ``message.reasoning``. Local llama-cpp-python output keeps
+    reasoning inline in ``content`` (handled via ``paste_strip_regex``),
+    so for the local path ``reasoning`` is always ``""``.
+    """
+
+    text: str
+    reasoning: str = ""
+
+
 @dataclass
 class PostprocessProfile:
     # Which backend defaults file to overlay user values onto.
@@ -616,7 +633,7 @@ class LLMPostprocessor:
         log.info("assembled LLM system prompt:\n%s", messages[0]["content"])
         return messages
 
-    def _remote_process(self, text: str) -> str:
+    def _remote_process(self, text: str) -> ProcessResult:
         """OpenAI-compatible /chat/completions POST.  Pure stdlib (no
         ``openai`` dep) — same response shape as ``llama_cpp`` so the
         extraction below mirrors the local path."""
@@ -705,7 +722,23 @@ class LLMPostprocessor:
         choices = data.get("choices") or []
         if not choices:
             raise RuntimeError(f"LLM endpoint returned no choices: {str(data)[:300]}")
-        return (choices[0].get("message") or {}).get("content", "").strip()
+        message = choices[0].get("message") or {}
+        content = (message.get("content") or "").strip()
+        # Some OpenAI-compatible providers (DeepSeek, Qwen via vLLM, OpenRouter
+        # for reasoning models, …) split the model's hidden thinking into a
+        # separate field. Naming isn't standardised — DeepSeek + vLLM use
+        # ``reasoning_content``, OpenRouter uses ``reasoning`` — so accept
+        # both. Empty string when the field is absent.
+        reasoning = (
+            message.get("reasoning_content")
+            or message.get("reasoning")
+            or ""
+        )
+        if isinstance(reasoning, str):
+            reasoning = reasoning.strip()
+        else:
+            reasoning = ""
+        return ProcessResult(text=content, reasoning=reasoning)
 
     def _install_chat_template_kwargs(self) -> None:
         # ``Llama.create_chat_completion()`` has a fixed keyword signature
@@ -742,7 +775,7 @@ class LLMPostprocessor:
 
         self._llm.chat_handler = _handler
 
-    def _local_process(self, text: str) -> str:
+    def _local_process(self, text: str) -> ProcessResult:
         with self._lock:
             if self._llm is None:
                 self._llm = self._build()
@@ -759,21 +792,41 @@ class LLMPostprocessor:
                 "frequency_penalty": self.profile.frequency_penalty,
             }
             resp = self._llm.create_chat_completion(**kwargs)
-        return resp["choices"][0]["message"]["content"].strip()
+        # llama-cpp-python keeps thinking inline in ``content``; the
+        # display/paste split is done downstream via ``paste_strip_regex``,
+        # so there's no separate reasoning field to surface here.
+        return ProcessResult(
+            text=resp["choices"][0]["message"]["content"].strip()
+        )
 
-    def process(self, text: str) -> str:
-        """Run the LLM on *text* and return the cleaned result.
+    def process_with_reasoning(self, text: str) -> ProcessResult:
+        """Run the LLM on *text* and return both the cleaned text and the
+        backend's reasoning field (when exposed).
 
         Routes by ``profile.base``: ``"remote"`` POSTs to the
-        OpenAI-compatible endpoint, ``"builtin"`` loads a GGUF via
-        llama-cpp-python. Returns the original *text* unchanged if the
-        model produces an empty response.
+        OpenAI-compatible endpoint and reads structured reasoning from
+        ``message.reasoning_content`` / ``message.reasoning`` if present;
+        ``"builtin"`` loads a GGUF via llama-cpp-python and never returns
+        a separate reasoning field (any thinking is inline in the text,
+        handled via ``paste_strip_regex`` downstream).
+
+        ``text`` falls back to the original input when the model returns
+        an empty response, matching ``process()``.
         """
         if self.profile.base == "remote":
             result = self._remote_process(text)
         else:
             result = self._local_process(text)
-        return result if result else text
+        if not result.text:
+            result = ProcessResult(text=text, reasoning=result.reasoning)
+        return result
+
+    def process(self, text: str) -> str:
+        """Backward-compatible thin wrapper: returns just the cleaned text.
+
+        Use :meth:`process_with_reasoning` to also receive the model's
+        structured reasoning field (when the backend exposes one)."""
+        return self.process_with_reasoning(text).text
 
 
 # ---------------------------------------------------------------------------

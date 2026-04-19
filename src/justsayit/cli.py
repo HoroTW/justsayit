@@ -864,7 +864,8 @@ class App:
             llm_overlay_thought = ""
             paste_text = final
             try:
-                cleaned = pp.process(final)
+                result = pp.process_with_reasoning(final)
+                cleaned = result.text
                 if cleaned != final:
                     log.info("LLM cleaned: %r -> %r", final, cleaned)
                 llm_overlay_text = cleaned
@@ -889,6 +890,16 @@ class App:
                         "paste_strip_regex applied: %d -> %d chars",
                         len(paste_text),
                         len(stripped),
+                    )
+                # Remote backends (DeepSeek, Qwen via vLLM, OpenRouter) can
+                # return structured reasoning in a separate field. When
+                # present, prefer that — it's cleaner than regex-matched
+                # inline blocks (and the local path can't populate it).
+                if result.reasoning:
+                    llm_overlay_thought = result.reasoning
+                    log.info(
+                        "remote returned reasoning field: %d chars",
+                        len(result.reasoning),
                     )
                 llm_overlay_text = stripped
                 paste_text = stripped

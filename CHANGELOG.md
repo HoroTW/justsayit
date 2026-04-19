@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.11] - 2026-04-19
+
+### Added
+
+- Surface OpenAI-compatible reasoning fields in the overlay's "thought"
+  slot. DeepSeek and vLLM expose hidden thinking under
+  `message.reasoning_content`; OpenRouter uses `message.reasoning`.
+  Both are now read from the response and routed to the same overlay
+  field that previously only carried regex-matched local `<think>`
+  blocks. Pasted text is unaffected — only the visible body lands in
+  the focused window. Local llama-cpp-python output keeps reasoning
+  inline in `content` (handled via `paste_strip_regex` as before).
+- New `LLMPostprocessor.process_with_reasoning(text) -> ProcessResult`
+  method exposes both fields (`text`, `reasoning`) for callers that
+  want the structured reasoning. The legacy `process()` is preserved
+  as a thin wrapper returning just the text — no change for existing
+  callers or profiles.
+
 ## [0.13.10] - 2026-04-18
 
 ### Changed
