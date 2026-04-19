@@ -654,26 +654,23 @@ class App:
                 return f"LLM: {self.cfg.postprocess.profile}"
             return "LLM: off"
 
-        # Discover usable profiles. For ``base = "builtin"`` the GGUF must
-        # exist on disk; for ``base = "remote"`` ``model_path`` is irrelevant
-        # (it falls through to the builtin gemma default, which on a
-        # GPU-less / no-LLM-download laptop is missing) — gate on
-        # ``endpoint`` instead so OpenAI / OpenRouter / Ollama profiles
-        # show up even when no local GGUF is installed.
+        # List every profile whose TOML parses. We deliberately do NOT
+        # gate on backend-specific readiness (builtin GGUF on disk,
+        # remote endpoint set) — silent filtering hid remote profiles
+        # for users without a local model installed. If a profile is
+        # broken, ``setup_postprocessor`` catches the failure when the
+        # user actually selects it: warmup raises, the exception is
+        # logged, and postprocessing falls back to disabled.
         pd = profiles_dir()
         profile_names: list[str] = []
         if pd.exists():
             for p in sorted(pd.glob("*.toml")):
                 try:
-                    prof = load_profile(str(p))
-                    if prof.base == "remote":
-                        usable = bool(prof.endpoint.strip())
-                    else:
-                        usable = Path(prof.model_path).expanduser().exists()
-                    if usable:
-                        profile_names.append(p.stem)
+                    load_profile(str(p))
                 except Exception:
-                    log.debug("skipping profile %s in tray setup", p.name)
+                    log.debug("skipping unparseable profile %s in tray setup", p.name)
+                    continue
+                profile_names.append(p.stem)
 
         # Build radio items for each profile + an "Off" item.
         llm_profile_items: dict[str, MenuItem] = {}

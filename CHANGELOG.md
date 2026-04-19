@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.16] - 2026-04-19
+
+### Changed
+
+- Tray "LLM profile" submenu now lists every profile whose TOML
+  parses, regardless of backend-specific readiness. Previously a
+  builtin profile was hidden when the GGUF wasn't on disk and a
+  remote profile was hidden when no `endpoint` was set — silent
+  filtering both made it impossible to notice a half-configured
+  profile and (per 0.13.15) was the original cause of remote profiles
+  vanishing on machines without the local model. Selection-time
+  failures (missing GGUF, unreachable endpoint, bad model name) are
+  already caught by `setup_postprocessor` and surfaced via the log,
+  with postprocessing falling back to disabled.
+
 ## [0.13.15] - 2026-04-19
 
 ### Fixed
