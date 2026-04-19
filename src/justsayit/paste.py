@@ -62,9 +62,22 @@ def copy_to_clipboard(
 ) -> None:
     """Put ``text`` on both the regular and primary Wayland clipboards via wl-copy.
 
+    Both ``wl-copy`` invocations run in parallel — wl-copy daemonises by
+    default (per its man page), so each call returns as soon as the
+    parent has handed the text off to the daemon. On well-behaved
+    Wayland setups each call completes in ~10–20 ms; running them
+    concurrently keeps the worst case at single-call latency instead of
+    summing both. Some compositors / clipboard managers (KDE Klipper,
+    GNOME with sluggish portal pipelines) can take 100 ms+ per call —
+    parallel execution halves that wall-clock too.
+
     When ``sensitive`` is True, ``--sensitive`` is passed to wl-copy so that
     clipboard managers (e.g. KDE Klipper) skip recording this entry.  The text
     is still available for a manual Ctrl+V / Shift+Insert / middle-click paste.
+
+    Both selections must be set BEFORE the paste keystroke fires:
+    Shift+Insert and middle-click read different selections depending on
+    the toolkit / app, so deferring either one risks pasting stale text.
     """
     if not text:
         return
@@ -72,8 +85,30 @@ def copy_to_clipboard(
     base_cmd = [wl_copy]
     if sensitive:
         base_cmd.append("--sensitive")
-    _run_wl_copy(base_cmd, text, timeout)
-    _run_wl_copy(base_cmd + ["--primary"], text, timeout)
+    cmds = [base_cmd, base_cmd + ["--primary"]]
+    results: list[tuple[float, BaseException | None]] = [(0.0, None)] * len(cmds)
+
+    def _one(idx: int, cmd: list[str]) -> None:
+        t0 = time.monotonic()
+        try:
+            _run_wl_copy(cmd, text, timeout)
+            results[idx] = ((time.monotonic() - t0) * 1000, None)
+        except BaseException as exc:
+            results[idx] = ((time.monotonic() - t0) * 1000, exc)
+
+    threads = [threading.Thread(target=_one, args=(i, c)) for i, c in enumerate(cmds)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    log.info(
+        "wl-copy parallel: regular=%.0fms primary=%.0fms",
+        results[0][0],
+        results[1][0],
+    )
+    for ms, exc in results:
+        if exc is not None:
+            raise exc
 
 
 def read_clipboard(*, timeout: float = 2.0) -> str | None:

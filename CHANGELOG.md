@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.18] - 2026-04-19
+
+### Changed
+
+- `copy_to_clipboard` now runs the regular and primary `wl-copy`
+  invocations in parallel instead of sequentially. Both selections
+  must be set before the paste keystroke fires (Shift+Insert reads
+  whichever the focused toolkit picks; middle-click reads primary),
+  so we can't defer either one — but `wl-copy` daemonises by default,
+  so each call returns as soon as the parent hands the text off.
+  Halves the wall-clock cost of the `copy=` segment in `Paster.paste`
+  on setups where each call takes 100 ms+ (e.g. KDE Klipper /
+  GNOME with sluggish portal pipelines). New `wl-copy parallel:
+  regular=Nms primary=Nms` log line breaks down per-selection time
+  so you can see whether one specific selection is the slow one.
+
 ## [0.13.17] - 2026-04-19
 
 ### Fixed
