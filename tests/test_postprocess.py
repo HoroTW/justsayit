@@ -187,7 +187,8 @@ def test_ollama_gemma_profile_demonstrates_orthogonal_backend_and_prompt(
     p = ensure_ollama_gemma_profile()
     profile = load_profile("ollama-gemma")
     assert profile.base == "remote"
-    assert profile.endpoint == "http://localhost:11434/v1"
+    # Default points at LM Studio (port 1234); override to 11434 for Ollama.
+    assert profile.endpoint == "http://localhost:1234/v1"
     assert profile.system_prompt_file == "cleanup_local.md"
     # Re-enables the channel stripper that remote-defaults.toml leaves blank.
     assert profile.paste_strip_regex == r"<\|channel>thought(.*?)<channel\|>"

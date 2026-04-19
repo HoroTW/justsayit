@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.10] - 2026-04-18
+
+### Changed
+
+- `ollama-gemma.toml` shipped template now defaults to LM Studio's
+  endpoint (`http://localhost:1234/v1`) and a Gemma model name LM
+  Studio uses (`gemma-4-e4b-it`), with comments documenting both the
+  LM Studio and Ollama setup paths. The OpenAI-compatible profile
+  works the same against either server; LM Studio became the more
+  common local-server choice on Linux desktops, so it's the better
+  out-of-the-box default. Existing on-disk profiles are unchanged.
+- Updated `cleanup_qwen_simple.md`: removed the conditional "Hey
+  Computer" assistant-mode switch. The 0.8B couldn't reliably route
+  on it — every formulation either made the model copy the trigger
+  phrase from the system prompt verbatim ("Hey Computer.") or pick
+  an example output ("Hey Computer, what time is it?") for unrelated
+  inputs. Cleanup-only is what the model can actually do. For
+  assistant-mode functionality on local hardware, use the Gemma 4
+  profile or any model >= 4B.
+
 ## [0.13.9] - 2026-04-18
 
 ### Fixed

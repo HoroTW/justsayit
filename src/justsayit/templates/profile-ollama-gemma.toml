@@ -1,37 +1,47 @@
 # justsayit postprocess profile (commented-defaults form).
 #
-# Profile: ollama-gemma (Gemma served by a local Ollama instance over
-# the OpenAI-compatible /v1 endpoint).
+# Profile: ollama-gemma (Gemma served by a local OpenAI-compatible
+# server — works with LM Studio (default port 1234) or Ollama
+# (default port 11434); both speak the same /v1/chat/completions schema).
 #
 # Demonstrates the orthogonality of backend vs. system prompt:
-#   - `base = "remote"`             → HTTP backend (talks to Ollama)
+#   - `base = "remote"`             → HTTP backend (talks to the local server)
 #   - `system_prompt_file = "cleanup_local.md"`
 #                                   → Gemma's `<|think|>`-channel
 #                                     prompt (NOT the channel-free
-#                                     remote default), because Ollama
-#                                     is in fact serving Gemma.
+#                                     remote default), because we're
+#                                     in fact serving Gemma.
 #   - `paste_strip_regex = '<\|channel>thought(.*?)<channel\|>'`
 #                                   → re-enable the channel stripper
 #                                     since the Gemma prompt produces
 #                                     the channel markers.
 #
-# Setup:
-#   1. Install Ollama: https://ollama.com
-#   2. Pull a Gemma model:  `ollama pull gemma3:4b`
-#   3. Activate this profile from the tray's LLM submenu, or set:
+# Setup (LM Studio — defaults below):
+#   1. Install LM Studio: https://lmstudio.ai
+#   2. Download a Gemma model in the app and load it.
+#   3. Start the local server (Developer tab → "Start Server").
+#   4. Activate this profile from the tray's LLM submenu, or set:
 #      ~/.config/justsayit/state.toml:
 #        [postprocess]
 #        enabled = true
 #        profile = "ollama-gemma"
+#
+# Setup (Ollama):
+#   1. Install Ollama: https://ollama.com
+#   2. `ollama pull gemma3:4b`
+#   3. Override the endpoint + model below:
+#        endpoint = "http://localhost:11434/v1"
+#        model = "gemma3:4b"
 
 # Backend: HTTP POST to an OpenAI-compatible /chat/completions.
 base = "remote"
 
-# Local Ollama OpenAI-compatible endpoint.
-endpoint = "http://localhost:11434/v1"
+# Local LM Studio OpenAI-compatible endpoint (Ollama uses port 11434).
+endpoint = "http://localhost:1234/v1"
 
-# Adjust to whatever Gemma tag you've pulled (`ollama list` to check).
-model = "gemma3:4b"
+# Whatever Gemma model is loaded in LM Studio (or `ollama list` to
+# check Ollama tags — typically `gemma3:4b`).
+model = "gemma-4-e4b-it"
 
 # Local Ollama doesn't need a key — but the dataclass field has to be
 # non-empty to bypass the "no API key" guard. Any placeholder works.
