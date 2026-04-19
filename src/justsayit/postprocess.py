@@ -91,7 +91,7 @@ def _load_profile_template(name: str) -> str:
 
     Profile templates are static — they document the canonical defaults
     files by reference (``base = "builtin"``, ``system_prompt_file =
-    "cleanup_local.md"``) rather than embedding values, so no
+    "cleanup_gemma.md"``) rather than embedding values, so no
     substitution is needed."""
     return _load_template(name)
 
@@ -157,7 +157,7 @@ class PostprocessProfile:
     # Path to a .md prompt file. Bare names resolve against the packaged
     # ``prompts/`` dir; paths with a slash (or ~) are loaded as-is.
     system_prompt_file: str = _builtin_default(
-        "system_prompt_file", "cleanup_local.md"
+        "system_prompt_file", "cleanup_gemma.md"
     )
     # Inline override. When non-empty, takes precedence over the file.
     system_prompt: str = _builtin_default("system_prompt", "")
@@ -200,6 +200,16 @@ class PostprocessProfile:
             self.base = "remote"
 
 
+# Old prompt names → new prompt names. Profiles seeded by older
+# justsayit versions reference these; we transparently redirect with a
+# one-time warning so the user sees what to update without their setup
+# breaking. Drop these mappings after a few release cycles.
+_PROMPT_LEGACY_ALIASES = {
+    "cleanup_local.md": "cleanup_gemma.md",
+    "cleanup_remote.md": "cleanup_openai.md",
+}
+
+
 def _resolve_system_prompt_file(value: str) -> str:
     """Load a prompt file from *value* (a path or bare name).
 
@@ -208,6 +218,15 @@ def _resolve_system_prompt_file(value: str) -> str:
 
     Returns the file contents as a string. Raises ``FileNotFoundError``
     with a hint if the file is missing."""
+    if value in _PROMPT_LEGACY_ALIASES:
+        new_name = _PROMPT_LEGACY_ALIASES[value]
+        log.warning(
+            "system_prompt_file %r was renamed to %r — using the new file. "
+            "Update your profile to silence this warning.",
+            value,
+            new_name,
+        )
+        value = new_name
     p = Path(value).expanduser()
     if "/" not in value and "\\" not in value and not p.is_absolute():
         p = _PROMPTS_DIR / value
@@ -336,7 +355,7 @@ def ensure_openai_profile(path: Path | None = None) -> Path:
     Same commented-defaults convention as ``gemma4-cleanup.toml`` but
     with ``base = "remote"`` and ``endpoint`` / ``model`` uncommented
     as the keys that DEFINE the OpenAI-compatible variant. The system
-    prompt is selected via ``system_prompt_file = "cleanup_remote.md"``
+    prompt is selected via ``system_prompt_file = "cleanup_openai.md"``
     in ``remote-defaults.toml``.
     """
     if path is None:
@@ -354,7 +373,7 @@ def ensure_ollama_gemma_profile(path: Path | None = None) -> Path:
     """Write the ``ollama-gemma.toml`` profile if it's missing.
 
     Demonstrates that backend (``base = "remote"``) and prompt
-    (``system_prompt_file = "cleanup_local.md"``, the Gemma
+    (``system_prompt_file = "cleanup_gemma.md"``, the Gemma
     ``<|think|>`` channel variant) are independent. Useful when running
     Gemma through a local Ollama install over the OpenAI-compatible
     /v1 endpoint.
@@ -603,7 +622,7 @@ class LLMPostprocessor:
                 self._llm = self._build()
                 self._install_chat_template_kwargs()
 
-    def _system_prompt(self) -> str:
+    def _system_prompt(self, extra_context: str = "") -> str:
         # Inline ``system_prompt`` wins; otherwise resolve from the
         # ``system_prompt_file`` (the canonical mechanism — Gemma's
         # ``<|think|>`` prompt and the channel-free OpenAI variant are
@@ -623,17 +642,25 @@ class LLMPostprocessor:
         ctx = self.profile.context.strip()
         if ctx:
             prompt = f"{prompt}\n\n# User context\n{ctx}"
+        clip = extra_context.strip()
+        if clip:
+            # Transient one-time context from the user (e.g. clipboard
+            # contents armed via the overlay button). Distinct section so
+            # the model can tell it apart from persistent user context.
+            prompt = f"{prompt}\n\n# Clipboard (one-time context)\n{clip}"
         return prompt
 
-    def _build_messages(self, text: str) -> list[dict[str, str]]:
+    def _build_messages(
+        self, text: str, extra_context: str = ""
+    ) -> list[dict[str, str]]:
         messages = [
-            {"role": "system", "content": self._system_prompt()},
+            {"role": "system", "content": self._system_prompt(extra_context)},
             {"role": "user", "content": self.profile.user_template.format(text=text)},
         ]
         log.info("assembled LLM system prompt:\n%s", messages[0]["content"])
         return messages
 
-    def _remote_process(self, text: str) -> ProcessResult:
+    def _remote_process(self, text: str, extra_context: str = "") -> ProcessResult:
         """OpenAI-compatible /chat/completions POST.  Pure stdlib (no
         ``openai`` dep) — same response shape as ``llama_cpp`` so the
         extraction below mirrors the local path."""
@@ -652,7 +679,7 @@ class LLMPostprocessor:
         url = self.profile.endpoint.rstrip("/") + "/chat/completions"
         body: dict[str, Any] = {
             "model": self.profile.model,
-            "messages": self._build_messages(text),
+            "messages": self._build_messages(text, extra_context),
             "temperature": self.profile.temperature,
             "max_tokens": self.profile.max_tokens,
             "top_p": self.profile.top_p,
@@ -775,13 +802,13 @@ class LLMPostprocessor:
 
         self._llm.chat_handler = _handler
 
-    def _local_process(self, text: str) -> ProcessResult:
+    def _local_process(self, text: str, extra_context: str = "") -> ProcessResult:
         with self._lock:
             if self._llm is None:
                 self._llm = self._build()
                 self._install_chat_template_kwargs()
             kwargs: dict[str, Any] = {
-                "messages": self._build_messages(text),
+                "messages": self._build_messages(text, extra_context),
                 "temperature": self.profile.temperature,
                 "max_tokens": self.profile.max_tokens,
                 "top_p": self.profile.top_p,
@@ -799,7 +826,9 @@ class LLMPostprocessor:
             text=resp["choices"][0]["message"]["content"].strip()
         )
 
-    def process_with_reasoning(self, text: str) -> ProcessResult:
+    def process_with_reasoning(
+        self, text: str, *, extra_context: str = ""
+    ) -> ProcessResult:
         """Run the LLM on *text* and return both the cleaned text and the
         backend's reasoning field (when exposed).
 
@@ -810,13 +839,17 @@ class LLMPostprocessor:
         a separate reasoning field (any thinking is inline in the text,
         handled via ``paste_strip_regex`` downstream).
 
+        ``extra_context`` is appended to the system prompt under a
+        labeled "Clipboard (one-time context)" section — used by the
+        overlay's clipboard-context button. Empty string disables it.
+
         ``text`` falls back to the original input when the model returns
         an empty response, matching ``process()``.
         """
         if self.profile.base == "remote":
-            result = self._remote_process(text)
+            result = self._remote_process(text, extra_context)
         else:
-            result = self._local_process(text)
+            result = self._local_process(text, extra_context)
         if not result.text:
             result = ProcessResult(text=text, reasoning=result.reasoning)
         return result

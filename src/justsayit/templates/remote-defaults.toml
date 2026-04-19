@@ -63,7 +63,7 @@ user_template = "{text}"
 # before display in the overlay. Empty by default — generic OpenAI-
 # compatible models don't emit Gemma's thinking-channel markers, so
 # there's nothing to strip. If you point this profile at an Ollama-
-# served Gemma (set `system_prompt_file = "cleanup_local.md"`), set
+# served Gemma (set `system_prompt_file = "cleanup_gemma.md"`), set
 # this to '<\|channel>thought(.*?)<channel\|>' to strip the channel.
 paste_strip_regex = ""
 
@@ -71,14 +71,14 @@ paste_strip_regex = ""
 
 # Path to a Markdown file containing the system prompt. Bare filenames
 # resolve against the packaged `src/justsayit/prompts/` directory.
-# `cleanup_remote.md` is the channel-free variant — generic OpenAI-
+# `cleanup_openai.md` is the channel-free variant — generic OpenAI-
 # compatible models don't have Gemma's `<|think|>` channel and would
 # leak reasoning into the visible reply with the local prompt.
 #
 # To run Gemma over an OpenAI-compatible endpoint (e.g. Ollama), set
-# `system_prompt_file = "cleanup_local.md"` AND set `paste_strip_regex`
+# `system_prompt_file = "cleanup_gemma.md"` AND set `paste_strip_regex`
 # above to the Gemma channel pattern. See `ollama-gemma.toml`.
-system_prompt_file = "cleanup_remote.md"
+system_prompt_file = "cleanup_openai.md"
 
 # Inline system prompt. When non-empty, takes precedence over
 # system_prompt_file.

@@ -149,8 +149,8 @@ Two independent knobs control the postprocess behaviour:
   `templates/remote-defaults.toml` respectively).
 - `system_prompt_file = "..."` picks which prompt the model sees. Bare
   filenames resolve against the packaged `src/justsayit/prompts/`
-  directory (`cleanup_local.md` for Gemma's `<|think|>`-channel
-  variant, `cleanup_remote.md` for the channel-free variant,
+  directory (`cleanup_gemma.md` for Gemma's `<|think|>`-channel
+  variant, `cleanup_openai.md` for the channel-free variant,
   `fun.md` for the emoji profile). Paths with a slash (or `~`) are
   loaded as-is.
 - `system_prompt = "..."` is an inline override that takes precedence
@@ -158,10 +158,10 @@ Two independent knobs control the postprocess behaviour:
   creating a new `.md` file.
 
 The shipped `openai-cleanup` profile uses `base = "remote"` +
-`system_prompt_file = "cleanup_remote.md"` (channel-free) because most
+`system_prompt_file = "cleanup_openai.md"` (channel-free) because most
 hosted providers don't have Gemma's `<|think|>` channel. The
 `ollama-gemma` profile uses `base = "remote"` +
-`system_prompt_file = "cleanup_local.md"` because Ollama is in fact
+`system_prompt_file = "cleanup_gemma.md"` because Ollama is in fact
 serving Gemma, so the channel directives apply — and it re-enables
 `paste_strip_regex` to strip the channel block. This is what we mean
 by "orthogonal": you can mix any backend with any prompt.
@@ -202,7 +202,7 @@ The dataclass keys you can override:
 | Key | Purpose |
 |-----|---------|
 | `base` | Picks the backend defaults to overlay (`"builtin"` or `"remote"`). Defaults to `"builtin"`; legacy profiles without `base` are auto-treated as `"remote"` if `endpoint` is set. |
-| `system_prompt_file` | Path to a `.md` prompt file. Bare names (e.g. `cleanup_local.md`) resolve against the packaged `src/justsayit/prompts/` directory; paths with a slash or `~` load as-is. |
+| `system_prompt_file` | Path to a `.md` prompt file. Bare names (e.g. `cleanup_gemma.md`) resolve against the packaged `src/justsayit/prompts/` directory; paths with a slash or `~` load as-is. |
 | `system_prompt` | Inline override. When non-empty, takes precedence over `system_prompt_file`. Multi-line strings welcome. |
 | `append_to_system_prompt` | Extra text glued onto the end of the resolved system prompt (separated by a blank line). Use this to extend a shipped prompt without forking it — e.g. `"Always reply in English."` |
 | `chat_template_kwargs` | Inline table forwarded into the chat template. On the built-in backend it reaches llama-cpp-python as `chat_template_kwargs=`; on the remote backend it's included in the JSON body under the same key. Default is `{ enable_thinking = true }` — required to turn on Qwen 3.5's thinking (off by default) and a no-op for Gemma (its template ignores the flag). Set to `{}` to suppress the passthrough entirely. |
@@ -229,7 +229,7 @@ defaults files.
   builds.
 - **Gemma 3/4**: the Jinja template doesn't read `enable_thinking`, so
   the flag is a no-op there — Gemma's `<|think|>`-channel prompt is
-  prompt-driven and already in `cleanup_local.md`.
+  prompt-driven and already in `cleanup_gemma.md`.
 - **OpenAI-proper / most hosted providers**: drop unknown body fields
   silently, so the flag doesn't hurt. Ollama, vLLM, SGLang, LM Studio,
   and llama.cpp-server all honour it.

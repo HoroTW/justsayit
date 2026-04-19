@@ -61,10 +61,10 @@ paste_strip_regex = '<\|channel>thought(.*?)<channel\|>'
 # Path to a Markdown file containing the system prompt. Bare filenames
 # resolve against the packaged `src/justsayit/prompts/` directory; paths
 # with a slash (or starting with ~) are loaded as-is. The default
-# `cleanup_local.md` uses Gemma 3/4's `<|think|>` channel to keep
+# `cleanup_gemma.md` uses Gemma 3/4's `<|think|>` channel to keep
 # reasoning out of the visible reply — pair changes here with
 # `paste_strip_regex` above.
-system_prompt_file = "cleanup_local.md"
+system_prompt_file = "cleanup_gemma.md"
 
 # Inline system prompt. When non-empty, takes precedence over
 # system_prompt_file. Useful for one-off overrides without creating a

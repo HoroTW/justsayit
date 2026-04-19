@@ -13,7 +13,7 @@
 # OpenAI, OpenRouter, Groq, Together, vLLM, Ollama (`/v1`), LM Studio,
 # llama.cpp's bundled server, etc. (For Ollama serving Gemma, prefer
 # the dedicated `ollama-gemma.toml` profile — it points
-# `system_prompt_file` at `cleanup_local.md` and re-enables
+# `system_prompt_file` at `cleanup_gemma.md` and re-enables
 # `paste_strip_regex` so the channel markers are stripped.)
 
 # Backend: HTTP POST to an OpenAI-compatible /chat/completions.
@@ -70,11 +70,11 @@ model = "gpt-4o-mini"
 
 # System prompt. Bare names resolve against the packaged
 # `src/justsayit/prompts/` directory; paths with a slash (or ~) are
-# loaded as-is. The default `cleanup_remote.md` is a channel-free
+# loaded as-is. The default `cleanup_openai.md` is a channel-free
 # variant of the cleanup prompt — generic models would otherwise leak
 # the literal `No changes.` instruction or hidden reasoning into the
 # visible reply.
-# system_prompt_file = "cleanup_remote.md"
+# system_prompt_file = "cleanup_openai.md"
 
 # Inline override (takes precedence over system_prompt_file).
 # system_prompt = """

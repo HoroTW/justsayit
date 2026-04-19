@@ -1,12 +1,12 @@
 # justsayit postprocess profile (commented-defaults form).
 #
-# Profile: ollama-gemma (Gemma served by a local OpenAI-compatible
+# Profile: ollama-gemma (Gemma served by an OpenAI-compatible
 # server — works with LM Studio (default port 1234) or Ollama
 # (default port 11434); both speak the same /v1/chat/completions schema).
 #
 # Demonstrates the orthogonality of backend vs. system prompt:
 #   - `base = "remote"`             → HTTP backend (talks to the local server)
-#   - `system_prompt_file = "cleanup_local.md"`
+#   - `system_prompt_file = "cleanup_gemma.md"`
 #                                   → Gemma's `<|think|>`-channel
 #                                     prompt (NOT the channel-free
 #                                     remote default), because we're
@@ -16,22 +16,7 @@
 #                                     since the Gemma prompt produces
 #                                     the channel markers.
 #
-# Setup (LM Studio — defaults below):
-#   1. Install LM Studio: https://lmstudio.ai
-#   2. Download a Gemma model in the app and load it.
-#   3. Start the local server (Developer tab → "Start Server").
-#   4. Activate this profile from the tray's LLM submenu, or set:
-#      ~/.config/justsayit/state.toml:
-#        [postprocess]
-#        enabled = true
-#        profile = "ollama-gemma"
-#
-# Setup (Ollama):
-#   1. Install Ollama: https://ollama.com
-#   2. `ollama pull gemma3:4b`
-#   3. Override the endpoint + model below:
-#        endpoint = "http://localhost:11434/v1"
-#        model = "gemma3:4b"
+
 
 # Backend: HTTP POST to an OpenAI-compatible /chat/completions.
 base = "remote"
@@ -49,7 +34,7 @@ api_key = "ollama"
 
 # Use Gemma's `<|think|>`-channel prompt even though we're on the
 # remote backend. This is the whole point of the profile.
-system_prompt_file = "cleanup_local.md"
+system_prompt_file = "cleanup_gemma.md"
 
 # Re-enable the channel stripper so the `<|channel>thought…<channel|>`
 # block doesn't leak into pasted output.

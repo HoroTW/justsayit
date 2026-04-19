@@ -50,6 +50,7 @@ class _StubOverlay:
         self.detected = []
         self.llm = []
         self.linger_calls = 0
+        self.clip_armed_calls: list[bool] = []
 
     def push_hide(self) -> None:
         self.hide_calls += 1
@@ -63,13 +64,18 @@ class _StubOverlay:
     def push_linger_start(self) -> None:
         self.linger_calls += 1
 
+    def push_clipboard_context_armed(self, armed: bool) -> None:
+        self.clip_armed_calls.append(armed)
+
 
 class _RaisingPostprocessor:
     def __init__(self, message: str = "remote exploded") -> None:
         self.message = message
         self.strip_calls = 0
 
-    def process_with_reasoning(self, text: str) -> ProcessResult:
+    def process_with_reasoning(
+        self, text: str, *, extra_context: str = ""
+    ) -> ProcessResult:
         raise RuntimeError(self.message)
 
     def strip_for_paste(self, text: str) -> str:
@@ -87,9 +93,13 @@ class _StubPostprocessor:
         self._text = text
         self._reasoning = reasoning
         self.calls = 0
+        self.extra_contexts: list[str] = []
 
-    def process_with_reasoning(self, text: str) -> ProcessResult:
+    def process_with_reasoning(
+        self, text: str, *, extra_context: str = ""
+    ) -> ProcessResult:
         self.calls += 1
+        self.extra_contexts.append(extra_context)
         return ProcessResult(text=self._text, reasoning=self._reasoning)
 
     def strip_for_paste(self, text: str) -> str:
@@ -331,3 +341,77 @@ def test_no_reasoning_field_leaves_overlay_thought_empty(capsys):
 
     assert capsys.readouterr().out == "cleaned hello\n"
     assert app.overlay.llm == [("cleaned hello", "")]
+
+
+def test_armed_clipboard_context_is_passed_to_postprocessor_and_disarms(
+    capsys, monkeypatch
+):
+    cfg = Config()
+    app = _app(cfg)
+    app.overlay = _StubOverlay()
+    app.transcriber = _StubTranscriber("hello")
+    pp = _StubPostprocessor(text="cleaned hello")
+    app.postprocessor = pp
+    monkeypatch.setattr(
+        "justsayit.cli.read_clipboard", lambda: "extra context from clipboard"
+    )
+    app._clipboard_context_armed = True
+
+    app._handle_segment(_make_seg())
+
+    assert pp.extra_contexts == ["extra context from clipboard"]
+    assert app._clipboard_context_armed is False
+    # Overlay was told to disarm the visual.
+    assert app.overlay.clip_armed_calls == [False]
+
+
+def test_unarmed_clipboard_context_does_not_read_clipboard(capsys, monkeypatch):
+    cfg = Config()
+    app = _app(cfg)
+    app.transcriber = _StubTranscriber("hello")
+    pp = _StubPostprocessor(text="cleaned hello")
+    app.postprocessor = pp
+    calls = []
+
+    def _boom():
+        calls.append("called")
+        return "should not be read"
+
+    monkeypatch.setattr("justsayit.cli.read_clipboard", _boom)
+
+    app._handle_segment(_make_seg())
+
+    assert pp.extra_contexts == [""]
+    assert calls == []
+
+
+def test_armed_with_empty_clipboard_still_disarms(capsys, monkeypatch):
+    cfg = Config()
+    app = _app(cfg)
+    app.overlay = _StubOverlay()
+    app.transcriber = _StubTranscriber("hello")
+    pp = _StubPostprocessor(text="cleaned hello")
+    app.postprocessor = pp
+    monkeypatch.setattr("justsayit.cli.read_clipboard", lambda: None)
+    app._clipboard_context_armed = True
+
+    app._handle_segment(_make_seg())
+
+    assert pp.extra_contexts == [""]
+    assert app._clipboard_context_armed is False
+    assert app.overlay.clip_armed_calls == [False]
+
+
+def test_toggle_clipboard_context_flips_flag_and_pushes_overlay():
+    cfg = Config()
+    app = _app(cfg)
+    app.overlay = _StubOverlay()
+
+    assert app._clipboard_context_armed is False
+    app._toggle_clipboard_context()
+    assert app._clipboard_context_armed is True
+    assert app.overlay.clip_armed_calls == [True]
+
+    app._toggle_clipboard_context()
+    assert app._clipboard_context_armed is False
+    assert app.overlay.clip_armed_calls == [True, False]

@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.12] - 2026-04-19
+
+### Added
+
+- Overlay 📋 button arms a one-time "use clipboard as additional LLM
+  context" mode. One click during a manual recording → next LLM call
+  receives the current clipboard contents as a labeled
+  `# Clipboard (one-time context)` section in the system prompt, then
+  auto-disarms. Click again before the recording ends to cancel. The
+  button is only rendered while `State.MANUAL` is active (it has no
+  meaning in idle/result phases) and gets a blue "armed" highlight when
+  active. Useful for asking the assistant to operate on something you
+  just yanked into the clipboard without permanently editing the user
+  context sidecar.
+- `LLMPostprocessor.process_with_reasoning(text, *, extra_context="")`
+  passes the one-time string through to both backends. Empty string
+  (the default) is a no-op — existing callers and profiles see no
+  behaviour change.
+
+### Changed
+
+- Renamed packaged prompts to model-named files for clarity:
+  - `cleanup_local.md` → `cleanup_gemma.md` (the `<|think|>`-channel
+    variant — Gemma-optimized; the `_local` name only ever meant
+    "originally for the local llama-cpp backend" but the actual axis
+    is which model's chat template you're feeding).
+  - `cleanup_remote.md` → `cleanup_openai.md` (channel-free —
+    OpenAI-optimized, generic enough for other plain
+    chat-completions APIs too).
+  Old names still resolve via a `_PROMPT_LEGACY_ALIASES` map in
+  `postprocess.py` and emit a one-line warning per load telling you
+  what to update — existing on-disk profiles keep working without an
+  edit. Drop the alias map after a few release cycles.
+
+### Fixed
+
+- `cleanup_openai.md`: replaced the `CLEANUP only` / `ANSWER` / `ACT`
+  meta-labels on the right-hand side of the assistant-mode examples
+  with concrete output strings (input echoed verbatim for cleanup,
+  short on-point answers for assistant mode). Smaller models like
+  `gpt-4o-mini` were copying the label literally — e.g. produced
+  `CLEANUP only` for `Hey Computer, weißt du, wie viele Enten auf
+  dem See schwimmen?` — instead of either echoing or answering.
+  `cleanup_gemma.md` was untouched (Gemma 4 reliably understood the
+  meta-labels; the issue is a small-model-only failure mode).
+
 ## [0.13.11] - 2026-04-19
 
 ### Added

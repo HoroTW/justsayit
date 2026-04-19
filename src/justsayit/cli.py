@@ -232,7 +232,7 @@ from justsayit.postprocess import (
     update_profile_model,
 )
 from justsayit.overlay import OverlayWindow
-from justsayit.paste import PasteError, Paster
+from justsayit.paste import PasteError, Paster, read_clipboard
 from justsayit.shortcuts import GlobalShortcutClient
 from justsayit.sound import SoundPlayer
 from justsayit.transcribe import TranscriberBase, make_transcriber
@@ -286,6 +286,10 @@ class App:
         # used by the auto_space_timeout_ms feature.
         self._last_transcription_time: float | None = None
         self._restart_requested: bool = False
+        # One-time flag set by the overlay's 📋 button. Read+cleared in
+        # _handle_segment; when True, clipboard contents are appended to
+        # the LLM system prompt for that single transcription.
+        self._clipboard_context_armed: bool = False
 
     # --- setup -------------------------------------------------------------
 
@@ -822,6 +826,39 @@ class App:
 
     # --- runtime -----------------------------------------------------------
 
+    def _toggle_clipboard_context(self) -> None:
+        """Flip the one-time clipboard-context flag from the overlay button.
+
+        We don't read the clipboard here — armed → next ``_handle_segment``
+        call reads it via ``read_clipboard()`` and feeds it to the LLM
+        before clearing the flag. Disarming before recording cancels the
+        pending read.
+        """
+        self._clipboard_context_armed = not self._clipboard_context_armed
+        log.info(
+            "clipboard-context flag → %s",
+            "armed" if self._clipboard_context_armed else "disarmed",
+        )
+        if self.overlay is not None:
+            self.overlay.push_clipboard_context_armed(
+                self._clipboard_context_armed
+            )
+
+    def _consume_clipboard_context(self) -> str:
+        """If the flag is armed, read the clipboard, clear the flag, and
+        update the overlay. Returns "" when not armed or clipboard empty."""
+        if not self._clipboard_context_armed:
+            return ""
+        self._clipboard_context_armed = False
+        if self.overlay is not None:
+            self.overlay.push_clipboard_context_armed(False)
+        clip = read_clipboard()
+        if not clip:
+            log.info("clipboard-context armed but clipboard is empty / unavailable")
+            return ""
+        log.info("injecting clipboard as one-time LLM context: %d chars", len(clip))
+        return clip
+
     def _handle_segment(self, seg: Segment) -> None:
         assert self.transcriber is not None
         duration = len(seg.samples) / seg.sample_rate
@@ -863,8 +900,11 @@ class App:
             llm_overlay_text = final
             llm_overlay_thought = ""
             paste_text = final
+            extra_context = self._consume_clipboard_context()
             try:
-                result = pp.process_with_reasoning(final)
+                result = pp.process_with_reasoning(
+                    final, extra_context=extra_context
+                )
                 cleaned = result.text
                 if cleaned != final:
                     log.info("LLM cleaned: %r -> %r", final, cleaned)
@@ -1004,7 +1044,12 @@ class App:
                 if self.engine is not None:
                     self.engine.abort()
 
-            self.overlay = OverlayWindow(app, self.cfg, on_abort=_on_overlay_abort)
+            self.overlay = OverlayWindow(
+                app,
+                self.cfg,
+                on_abort=_on_overlay_abort,
+                on_toggle_clipboard_context=self._toggle_clipboard_context,
+            )
             # Explicitly hidden until the engine reports a non-idle state.
             self.overlay.set_visible(False)
 

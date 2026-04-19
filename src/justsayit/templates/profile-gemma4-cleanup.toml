@@ -72,7 +72,7 @@ base = "builtin"
 # System prompt. Bare names resolve against the packaged
 # `src/justsayit/prompts/` directory; paths with a slash (or ~) are
 # loaded as-is. Override here to point at your own .md file.
-# system_prompt_file = "cleanup_local.md"
+# system_prompt_file = "cleanup_gemma.md"
 
 # Inline override (takes precedence over system_prompt_file). Useful
 # for one-off tweaks without creating a new .md file.
