@@ -38,6 +38,13 @@ Local Parakeet v3 voice dictation for Wayland.
   clean this up`. Ask for a translation, a quick rewrite, a calculation,
   a snippet of code, … without leaving the keyboard. See
   [docs/postprocessing.md#hey-computer--inline-assistant-mode](docs/postprocessing.md#hey-computer--inline-assistant-mode).
+- **Add current clipboard as additional context** — click the 📋 button
+  on the overlay during a manual recording to feed your current
+  clipboard contents into the next LLM call as one-shot context, then
+  ask `Hey Computer` to summarise / translate / rewrite / explain /
+  classify it without copy-pasting it into a chat window. One-shot:
+  auto-disarms after the request; click again before recording ends to
+  cancel.
 - **Optional LLM cleanup pass** with shipped profiles (cleanup, emoji,
   OpenAI-compatible endpoint), a per-request dynamic-context script, and
   **fully customisable system prompts** for emojification,
