@@ -105,13 +105,9 @@
             # Instead, inject the preload here and skip the re-exec.
             "--prefix" "LD_PRELOAD" ":" "${pkgs.gtk4-layer-shell}/lib/libgtk4-layer-shell.so"
             "--set" "_JUSTSAYIT_PRELOADED" "1"
-            # Point ALSA at the system config + plugins so PortAudio finds the
-            # PipeWire virtual device (and thus accepts any sample rate).
-            # The Nix alsa-lib's built-in config doesn't include PipeWire.
-            # System ALSA config routes the default PCM through PipeWire.
-            # Use the Nix pipewire plugin so its libpipewire-0.3 dep is found
-            # via Nix store RPATH rather than requiring a system search.
-            "--set-default" "ALSA_CONFIG_DIR" "/usr/share/alsa"
+            # Use the Nix pipewire ALSA plugin so PortAudio can route through
+            # PipeWire. Don't override ALSA_CONFIG_DIR - it breaks NixOS where
+            # /usr/share/alsa doesn't exist; let each system use its default.
             "--set-default" "ALSA_PLUGIN_DIR" "${pkgs.pipewire}/lib/alsa-lib"
             ${pkgs.lib.optionalString withVulkan ''
             # Add nixpkgs mesa ICDs to the vulkan-loader's search so GPU
