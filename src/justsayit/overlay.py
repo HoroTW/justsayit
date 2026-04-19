@@ -178,6 +178,12 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._dot_color_override: _DotColor | None = None
         self._linger_source: int | None = None
         self._safety_source: int | None = None
+        # Set by ``_force_hide`` so a delayed engine-IDLE callback (× abort
+        # while RECORDING/MANUAL, or transcribe-thread ``push_hide`` from
+        # short-segment skip / empty transcription) cannot re-open the
+        # overlay with "processing…" + 30s safety hide. Cleared on the
+        # next non-IDLE state or after the suppressed IDLE is consumed.
+        self._suppress_next_idle_processing = False
 
         self.add_css_class("justsayit-overlay")
         self.set_decorated(False)
@@ -410,6 +416,13 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._clip_button.set_visible(state is State.MANUAL)
 
         if state is State.IDLE:
+            if self._suppress_next_idle_processing:
+                # Overlay was already explicitly dismissed (× abort, or
+                # transcribe thread called push_hide for skip / empty);
+                # don't re-open with "processing…" — there's no result.
+                self._suppress_next_idle_processing = False
+                self._force_hide()
+                return False
             if prev in (State.RECORDING, State.MANUAL):
                 self._cancel_linger()
                 self._dot_color_override = None
@@ -424,6 +437,9 @@ class OverlayWindow(Gtk.ApplicationWindow):
             else:
                 self._force_hide()
         else:
+            # New recording — any leftover suppression from a prior cycle
+            # is stale; honour the fresh state transition normally.
+            self._suppress_next_idle_processing = False
             self._cancel_linger()
             self._cancel_safety()
             self._dot_color_override = None
@@ -527,6 +543,12 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._hide_text_areas()
         self._collapse_window()
         self.set_visible(False)
+        # An audio-thread IDLE callback may still be queued behind us
+        # (× abort during RECORDING/MANUAL, or skip-short / empty
+        # transcription firing push_hide before the engine state event
+        # reaches GLib). Tell _apply_state to honour the dismissal
+        # instead of re-opening the overlay with "processing…".
+        self._suppress_next_idle_processing = True
         return False
 
     # ── Layout helpers ───────────────────────────────────────────────────────

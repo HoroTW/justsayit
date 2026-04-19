@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.13] - 2026-04-19
+
+### Fixed
+
+- Overlay race where the "processing…" pill could stick around for the
+  full 30 s safety timer after × abort during `RECORDING`/`MANUAL`, or
+  after a transcribe-thread `push_hide` from the short-segment-skip /
+  empty-transcription paths. The audio thread's delayed `IDLE` state
+  callback no longer re-opens the overlay once it has been explicitly
+  dismissed: `_force_hide` arms a `_suppress_next_idle_processing` flag
+  that the next `_apply_state(IDLE)` consumes, and a fresh non-IDLE
+  state transition clears it so legitimate processing pills still show.
+
+### Changed
+
+- `cleanup_gemma.md`: tightened the assistant-mode rule so bare
+  IMPERATIVE / COMMAND-shaped sentences (`Mach das Fenster zu.`,
+  `Öffne die Datei.`, `Open the door.`) without the literal word
+  `Computer` stay in CLEANUP — Gemma 4 was occasionally entering
+  Assistant Mode just because the dictated text happened to contain a
+  German command. Added two German imperative examples alongside the
+  existing question examples.
+
 ## [0.13.12] - 2026-04-19
 
 ### Added
