@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.20] - 2026-04-21
+
+### Fixed
+
+- Clipboard-context arming now disarms at the **start** of every new
+  recording instead of at four separate end-of-recording branches
+  (× abort, short-segment skip, empty transcription, LLM disabled).
+  A single hook on the `IDLE → VALIDATING` / `IDLE → MANUAL`
+  transition guarantees every recording starts disarmed, so a stale
+  "armed" flag can never leak across sessions. Simpler invariant,
+  one call site.
+- `cleanup_openai.md` previously primed assistant-mode replies with
+  a blanket "Darauf habe ich keinen Zugriff — ich kann nur die
+  Eingabe sehen, nicht deine Umgebung." pattern, which fired even
+  when a `# Clipboard as additional context` section was attached.
+  The deny example has been replaced with a clipboard-aware example
+  that uses the section to answer, so remote LLMs no longer refuse
+  to see content that IS in the prompt.
+
+### Changed
+
+- Renamed the LLM system-prompt header from `# Clipboard (one-time
+  context)` to `# Clipboard as additional context`; updated
+  overlay tooltip and postprocess docstring to match. Clearer
+  wording for what the model is looking at.
+
 ## [0.13.19] - 2026-04-19
 
 ### Changed

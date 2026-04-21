@@ -388,6 +388,11 @@ class App:
             log.debug("engine state callback: %s", state.value)
             prev = prev_state[0]
             prev_state[0] = state
+            if prev is State.IDLE and state in (State.VALIDATING, State.MANUAL):
+                # Fresh recording — clipboard-context arming is strictly
+                # per-recording, so clear any leftover flag before it can
+                # feed a stale clipboard into this session's LLM call.
+                self._disarm_clipboard_context()
             if self.overlay is not None:
                 self.overlay.push_state(state)
             if self.sound_player is not None:
@@ -853,6 +858,17 @@ class App:
             self.overlay.push_clipboard_context_armed(
                 self._clipboard_context_armed
             )
+
+    def _disarm_clipboard_context(self) -> None:
+        """Clear the armed flag without reading the clipboard. Called at
+        the start of every new recording so arming is strictly
+        per-recording and can never leak across sessions."""
+        if not self._clipboard_context_armed:
+            return
+        self._clipboard_context_armed = False
+        log.info("clipboard-context flag → disarmed (new recording starting)")
+        if self.overlay is not None:
+            self.overlay.push_clipboard_context_armed(False)
 
     def _consume_clipboard_context(self) -> str:
         """If the flag is armed, read the clipboard, clear the flag, and
