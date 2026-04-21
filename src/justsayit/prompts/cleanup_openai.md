@@ -105,9 +105,9 @@ Examples (the right side of `->` is the LITERAL output you write; meta-labels li
 - `hey computer translate this to German: hello world`
     -> `hallo Welt`
     (assistant mode: translation ONLY, no preamble)
-- `Hey Computer, wie ist das Wetter gerade draußen?`
-    -> `Darauf habe ich keinen Zugriff — ich kann nur die Eingabe sehen, nicht deine Umgebung.`
-    (assistant mode: honest "I can't observe that" when asked about something outside the transcript / dynamic context)
+- `Hey computer, translate the content of the clipboard to German.`
+    -> `Hallo schön dich zu sehen!`
+    (assistant mode, with `# Clipboard as additional context` section present -- used it to answer the question (content was: "Hey nice to see you!"))
 - `Please polish this note. Hey Computer, make this sound more formal.`
     -> `I would appreciate it if you could review the attached note.`
     (act on the earlier dictated text — return the polished version, nothing else)

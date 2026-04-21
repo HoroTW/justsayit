@@ -236,8 +236,8 @@ class OverlayWindow(Gtk.ApplicationWindow):
         end_box.append(self._update_badge)
 
         # Clipboard-context arming button. One click → next LLM call
-        # receives the clipboard contents under a "Clipboard (one-time
-        # context)" section in the system prompt; click again to disarm
+        # receives the clipboard contents under a "Clipboard as additional 
+        # context" section in the system prompt; click again to disarm
         # before recording. The armed state has its own CSS class so it's
         # visually obvious whether the next transcription will be enriched.
         self._clip_button = Gtk.Button(label="📋")

@@ -647,7 +647,7 @@ class LLMPostprocessor:
             # Transient one-time context from the user (e.g. clipboard
             # contents armed via the overlay button). Distinct section so
             # the model can tell it apart from persistent user context.
-            prompt = f"{prompt}\n\n# Clipboard (one-time context)\n{clip}"
+            prompt = f"{prompt}\n\n# Clipboard as additional context\n{clip}"
         return prompt
 
     def _build_messages(
@@ -840,7 +840,7 @@ class LLMPostprocessor:
         handled via ``paste_strip_regex`` downstream).
 
         ``extra_context`` is appended to the system prompt under a
-        labeled "Clipboard (one-time context)" section — used by the
+        labeled "Clipboard as additional context" section — used by the
         overlay's clipboard-context button. Empty string disables it.
 
         ``text`` falls back to the original input when the model returns
