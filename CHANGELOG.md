@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.24] - 2026-04-22
+
+### Changed
+
+- `cleanup_openai.md`: further-tightened rule 2(b) (clipboard-present =
+  assistant, output MUST be a transformation of the clipboard) so
+  `# Clipboard as additional context` reliably steers gpt-4o-mini into
+  real transformations instead of echoing the input or clipboard
+  verbatim. Measured accuracy jump against the eval harness:
+  - overall: 84.2% → 94.7% (+10.5 pp)
+  - cleanup-expected: 91.7% (unchanged)
+  - assistant-expected: 71.4% → 100.0% (+28.6 pp)
+  The single remaining failure (`bare-computer-no-hey`: `Computer,
+  translate this to German: hello world`) is a gpt-4o-mini capability
+  limit — the model cannot resist translating when the input literally
+  contains `translate this to German`, regardless of prompt wording.
+  Not worth further prompt bloat; this exact pattern is rare in real
+  dictation (users say `Hey Computer, …`).
+- `clipboard-summarize-en` case now uses a multi-sentence paragraph —
+  the previous single-sentence clipboard was a semantically ambiguous
+  test (summarising an already-one-sentence clipboard in one sentence
+  has a defensible no-op interpretation).
+
+### Added
+
+- `--no-judge` flag on `scripts/eval-cleanup-prompt.py`. Runs only the
+  target model and prints raw outputs (with determinism summary) so
+  prompt iteration doesn't burn judge-API budget on inputs that are
+  obviously still broken.
+
 ## [0.13.23] - 2026-04-22
 
 ### Added

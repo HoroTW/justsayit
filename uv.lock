@@ -461,7 +461,7 @@ wheels = [
 
 [[package]]
 name = "justsayit"
-version = "0.13.23"
+version = "0.13.24"
 source = { editable = "." }
 dependencies = [
     { name = "numpy" },

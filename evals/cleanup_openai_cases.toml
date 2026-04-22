@@ -122,9 +122,9 @@ tags = ["clipboard-present", "translate"]
 
 [[case]]
 id = "clipboard-summarize-en"
-description = "Clipboard attached + summarise request — assistant."
+description = "Clipboard with a multi-sentence paragraph; summarising it forces a real transformation, not an echo."
 input = "Summarise this in one sentence."
-clipboard = "The quick brown fox jumps over the lazy dog three times in a row under a bright autumn sun."
+clipboard = "We had our quarterly planning session yesterday. The team discussed three priorities: launching the new API by end of May, reducing incident response time, and onboarding the two new engineers. There were some concerns about resource allocation. Everyone agreed to reconvene next Friday to finalize the roadmap."
 expected_mode = "assistant"
 language = "en"
 tags = ["clipboard-present", "summarise"]

@@ -522,6 +522,80 @@ def run_judge(cfg: JudgeConfig, case: Case, model_output: str) -> JudgeVerdict:
 # ---------------------------------------------------------------------------
 
 
+@dataclass
+class TargetOnlyOutcome:
+    case: Case
+    run_index: int
+    model_output: str
+    elapsed_ms: int
+
+
+def evaluate_target_only(
+    cases: list[Case],
+    post: LLMPostprocessor,
+    runs: int,
+) -> list[list[TargetOnlyOutcome]]:
+    out: list[list[TargetOnlyOutcome]] = []
+    total = len(cases) * runs
+    step = 0
+    for case in cases:
+        per_case: list[TargetOnlyOutcome] = []
+        for r in range(runs):
+            step += 1
+            t0 = time.monotonic()
+            try:
+                model_output, _ = run_target(post, case)
+            except Exception as e:
+                model_output = f"<target call failed: {e!r}>"
+            elapsed_ms = int((time.monotonic() - t0) * 1000)
+            per_case.append(
+                TargetOnlyOutcome(
+                    case=case,
+                    run_index=r,
+                    model_output=model_output,
+                    elapsed_ms=elapsed_ms,
+                )
+            )
+            print(
+                f"[{step}/{total}] {case.id} run {r + 1}/{runs} ({elapsed_ms}ms)",
+                file=sys.stderr,
+            )
+        out.append(per_case)
+    return out
+
+
+def print_target_only_report(
+    per_case: list[list[TargetOnlyOutcome]],
+    *,
+    target_profile: PostprocessProfile,
+    elapsed_s: float,
+) -> None:
+    total = sum(len(rs) for rs in per_case)
+    print()
+    print("=== target-only outputs (no judge) ===")
+    print(
+        f"target : {target_profile.model} @ {target_profile.endpoint}"
+    )
+    print(f"runs   : {total}   elapsed: {elapsed_s:.1f}s")
+    base_chars = len(_base_prompt_text(target_profile))
+    print(f"prompt : {base_chars} chars ({_approx_tokens(base_chars)} approx tokens)")
+    print()
+    for runs in per_case:
+        c = runs[0].case
+        print(f"--- {c.id}  (expected {c.expected_mode}) ---")
+        print(f"  input    : {c.input}")
+        if c.clipboard:
+            print(f"  clipboard: {c.clipboard}")
+        uniq = Counter(r.model_output for r in runs)
+        for i, r in enumerate(runs):
+            print(f"  run {i + 1:>2} ({r.elapsed_ms:>4}ms): {r.model_output!r}")
+        if len(uniq) > 1:
+            print(f"  → {len(uniq)} distinct outputs across {len(runs)} runs (flaky)")
+        else:
+            print(f"  → deterministic ({len(runs)} identical runs)")
+        print()
+
+
 def evaluate(
     cases: list[Case],
     post: LLMPostprocessor,
@@ -887,6 +961,16 @@ def _build_parser() -> argparse.ArgumentParser:
         default=False,
         help="Resolve profile + cases + judge config, print cost estimate, exit 0. No API calls.",
     )
+    run.add_argument(
+        "--no-judge",
+        action="store_true",
+        default=False,
+        help=(
+            "Skip the judge call. Prints each target output verbatim so "
+            "you can eyeball it (useful when iterating — don't burn judge "
+            "budget until the raw output looks right)."
+        ),
+    )
     return ap
 
 
@@ -905,16 +989,19 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     target_calls = len(cases) * args.runs
-    judge_calls = len(cases) * args.runs
+    judge_calls = 0 if args.no_judge else len(cases) * args.runs
     print(
         f"target : {args.profile}  ({profile.model} @ {profile.endpoint})",
         file=sys.stderr,
     )
-    print(
-        f"judge  : {judge_cfg.model} @ {judge_cfg.endpoint}  "
-        f"(temperature={judge_cfg.temperature})",
-        file=sys.stderr,
-    )
+    if args.no_judge:
+        print("judge  : (skipped — --no-judge)", file=sys.stderr)
+    else:
+        print(
+            f"judge  : {judge_cfg.model} @ {judge_cfg.endpoint}  "
+            f"(temperature={judge_cfg.temperature})",
+            file=sys.stderr,
+        )
     print(
         f"cases  : {len(cases)}   runs-per-case: {args.runs}   "
         f"estimated calls: {target_calls} target + {judge_calls} judge = {target_calls + judge_calls}",
@@ -933,6 +1020,11 @@ def main(argv: list[str] | None = None) -> int:
             return 2
 
     t0 = time.monotonic()
+    if args.no_judge:
+        results = evaluate_target_only(cases, post, args.runs)
+        elapsed_s = time.monotonic() - t0
+        print_target_only_report(results, target_profile=profile, elapsed_s=elapsed_s)
+        return 0
     results = evaluate(cases, post, judge_cfg, args.runs)
     elapsed_s = time.monotonic() - t0
 
