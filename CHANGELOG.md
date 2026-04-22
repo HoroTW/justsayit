@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.25] - 2026-04-22
+
+### Changed
+
+- `cleanup_openai.md`: tightened the assistant-mode trigger to
+  literal `Hey Computer` (case-insensitive, with close STT mishears
+  like `ey computer`, `hay computer`, `hei computer`). Other greetings
+  paired with `Computer` (`Hi Computer`, `Hallo Computer`, etc.) no
+  longer trigger assistant mode — users intentionally picked
+  `Hey Computer` as the wake phrase, so other greetings likely mean
+  they're addressing someone else in the dictation.
+- Judge rubric in `scripts/eval-cleanup-prompt.py` tightened to catch
+  **partial extraction** (output is a substring of the input that drops
+  instruction tokens like `translate this to German:`) as assistant
+  mode rather than cleanup. The previous judge was too lenient and
+  classified `Computer, translate this to German: hello world` →
+  `hello world` as cleanup; the honest verdict is assistant (the
+  model extracted the instruction payload). This lowers reported
+  scores but reflects true prompt-following quality. Also added
+  explicit "small model; judge what's there, not what a capable model
+  would produce" framing so the judge does not self-forgive.
+
+### Added
+
+- `--no-judge` flag on `scripts/eval-cleanup-prompt.py` prints raw
+  target outputs with a determinism summary — use while iterating on
+  prompts to avoid burning judge-API budget on inputs that are still
+  obviously wrong.
+- `evals/profile-gpt-5.4-mini.toml` — eval-only profile pointing at
+  `gpt-5.4-mini`. Used to check whether moving to a reasoning-capable
+  model clears gpt-4o-mini's capability ceiling on inputs like
+  `Computer, translate this to German: hello world` (answer: yes,
+  it does; honest score 84.2% on gpt-4o-mini vs 94.7% on
+  gpt-5.4-mini with the same prompt).
+
+### Fixed
+
+- `postprocess.py` remote path now auto-detects OpenAI reasoning
+  models (names starting with `o[1-9]` or `gpt-[5-9]`) and sends
+  `max_completion_tokens` instead of the legacy `max_tokens` those
+  models 400 on. Previously, pointing a profile at any reasoning
+  model surfaced `Unsupported parameter: 'max_tokens' is not
+  supported with this model.` on every request.
+
 ## [0.13.24] - 2026-04-22
 
 ### Changed

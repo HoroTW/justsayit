@@ -311,10 +311,13 @@ def _approx_tokens(chars: int) -> int:
 
 
 JUDGE_SYSTEM_PROMPT = """\
-You are a strict evaluator for a dictation post-processing system. The system \
-takes raw speech-to-text input and either (A) returns the transcript lightly \
-cleaned — "cleanup mode" — or (B) answers a request / performs a task — \
-"assistant mode".
+You are a strict evaluator for a dictation post-processing system. The \
+system is driven by a small language model that may or may not follow its \
+instructions reliably — you do not know which model, and you must judge \
+the output as it actually is, NOT what a capable model would have produced. \
+The system takes raw speech-to-text input and either (A) returns the \
+transcript lightly cleaned — "cleanup mode" — or (B) answers a request / \
+performs a task — "assistant mode".
 
 Your ONLY job: given the raw input, the clipboard context (if any), and the \
 system's actual output, classify the output into exactly one label:
@@ -366,8 +369,13 @@ the input plausibly requests translation OF the clipboard content.
 - Language mismatch between input and output (e.g. English input, German \
 output) is "assistant" unless it is a faithful translation the user \
 clearly requested.
-- When the output is identical or near-identical to the input, it is \
-always "cleanup" — even if the input was a question.
+- The output qualifies as "cleanup" ONLY when it contains all the main \
+content of the input (possibly with filler removed). **Partial \
+extraction** — where the output is a substring of the input that drops \
+instruction tokens like "translate X to Y:", "summarise this:", etc. — \
+is NOT cleanup; it's a partial assistant-mode attempt (the model \
+understood the input as an instruction and extracted the payload). \
+Classify partial extractions as "assistant".
 - Capitalisation, punctuation, and filler-removal differences alone do \
 NOT push a response out of "cleanup".
 

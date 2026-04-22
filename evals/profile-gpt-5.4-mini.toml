@@ -1,0 +1,14 @@
+# Eval-only profile pointing at gpt-5.4-mini. Used by
+# scripts/eval-cleanup-prompt.py to check whether a larger / reasoning-
+# capable model clears the last failing case on gpt-4o-mini without
+# further prompt bloat. Not part of the shipped profile set.
+base = "remote"
+endpoint = "https://api.openai.com/v1"
+model = "gpt-5.4-mini"
+system_prompt_file = "cleanup_openai.md"
+api_key_env = "OPENAI_API_KEY"
+request_timeout = 60.0
+temperature = 0.1
+max_tokens = 4096
+top_p = 0.95
+user_template = "{text}"

@@ -1,0 +1,508 @@
+{
+  "target": {
+    "profile": "openai-cleanup",
+    "model": "gpt-4o-mini",
+    "endpoint": "https://api.openai.com/v1",
+    "temperature": 0.08
+  },
+  "judge": {
+    "model": "gpt-4o",
+    "endpoint": "https://api.openai.com/v1",
+    "temperature": 0.0
+  },
+  "runs_per_case": 1,
+  "cases": [
+    {
+      "id": "filler-ahm-de",
+      "description": "Plain filler removal, German — 'ähm' is canonical filler.",
+      "input": "Ich wollte ähm nur kurz Bescheid sagen.",
+      "clipboard": "",
+      "expected_mode": "cleanup",
+      "language": "de",
+      "tags": [
+        "filler"
+      ],
+      "majority_mode": "cleanup",
+      "flakiness": 0.0,
+      "pass": true,
+      "runs": [
+        {
+          "run_index": 0,
+          "model_output": "Ich wollte nur kurz Bescheid sagen.",
+          "model_reasoning": "",
+          "verdict_mode": "cleanup",
+          "verdict_reason": "Output is input with filler 'ähm' removed, a light cleanup edit.",
+          "verdict_raw": "{\"mode\": \"cleanup\", \"reason\": \"Output is input with filler 'ähm' removed, a light cleanup edit.\"}",
+          "elapsed_ms": 1687
+        }
+      ]
+    },
+    {
+      "id": "spoken-punctuation-en",
+      "description": "Spoken 'comma' / 'new line' become characters without triggering assistant mode.",
+      "input": "Hello comma new line greetings",
+      "clipboard": "",
+      "expected_mode": "cleanup",
+      "language": "en",
+      "tags": [
+        "punctuation"
+      ],
+      "majority_mode": "cleanup",
+      "flakiness": 0.0,
+      "pass": true,
+      "runs": [
+        {
+          "run_index": 0,
+          "model_output": "Hello,  \ngreetings",
+          "model_reasoning": "",
+          "verdict_mode": "cleanup",
+          "verdict_reason": "Output is input with punctuation and formatting corrections only.",
+          "verdict_raw": "{\"mode\": \"cleanup\", \"reason\": \"Output is input with punctuation and formatting corrections only.\"}",
+          "elapsed_ms": 1257
+        }
+      ]
+    },
+    {
+      "id": "stt-mishear-en",
+      "description": "Likely STT mishear — 'there' vs 'their'. Prompt allows STT fixes; still cleanup.",
+      "input": "Please send they're report before noon.",
+      "clipboard": "",
+      "expected_mode": "cleanup",
+      "language": "en",
+      "tags": [
+        "stt-fix"
+      ],
+      "majority_mode": "cleanup",
+      "flakiness": 0.0,
+      "pass": true,
+      "runs": [
+        {
+          "run_index": 0,
+          "model_output": "Please send their report before noon.",
+          "model_reasoning": "",
+          "verdict_mode": "cleanup",
+          "verdict_reason": "The output corrects a minor spelling error without changing the content.",
+          "verdict_raw": "{\"mode\": \"cleanup\", \"reason\": \"The output corrects a minor spelling error without changing the content.\"}",
+          "elapsed_ms": 1426
+        }
+      ]
+    },
+    {
+      "id": "bare-clipboard-question",
+      "description": "User's original bug: asks about clipboard, none provided, no 'Computer'. Must echo verbatim.",
+      "input": "Can you see the content of my current clipboard?",
+      "clipboard": "",
+      "expected_mode": "cleanup",
+      "language": "en",
+      "tags": [
+        "bare-question",
+        "no-trigger",
+        "regression"
+      ],
+      "majority_mode": "cleanup",
+      "flakiness": 0.0,
+      "pass": true,
+      "runs": [
+        {
+          "run_index": 0,
+          "model_output": "Can you see the content of my current clipboard?",
+          "model_reasoning": "",
+          "verdict_mode": "cleanup",
+          "verdict_reason": "Output is an exact echo of the input with no transformation.",
+          "verdict_raw": "{\"mode\": \"cleanup\", \"reason\": \"Output is an exact echo of the input with no transformation.\"}",
+          "elapsed_ms": 1293
+        }
+      ]
+    },
+    {
+      "id": "bare-question-time-de",
+      "description": "Bare German question, no trigger. Prompt calls this out explicitly — still a model failure mode.",
+      "input": "Wie viel Uhr ist es gerade?",
+      "clipboard": "",
+      "expected_mode": "cleanup",
+      "language": "de",
+      "tags": [
+        "bare-question",
+        "no-trigger"
+      ],
+      "majority_mode": "cleanup",
+      "flakiness": 0.0,
+      "pass": true,
+      "runs": [
+        {
+          "run_index": 0,
+          "model_output": "Wie viel Uhr ist es gerade?",
+          "model_reasoning": "",
+          "verdict_mode": "cleanup",
+          "verdict_reason": "Output is an exact echo of the input.",
+          "verdict_raw": "{\"mode\": \"cleanup\", \"reason\": \"Output is an exact echo of the input.\"}",
+          "elapsed_ms": 1667
+        }
+      ]
+    },
+    {
+      "id": "bare-question-capital-en",
+      "description": "Bare factual question, no trigger. Trivially answerable but must stay cleanup.",
+      "input": "What is the capital of France?",
+      "clipboard": "",
+      "expected_mode": "cleanup",
+      "language": "en",
+      "tags": [
+        "bare-question",
+        "no-trigger"
+      ],
+      "majority_mode": "cleanup",
+      "flakiness": 0.0,
+      "pass": true,
+      "runs": [
+        {
+          "run_index": 0,
+          "model_output": "What is the capital of France?",
+          "model_reasoning": "",
+          "verdict_mode": "cleanup",
+          "verdict_reason": "Output is an exact echo of the input with no transformation.",
+          "verdict_raw": "{\"mode\": \"cleanup\", \"reason\": \"Output is an exact echo of the input with no transformation.\"}",
+          "elapsed_ms": 1479
+        }
+      ]
+    },
+    {
+      "id": "bare-request-translate-en",
+      "description": "Imperative phrasing (Translate this …) but no 'Computer' — must echo verbatim, NOT translate.",
+      "input": "Translate this to German: hello world",
+      "clipboard": "",
+      "expected_mode": "cleanup",
+      "language": "en",
+      "tags": [
+        "no-trigger",
+        "would-be-translation"
+      ],
+      "majority_mode": "assistant",
+      "flakiness": 0.0,
+      "pass": false,
+      "runs": [
+        {
+          "run_index": 0,
+          "model_output": "hello world",
+          "model_reasoning": "",
+          "verdict_mode": "assistant",
+          "verdict_reason": "Output is a partial extraction, dropping 'translate this to German:' from the input.",
+          "verdict_raw": "{\"mode\": \"assistant\", \"reason\": \"Output is a partial extraction, dropping 'translate this to German:' from the input.\"}",
+          "elapsed_ms": 1316
+        }
+      ]
+    },
+    {
+      "id": "hey-computer-translate-de",
+      "description": "Explicit trigger + translate request — assistant returns the translation only.",
+      "input": "Hey computer, translate this to German: hello world",
+      "clipboard": "",
+      "expected_mode": "assistant",
+      "language": "en",
+      "tags": [
+        "hey-computer",
+        "translate"
+      ],
+      "majority_mode": "assistant",
+      "flakiness": 0.0,
+      "pass": true,
+      "runs": [
+        {
+          "run_index": 0,
+          "model_output": "hallo Welt",
+          "model_reasoning": "",
+          "verdict_mode": "assistant",
+          "verdict_reason": "The output is a translation of the input from English to German.",
+          "verdict_raw": "{\"mode\": \"assistant\", \"reason\": \"The output is a translation of the input from English to German.\"}",
+          "elapsed_ms": 1295
+        }
+      ]
+    },
+    {
+      "id": "hey-computer-capital-fr",
+      "description": "Explicit trigger + factual question — assistant answers.",
+      "input": "Hey Computer, was ist die Hauptstadt von Frankreich?",
+      "clipboard": "",
+      "expected_mode": "assistant",
+      "language": "de",
+      "tags": [
+        "hey-computer",
+        "qna"
+      ],
+      "majority_mode": "assistant",
+      "flakiness": 0.0,
+      "pass": true,
+      "runs": [
+        {
+          "run_index": 0,
+          "model_output": "Paris.",
+          "model_reasoning": "",
+          "verdict_mode": "assistant",
+          "verdict_reason": "The output answers the question asked in the input.",
+          "verdict_raw": "{\"mode\": \"assistant\", \"reason\": \"The output answers the question asked in the input.\"}",
+          "elapsed_ms": 1442
+        }
+      ]
+    },
+    {
+      "id": "hey-computer-define-en",
+      "description": "Explicit trigger + define request — assistant gives a short definition, no preamble.",
+      "input": "Hey computer, define petrichor.",
+      "clipboard": "",
+      "expected_mode": "assistant",
+      "language": "en",
+      "tags": [
+        "hey-computer",
+        "define"
+      ],
+      "majority_mode": "assistant",
+      "flakiness": 0.0,
+      "pass": true,
+      "runs": [
+        {
+          "run_index": 0,
+          "model_output": "The pleasant, earthy smell that occurs when rain falls on dry soil.",
+          "model_reasoning": "",
+          "verdict_mode": "assistant",
+          "verdict_reason": "The output provides a definition, answering the input's request.",
+          "verdict_raw": "{\"mode\": \"assistant\", \"reason\": \"The output provides a definition, answering the input's request.\"}",
+          "elapsed_ms": 1503
+        }
+      ]
+    },
+    {
+      "id": "clipboard-translate-de",
+      "description": "Clipboard attached + translate request — assistant translates the clipboard.",
+      "input": "Kannst du das bitte ins Deutsche übersetzen?",
+      "clipboard": "Hey, nice to see you!",
+      "expected_mode": "assistant",
+      "language": "de",
+      "tags": [
+        "clipboard-present",
+        "translate"
+      ],
+      "majority_mode": "cleanup",
+      "flakiness": 0.0,
+      "pass": false,
+      "runs": [
+        {
+          "run_index": 0,
+          "model_output": "Hey, nice to see you!",
+          "model_reasoning": "",
+          "verdict_mode": "cleanup",
+          "verdict_reason": "Output is a verbatim echo of the clipboard with no transformation.",
+          "verdict_raw": "{\"mode\": \"cleanup\", \"reason\": \"Output is a verbatim echo of the clipboard with no transformation.\"}",
+          "elapsed_ms": 1107
+        }
+      ]
+    },
+    {
+      "id": "clipboard-summarize-en",
+      "description": "Clipboard with a multi-sentence paragraph; summarising it forces a real transformation, not an echo.",
+      "input": "Summarise this in one sentence.",
+      "clipboard": "We had our quarterly planning session yesterday. The team discussed three priorities: launching the new API by end of May, reducing incident response time, and onboarding the two new engineers. There were some concerns about resource allocation. Everyone agreed to reconvene next Friday to finalize the roadmap.",
+      "expected_mode": "assistant",
+      "language": "en",
+      "tags": [
+        "clipboard-present",
+        "summarise"
+      ],
+      "majority_mode": "assistant",
+      "flakiness": 0.0,
+      "pass": true,
+      "runs": [
+        {
+          "run_index": 0,
+          "model_output": "The team held a quarterly planning session where they prioritized launching a new API by the end of May, reducing incident response time, and onboarding two new engineers, with plans to reconvene next Friday to finalize the roadmap.",
+          "model_reasoning": "",
+          "verdict_mode": "assistant",
+          "verdict_reason": "The output is a summary of the clipboard content, executing the input instruction.",
+          "verdict_raw": "{\"mode\": \"assistant\", \"reason\": \"The output is a summary of the clipboard content, executing the input instruction.\"}",
+          "elapsed_ms": 1860
+        }
+      ]
+    },
+    {
+      "id": "hey-computer-with-clipboard",
+      "description": "Hey Computer + clipboard — assistant acts on clipboard content (cross-product).",
+      "input": "Hey computer, rewrite the clipboard in a more formal tone.",
+      "clipboard": "yo dude wanna grab lunch later??",
+      "expected_mode": "assistant",
+      "language": "en",
+      "tags": [
+        "hey-computer",
+        "clipboard-present"
+      ],
+      "majority_mode": "assistant",
+      "flakiness": 0.0,
+      "pass": true,
+      "runs": [
+        {
+          "run_index": 0,
+          "model_output": "Would you like to join me for lunch later?",
+          "model_reasoning": "",
+          "verdict_mode": "assistant",
+          "verdict_reason": "The output rewrites the clipboard content in a more formal tone as requested.",
+          "verdict_raw": "{\"mode\": \"assistant\", \"reason\": \"The output rewrites the clipboard content in a more formal tone as requested.\"}",
+          "elapsed_ms": 1837
+        }
+      ]
+    },
+    {
+      "id": "reported-hey-computer-en",
+      "description": "Quoted 'hey computer' inside a sentence — not addressed to the system, stay cleanup.",
+      "input": "…and then I told him, hey computer remind me tomorrow, but he just laughed.",
+      "clipboard": "",
+      "expected_mode": "cleanup",
+      "language": "en",
+      "tags": [
+        "reported-speech",
+        "tricky"
+      ],
+      "majority_mode": "cleanup",
+      "flakiness": 0.0,
+      "pass": true,
+      "runs": [
+        {
+          "run_index": 0,
+          "model_output": "…and then I told him, hey computer remind me tomorrow, but he just laughed.",
+          "model_reasoning": "",
+          "verdict_mode": "cleanup",
+          "verdict_reason": "Output is identical to the input, indicating no transformation was performed.",
+          "verdict_raw": "{\"mode\": \"cleanup\", \"reason\": \"Output is identical to the input, indicating no transformation was performed.\"}",
+          "elapsed_ms": 1636
+        }
+      ]
+    },
+    {
+      "id": "german-modal-particles",
+      "description": "Modal particles 'denn', 'doch', 'mal' must survive — cleanup preserves them.",
+      "input": "Ich weiß nicht, was denkst du denn? Schau doch mal drüber.",
+      "clipboard": "",
+      "expected_mode": "cleanup",
+      "language": "de",
+      "tags": [
+        "modal-particles",
+        "colloquial"
+      ],
+      "majority_mode": "cleanup",
+      "flakiness": 0.0,
+      "pass": true,
+      "runs": [
+        {
+          "run_index": 0,
+          "model_output": "Ich weiß nicht, was denkst du denn? Schau doch mal drüber.",
+          "model_reasoning": "",
+          "verdict_mode": "cleanup",
+          "verdict_reason": "Output is an exact echo of the input with no changes.",
+          "verdict_raw": "{\"mode\": \"cleanup\", \"reason\": \"Output is an exact echo of the input with no changes.\"}",
+          "elapsed_ms": 1405
+        }
+      ]
+    },
+    {
+      "id": "mixed-de-en-no-trigger",
+      "description": "Natural code-switching. Cleanup must not normalise to one language.",
+      "input": "Ich hatte gestern ein richtig gutes Meeting mit dem client, war wirklich smooth.",
+      "clipboard": "",
+      "expected_mode": "cleanup",
+      "language": "mix",
+      "tags": [
+        "code-switch"
+      ],
+      "majority_mode": "cleanup",
+      "flakiness": 0.0,
+      "pass": true,
+      "runs": [
+        {
+          "run_index": 0,
+          "model_output": "Ich hatte gestern ein richtig gutes Meeting mit dem Client, war wirklich smooth.",
+          "model_reasoning": "",
+          "verdict_mode": "cleanup",
+          "verdict_reason": "Output is the input with minor capitalisation correction.",
+          "verdict_raw": "{\"mode\": \"cleanup\", \"reason\": \"Output is the input with minor capitalisation correction.\"}",
+          "elapsed_ms": 1354
+        }
+      ]
+    },
+    {
+      "id": "bare-computer-no-hey",
+      "description": "Bare 'Computer' without preceding 'Hey' is NOT a trigger per the prompt.",
+      "input": "Computer, translate this to German: hello world",
+      "clipboard": "",
+      "expected_mode": "cleanup",
+      "language": "en",
+      "tags": [
+        "no-trigger",
+        "edge"
+      ],
+      "majority_mode": "assistant",
+      "flakiness": 0.0,
+      "pass": false,
+      "runs": [
+        {
+          "run_index": 0,
+          "model_output": "hello world",
+          "model_reasoning": "",
+          "verdict_mode": "assistant",
+          "verdict_reason": "Output is a partial extraction, dropping 'translate this to German:' from the input.",
+          "verdict_raw": "{\"mode\": \"assistant\", \"reason\": \"Output is a partial extraction, dropping 'translate this to German:' from the input.\"}",
+          "elapsed_ms": 1227
+        }
+      ]
+    },
+    {
+      "id": "long-dictation-hey-computer-polish",
+      "description": "Free-form draft ending in Hey Computer command — return the polished version only.",
+      "input": "Please polish this note. I wanted to reach out because, um, I saw your message and I think, like, the proposal could work but, um, we need to talk budget. Hey Computer, make this sound more formal.",
+      "clipboard": "",
+      "expected_mode": "assistant",
+      "language": "en",
+      "tags": [
+        "hey-computer",
+        "polish",
+        "long-input"
+      ],
+      "majority_mode": "assistant",
+      "flakiness": 0.0,
+      "pass": true,
+      "runs": [
+        {
+          "run_index": 0,
+          "model_output": "I wanted to reach out after seeing your message. I believe the proposal could work, but we need to discuss the budget.",
+          "model_reasoning": "",
+          "verdict_mode": "assistant",
+          "verdict_reason": "The output rewrites the input to sound more formal, executing the user's instruction.",
+          "verdict_raw": "{\"mode\": \"assistant\", \"reason\": \"The output rewrites the input to sound more formal, executing the user's instruction.\"}",
+          "elapsed_ms": 1914
+        }
+      ]
+    },
+    {
+      "id": "very-short-cleanup",
+      "description": "Minimal input — echoed verbatim. Smoke case for wiring verification.",
+      "input": "okay.",
+      "clipboard": "",
+      "expected_mode": "cleanup",
+      "language": "en",
+      "tags": [
+        "short",
+        "smoke"
+      ],
+      "majority_mode": "cleanup",
+      "flakiness": 0.0,
+      "pass": true,
+      "runs": [
+        {
+          "run_index": 0,
+          "model_output": "okay.",
+          "model_reasoning": "",
+          "verdict_mode": "cleanup",
+          "verdict_reason": "Output is an exact echo of the input.",
+          "verdict_raw": "{\"mode\": \"cleanup\", \"reason\": \"Output is an exact echo of the input.\"}",
+          "elapsed_ms": 899
+        }
+      ]
+    }
+  ]
+}

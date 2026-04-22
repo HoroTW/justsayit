@@ -684,11 +684,19 @@ class LLMPostprocessor:
             "model": self.profile.model,
             "messages": self._build_messages(text, extra_context),
             "temperature": self.profile.temperature,
-            "max_tokens": self.profile.max_tokens,
             "top_p": self.profile.top_p,
             "presence_penalty": self.profile.presence_penalty,
             "frequency_penalty": self.profile.frequency_penalty,
         }
+        # OpenAI reasoning models (o1/o3/o4/gpt-5.x …) renamed max_tokens
+        # to max_completion_tokens and 400 on the legacy name. Detect from
+        # the model string and send the field the server actually accepts.
+        # Other OpenAI-compatible servers (vLLM, Ollama, llama.cpp-server)
+        # keep the classic max_tokens, so the default stays the same.
+        if re.match(r"^(o[1-9]|gpt-[5-9])", self.profile.model or ""):
+            body["max_completion_tokens"] = self.profile.max_tokens
+        else:
+            body["max_tokens"] = self.profile.max_tokens
         if self.profile.chat_template_kwargs:
             # Forwarded to the server's template renderer. Supported by
             # Ollama, vLLM, SGLang, LM Studio, llama.cpp-server. OpenAI
