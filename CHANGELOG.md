@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Clipboard usage now automatically triggers assistant mode + improved
+  clipboard usage via system message clarification.
+
 ## [0.13.22] - 2026-04-22
 
 ### Fixed

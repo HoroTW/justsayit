@@ -484,7 +484,7 @@ def test_dynamic_context_prepended_before_system_prompt_and_user_context(monkeyp
         pp, "_dynamic_context", lambda: "Date: 2026-04-17\nTimezone: Europe/Berlin"
     )
 
-    prompt = pp._system_prompt()
+    prompt = pp._build_system_prompt()
 
     assert prompt == (
         "# STATE (DYNAMIC CONTEXT):\n"
@@ -505,7 +505,7 @@ def test_dynamic_context_empty_omits_state_block(monkeypatch):
     pp = LLMPostprocessor(profile, dynamic_context_script="~/dynamic-context.sh")
     monkeypatch.setattr(pp, "_dynamic_context", lambda: "")
 
-    assert pp._system_prompt() == "Base prompt."
+    assert pp._build_system_prompt() == "Base prompt."
 
 
 def test_append_to_system_prompt_adds_paragraph_after_base():
@@ -516,7 +516,7 @@ def test_append_to_system_prompt_adds_paragraph_after_base():
     )
     pp = LLMPostprocessor(profile)
 
-    assert pp._system_prompt() == "Base prompt.\n\nAlways reply in English."
+    assert pp._build_system_prompt() == "Base prompt.\n\nAlways reply in English."
 
 
 def test_append_to_system_prompt_works_without_base_prompt():
@@ -527,7 +527,7 @@ def test_append_to_system_prompt_works_without_base_prompt():
     )
     pp = LLMPostprocessor(profile)
 
-    assert pp._system_prompt() == "Only this."
+    assert pp._build_system_prompt() == "Only this."
 
 
 def test_append_to_system_prompt_sits_between_base_and_context():
@@ -539,7 +539,7 @@ def test_append_to_system_prompt_sits_between_base_and_context():
     )
     pp = LLMPostprocessor(profile)
 
-    assert pp._system_prompt() == (
+    assert pp._build_system_prompt() == (
         "Base prompt.\n\nAddition.\n\n# User context\nName: Alice"
     )
 
@@ -1424,7 +1424,7 @@ def test_remote_default_resolves_channel_free_prompt_via_file_reference():
         system_prompt_file="cleanup_openai.md",
     )
     pp = LLMPostprocessor(profile)
-    out = pp._system_prompt()
+    out = pp._build_system_prompt()
     assert out == _REMOTE_CLEANUP_SYSTEM_PROMPT.strip()
     # The remote prompt drops Gemma's `<|think|>` channel and explicitly
     # forbids the literal `No changes.` shortcut on both paths.
@@ -1448,7 +1448,7 @@ def test_remote_endpoint_keeps_user_overridden_prompt():
         system_prompt="Translate everything to pirate.",
     )
     pp = LLMPostprocessor(profile)
-    assert pp._system_prompt() == "Translate everything to pirate."
+    assert pp._build_system_prompt() == "Translate everything to pirate."
 
 
 def test_local_endpoint_keeps_default_prompt_with_channel_directives():
@@ -1457,7 +1457,7 @@ def test_local_endpoint_keeps_default_prompt_with_channel_directives():
     is paired with."""
     profile = PostprocessProfile()  # no endpoint → builtin base
     pp = LLMPostprocessor(profile)
-    assert pp._system_prompt() == _DEFAULT_SYSTEM_PROMPT.strip()
+    assert pp._build_system_prompt() == _DEFAULT_SYSTEM_PROMPT.strip()
 
 
 def test_ollama_gemma_combo_resolves_local_prompt_over_remote_backend(tmp_path):
@@ -1473,7 +1473,7 @@ def test_ollama_gemma_combo_resolves_local_prompt_over_remote_backend(tmp_path):
         system_prompt_file="cleanup_gemma.md",
     )
     pp = LLMPostprocessor(profile)
-    out = pp._system_prompt()
+    out = pp._build_system_prompt()
     # Got the Gemma channel prompt, not the channel-free one.
     assert "<|think|>" in out
     assert out == _DEFAULT_SYSTEM_PROMPT.strip()

@@ -622,7 +622,7 @@ class LLMPostprocessor:
                 self._llm = self._build()
                 self._install_chat_template_kwargs()
 
-    def _system_prompt(self, extra_context: str = "") -> str:
+    def _build_system_prompt(self, extra_context: str = "") -> str:
         # Inline ``system_prompt`` wins; otherwise resolve from the
         # ``system_prompt_file`` (the canonical mechanism — Gemma's
         # ``<|think|>`` prompt and the channel-free OpenAI variant are
@@ -644,17 +644,20 @@ class LLMPostprocessor:
             prompt = f"{prompt}\n\n# User context\n{ctx}"
         clip = extra_context.strip()
         if clip:
-            # Transient one-time context from the user (e.g. clipboard
-            # contents armed via the overlay button). Distinct section so
-            # the model can tell it apart from persistent user context.
-            prompt = f"{prompt}\n\n# Clipboard as additional context\n{clip}"
+            prompt = (f"{prompt}\n\n# The user explicitly provided you with its current clipboard content as additional context "
+                      f"(This always means you are in Assistant mode!)\n"
+                      f"As the system assistant, you have access to the current clipboard content and need to use it as " 
+                      f"additional context for processing the user's request. "
+                      f"## START clipboard content\n"
+                      f"{clip}\n"
+                      f"## END clipboard content\n")
         return prompt
 
     def _build_messages(
         self, text: str, extra_context: str = ""
     ) -> list[dict[str, str]]:
         messages = [
-            {"role": "system", "content": self._system_prompt(extra_context)},
+            {"role": "system", "content": self._build_system_prompt(extra_context)},
             {"role": "user", "content": self.profile.user_template.format(text=text)},
         ]
         log.info("assembled LLM system prompt:\n%s", messages[0]["content"])
