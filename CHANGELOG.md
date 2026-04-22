@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.29] - 2026-04-22
+
+### Changed
+
+- **Refactored `postprocess.py` into a package.** Split the 1 400-line
+  flat module into `postprocess/_profile.py` (profile loading, TOML
+  helpers, context sidecars), `postprocess/_models.py` (known GGUF
+  models, HuggingFace download), and `postprocess/_processor.py`
+  (`LLMPostprocessor`, shared `_http_post` retry loop). Public API
+  unchanged; all existing imports still work.
+- **Extracted boot helpers and CLI subcommands from `cli.py`.** Pre-GTK
+  re-exec logic moved to `_boot.py`; `init`, `download-models`, and
+  `setup-llm` subcommand functions moved to `_subcommands.py`.
+  `cli.py` shrinks by ~650 lines.
+
 ## [0.13.28] - 2026-04-22
 
 ### Added

@@ -23,7 +23,7 @@ reasoning_effort = "low"
 
 # Only add the web_search tool when the transcription matches this regex.
 # Keeps ~4k token tool-schema overhead out of plain cleanup calls.
-# responses_web_search_trigger = '[hH]?e[yi][,\.]?\s*[Cc]omput(er|a)'
+# responses_web_search_trigger = '\b[hH]?e[yi][,\.!?]?\s*[Cc]omput(er|a)\b'
 
 # Flat fee per web_search_call action (USD). $0.010 for all models.
 # web_search_price_per_call = 0.010
