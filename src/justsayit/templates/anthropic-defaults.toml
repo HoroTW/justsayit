@@ -1,0 +1,77 @@
+# justsayit postprocess: Anthropic Messages API backend defaults.
+#
+# These values populate the PostprocessProfile dataclass at runtime
+# when a user profile sets `base = "anthropic"`. Uses the native
+# Anthropic /v1/messages endpoint — NOT the OpenAI-compatible shim.
+#
+# Features not in the OpenAI-compatible path:
+#   - Prompt caching: static system prompt block gets cache_control so
+#     repeated calls only charge for the dynamic suffix.
+#   - Extended cache TTL beta: keeps the cache warm beyond the default
+#     5-minute ephemeral window.
+#   - Built-in web_search tool: opt in with `anthropic_web_search = true`.
+
+# --- Inference backend (Anthropic Messages API) --------------------------
+
+# Endpoint base URL (no trailing /messages — that's appended).
+endpoint = "https://api.anthropic.com/v1"
+
+# Model name. Examples: "claude-sonnet-4-6", "claude-haiku-4-5-20251001".
+model = ""
+
+# API key — three places, in priority order:
+#   1. `api_key` here (lowest friction; commit risk).
+#   2. The env var named by `api_key_env`.
+#   3. ~/.config/justsayit/.env (KEY=VALUE format).
+api_key = ""
+api_key_env = "ANTHROPIC_API_KEY"
+
+# HTTP timeout (seconds).
+request_timeout = 60.0
+
+# Retry transient HTTP / network failures.
+remote_retries = 3
+remote_retry_delay_seconds = 1.0
+
+# Anthropic API version header sent on every request.
+anthropic_version = "2023-06-01"
+
+# Include the built-in web_search_20250305 tool. When true, the model
+# can search the web when the transcription requests it (e.g. "Computer,
+# look up the current price of X"). False by default — no network calls
+# and no extra latency on plain cleanup requests.
+anthropic_web_search = false
+
+# Use the extended-cache-ttl beta header alongside prompt-caching.
+# Keeps the cached system-prompt block alive longer than the default
+# 5-minute ephemeral TTL. true by default (the beta is free and the
+# longer TTL only helps; there is no downside to enabling it).
+anthropic_extended_cache = true
+
+# --- Token pricing (USD per 1 million tokens) ----------------------------
+# 0.0 = don't log cost. When any price is non-zero, each call logs a
+# cost breakdown. Cache-read tokens are cheaper than fresh input tokens
+# and are subtracted from the total using cached_input_price_per_1m.
+input_price_per_1m = 0.0
+output_price_per_1m = 0.0
+cached_input_price_per_1m = 0.0
+
+# --- Cleanup tuning -------------------------------------------------------
+
+# Hard cap on generated tokens.
+max_tokens = 4096
+
+# User message template. {text} is replaced with the raw transcription.
+user_template = "{text}"
+
+# Regex (re.DOTALL) applied to the LLM output before paste, but NOT
+# before display in the overlay.
+paste_strip_regex = ""
+
+# --- System prompt --------------------------------------------------------
+
+# Channel-free variant — Claude doesn't emit Gemma-style channel markers.
+system_prompt_file = "cleanup_openai.md"
+system_prompt = ""
+append_to_system_prompt = ""
+context = ""

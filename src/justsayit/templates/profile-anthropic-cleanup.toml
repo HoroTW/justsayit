@@ -1,0 +1,62 @@
+# justsayit postprocess profile (commented-defaults form).
+#
+# Profile: anthropic-cleanup (native Anthropic Messages API backend).
+#
+# Uses /v1/messages directly — NOT the OpenAI-compatible shim — so you
+# get prompt caching (only the static system-prompt block is cached;
+# dynamic context and clipboard are sent uncached every call), the
+# extended-cache-ttl beta, and the optional built-in web_search tool.
+#
+# Prerequisites:
+#   - Set ANTHROPIC_API_KEY in your environment or ~/.config/justsayit/.env.
+#   - Pick a model: "claude-sonnet-4-6" (default), "claude-haiku-4-5-20251001".
+
+base = "anthropic"
+
+# Endpoint base URL (no trailing /messages).
+# endpoint = "https://api.anthropic.com/v1"
+
+# Model to use.
+model = "claude-sonnet-4-6"
+
+# --- Anthropic-specific options -------------------------------------------
+
+# Enable the built-in web search tool. When true, the model can search
+# the web for requests like "Computer, look up X".
+# anthropic_web_search = false
+
+# Use the extended-cache-ttl beta to keep the cached system-prompt block
+# alive beyond the default 5-minute ephemeral TTL.
+# anthropic_extended_cache = true
+
+# --- Pricing (USD / 1M tokens) — uncomment to log per-call cost ----------
+# claude-sonnet-4-6 pricing (2026-04):
+# input_price_per_1m = 3.00
+# output_price_per_1m = 15.00
+# cached_input_price_per_1m = 0.30
+
+# --- Common overrides (see anthropic-defaults.toml for full list) ---------
+
+# API key — env var or ~/.config/justsayit/.env is recommended over inline.
+# api_key = "sk-ant-..."
+# api_key_env = "ANTHROPIC_API_KEY"
+
+# HTTP timeout (seconds).
+# request_timeout = 60.0
+
+# Retry transient failures.
+# remote_retries = 3
+# remote_retry_delay_seconds = 1.0
+
+# Hard cap on generated tokens.
+# max_tokens = 4096
+
+# System prompt file (bare name resolves against src/justsayit/prompts/).
+# system_prompt_file = "cleanup_openai.md"
+
+# Extra text appended to the system prompt (joined with a blank line).
+# append_to_system_prompt = ""
+
+# User-context sidecar lives in ~/.config/justsayit/context.toml.
+# Override per-profile here if needed:
+# context = ""

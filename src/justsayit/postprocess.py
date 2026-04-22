@@ -62,6 +62,8 @@ def _load_template(name: str) -> str:
 _BASE_DEFAULTS: dict[str, dict[str, Any]] = {
     "builtin": tomllib.loads(_load_template("builtin-defaults.toml")),
     "remote": tomllib.loads(_load_template("remote-defaults.toml")),
+    "responses": tomllib.loads(_load_template("responses-defaults.toml")),
+    "anthropic": tomllib.loads(_load_template("anthropic-defaults.toml")),
 }
 
 
@@ -199,6 +201,35 @@ class PostprocessProfile:
     input_price_per_1m: float = 0.0
     output_price_per_1m: float = 0.0
     cached_input_price_per_1m: float = 0.0
+
+    # --- OpenAI Responses API backend (used when base = "responses") ------
+    # Prompt-cache retention hint. "24h" = keep the cached system-prompt
+    # prefix alive for 24 hours (free). "" = OpenAI default (~5–10 min).
+    prompt_cache_retention: str = "24h"
+    # When true, the built-in web_search tool is included so the model
+    # can search the web when the transcription requires it.
+    responses_web_search: bool = False
+    # If non-empty, web_search is only added to the request when the raw
+    # transcription matches this regex (re.search). This keeps the tool
+    # schema out of the request body — and out of the cached prefix — for
+    # plain cleanup calls that don't need it, saving ~4k tokens of overhead.
+    # When empty, the tool is included on every call (when responses_web_search
+    # is true).
+    responses_web_search_trigger: str = ""
+    # Flat fee per web_search_call action (USD). 0.0 = don't log search cost.
+    # All models: $0.010/call + search content tokens at model rate.
+    web_search_price_per_call: float = 0.0
+
+    # --- Anthropic native backend (used when base = "anthropic") ----------
+    # Sent as the ``anthropic-version`` request header.
+    anthropic_version: str = "2023-06-01"
+    # When true, the built-in web_search_20250305 tool is included so the
+    # model can search the web for requests that require it.
+    anthropic_web_search: bool = False
+    # When true, the extended-cache-ttl beta header is added alongside the
+    # prompt-caching beta, extending the cached system-prompt TTL beyond
+    # the default 5-minute ephemeral window.
+    anthropic_extended_cache: bool = True
 
     def __post_init__(self) -> None:
         # Auto-infer remote backend when endpoint is set and base wasn't
@@ -625,12 +656,53 @@ class LLMPostprocessor:
         """Eagerly load the local model so the first transcription is not
         slow.  No-op for the remote endpoint path — there is nothing to
         load locally and a probe request would cost real money / latency."""
-        if self.profile.base == "remote":
+        if self.profile.base in {"remote", "responses", "anthropic"}:
             return
         with self._lock:
             if self._llm is None:
                 self._llm = self._build()
                 self._install_chat_template_kwargs()
+
+    def _build_system_prompt_parts(self, extra_context: str = "") -> tuple[str, str]:
+        """Return ``(static, dynamic)`` parts of the system prompt.
+
+        *static*  — prompt file + ``append_to_system_prompt`` + user context.
+                    Stable across calls; safe to cache on the Anthropic path.
+        *dynamic* — ``dynamic-context.sh`` output + clipboard content.
+                    Changes every call; must not be cached.
+
+        Used by :meth:`_anthropic_process` to build separate system blocks.
+        The existing :meth:`_build_system_prompt` is unchanged for the
+        OpenAI-compatible and local paths.
+        """
+        prompt = self.profile.system_prompt.strip()
+        if not prompt and self.profile.system_prompt_file.strip():
+            prompt = _resolve_system_prompt_file(
+                self.profile.system_prompt_file
+            ).strip()
+        extra = self.profile.append_to_system_prompt.strip()
+        if extra:
+            prompt = f"{prompt}\n\n{extra}" if prompt else extra
+        ctx = self.profile.context.strip()
+        if ctx:
+            prompt = f"{prompt}\n\n# User context\n{ctx}"
+
+        dynamic_parts: list[str] = []
+        dynamic = self._dynamic_context()
+        if dynamic:
+            dynamic_parts.append(f"# STATE (DYNAMIC CONTEXT):\n{dynamic}")
+        clip = extra_context.strip()
+        if clip:
+            dynamic_parts.append(
+                "# The user explicitly provided you with its current clipboard content as additional context "
+                "(This always means you are in Assistant mode!)\n"
+                "As the system assistant, you have access to the current clipboard content and need to use it as "
+                "additional context for processing the user's request. "
+                "## START clipboard content\n"
+                f"{clip}\n"
+                "## END clipboard content\n"
+            )
+        return prompt, "\n\n".join(dynamic_parts)
 
     def _build_system_prompt(self, extra_context: str = "") -> str:
         # Inline ``system_prompt`` wins; otherwise resolve from the
@@ -678,24 +750,27 @@ class LLMPostprocessor:
         completion_tokens = int(usage.get("completion_tokens") or 0)
         details = usage.get("prompt_tokens_details") or {}
         cached_tokens = int(details.get("cached_tokens") or 0)
+        # Token summary: show "(N cached)" only when non-zero.
+        token_summary = f"{prompt_tokens} prompt"
+        if cached_tokens:
+            token_summary += f" ({cached_tokens} cached)"
+        token_summary += f" + {completion_tokens} completion = {prompt_tokens + completion_tokens} tokens"
         p = self.profile
         any_price = p.input_price_per_1m or p.output_price_per_1m or p.cached_input_price_per_1m
         if any_price:
-            input_cost = prompt_tokens / 1_000_000 * p.input_price_per_1m
-            output_cost = completion_tokens / 1_000_000 * p.output_price_per_1m
+            # Cached tokens are charged at cached_input_price_per_1m, not at
+            # the full input_price_per_1m. Only the non-cached portion pays
+            # the full input rate.
+            input_cost = (prompt_tokens - cached_tokens) / 1_000_000 * p.input_price_per_1m
             cached_cost = cached_tokens / 1_000_000 * p.cached_input_price_per_1m
-            total_cost = input_cost + output_cost - cached_cost
+            output_cost = completion_tokens / 1_000_000 * p.output_price_per_1m
+            total_cost = input_cost + cached_cost + output_cost
             log.info(
-                "LLM usage: %d prompt + %d completion = %d tokens | "
-                "cost $%.6f (input $%.6f, output $%.6f, cached $%.6f)",
-                prompt_tokens, completion_tokens, prompt_tokens + completion_tokens,
-                total_cost, input_cost, output_cost, cached_cost,
+                "LLM usage: %s | cost $%.6f (input $%.6f, cached $%.6f, output $%.6f)",
+                token_summary, total_cost, input_cost, cached_cost, output_cost,
             )
         else:
-            log.info(
-                "LLM usage: %d prompt + %d completion = %d tokens",
-                prompt_tokens, completion_tokens, prompt_tokens + completion_tokens,
-            )
+            log.info("LLM usage: %s", token_summary)
 
     def _remote_process(self, text: str, extra_context: str = "") -> ProcessResult:
         """OpenAI-compatible /chat/completions POST.  Pure stdlib (no
@@ -883,6 +958,287 @@ class LLMPostprocessor:
             text=resp["choices"][0]["message"]["content"].strip()
         )
 
+    def _responses_process(self, text: str, extra_context: str = "") -> ProcessResult:
+        """OpenAI Responses API POST (/v1/responses).
+
+        The static system prompt goes in ``instructions`` (cached prefix);
+        dynamic context and clipboard go in a developer message inside
+        ``input`` (uncached per-call). ``prompt_cache_retention = "24h"``
+        keeps the cached prefix alive for 24 hours at no extra charge.
+        """
+        api_key = resolve_secret(self.profile.api_key, self.profile.api_key_env)
+        if not api_key:
+            raise RuntimeError(
+                "LLM endpoint is set but no API key was found.\n"
+                f"  Set api_key in the profile, export {self.profile.api_key_env},\n"
+                "  or put it in ~/.config/justsayit/.env."
+            )
+        if not self.profile.model:
+            raise RuntimeError(
+                "Responses API backend: profile.model is empty — "
+                "set 'model' in the profile (e.g. \"gpt-5.4-mini\")."
+            )
+
+        static_prompt, dynamic_prompt = self._build_system_prompt_parts(extra_context)
+        log.info("assembled Responses API instructions (static/cached):\n%s", static_prompt)
+        if dynamic_prompt:
+            log.info(
+                "assembled Responses API dynamic context (uncached):\n%s", dynamic_prompt
+            )
+
+        user_text = self.profile.user_template.format(text=text)
+        if dynamic_prompt:
+            input_payload: Any = [
+                {
+                    "role": "developer",
+                    "content": [{"type": "input_text", "text": dynamic_prompt}],
+                },
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": user_text}],
+                },
+            ]
+        else:
+            input_payload = user_text
+
+        body: dict[str, Any] = {
+            "model": self.profile.model,
+            "instructions": static_prompt,
+            "input": input_payload,
+            "max_output_tokens": self.profile.max_tokens,
+        }
+        if self.profile.prompt_cache_retention:
+            body["prompt_cache_retention"] = self.profile.prompt_cache_retention
+        if self.profile.reasoning_effort:
+            body["reasoning"] = {"effort": self.profile.reasoning_effort}
+        if self.profile.responses_web_search:
+            trigger = self.profile.responses_web_search_trigger
+            if not trigger or re.search(trigger, text):
+                body["tools"] = [{"type": "web_search"}]
+
+        url = self.profile.endpoint.rstrip("/") + "/responses"
+        attempts = 1 + max(0, self.profile.remote_retries)
+        last_error: RuntimeError | None = None
+        for attempt in range(1, attempts + 1):
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(body).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {api_key}",
+                    "User-Agent": "justsayit",
+                },
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(
+                    req, timeout=self.profile.request_timeout
+                ) as resp:
+                    data = json.loads(resp.read())
+                break
+            except urllib.error.HTTPError as exc:
+                retryable = exc.code in {408, 409, 425, 429, 500, 502, 503, 504}
+                try:
+                    detail = exc.read().decode("utf-8", errors="replace")[:500]
+                except Exception:
+                    detail = ""
+                last_error = RuntimeError(
+                    f"LLM endpoint returned HTTP {exc.code}: {exc.reason}\n  {detail}"
+                )
+                if not retryable or attempt >= attempts:
+                    raise last_error from exc
+                log.warning(
+                    "Responses API request failed with HTTP %d; retrying %d/%d in %.1fs",
+                    exc.code, attempt, attempts - 1,
+                    self.profile.remote_retry_delay_seconds,
+                )
+            except (urllib.error.URLError, TimeoutError) as exc:
+                reason = getattr(exc, "reason", exc)
+                last_error = RuntimeError(f"LLM endpoint request failed: {reason}")
+                if attempt >= attempts:
+                    raise last_error from exc
+                log.warning(
+                    "Responses API request failed; retrying %d/%d in %.1fs: %s",
+                    attempt, attempts - 1,
+                    self.profile.remote_retry_delay_seconds, reason,
+                )
+            time.sleep(max(0.0, self.profile.remote_retry_delay_seconds))
+        else:
+            assert last_error is not None
+            raise last_error
+
+        # Collect text from message output items; count web_search_call items
+        # (each completed search action is one billed call).
+        output_items = data.get("output") or []
+        text_parts = []
+        search_count = 0
+        for item in output_items:
+            if item.get("type") == "web_search_call" and item.get("status") == "completed":
+                search_count += 1
+            elif item.get("type") == "message":
+                for block in item.get("content") or []:
+                    if block.get("type") == "output_text":
+                        text_parts.append(block.get("text", ""))
+        content = " ".join(text_parts).strip()
+        if search_count:
+            search_cost = search_count * self.profile.web_search_price_per_call
+            if search_cost:
+                log.info(
+                    "web search: %d call(s) × $%.4f = $%.4f "
+                    "(token cost for search results included in LLM usage below)",
+                    search_count, self.profile.web_search_price_per_call, search_cost,
+                )
+            else:
+                log.info(
+                    "web search: %d call(s) "
+                    "(set web_search_price_per_call in profile to log cost)",
+                    search_count,
+                )
+
+        # Normalize Responses API usage to the shape _log_usage expects.
+        raw = data.get("usage") or {}
+        cache_details = (
+            raw.get("prompt_tokens_details")
+            or raw.get("input_tokens_details")
+            or {}
+        )
+        self._log_usage({
+            "prompt_tokens": int(raw.get("input_tokens") or 0),
+            "completion_tokens": int(raw.get("output_tokens") or 0),
+            "prompt_tokens_details": {
+                "cached_tokens": int(cache_details.get("cached_tokens") or 0)
+            },
+        })
+        return ProcessResult(text=content)
+
+    def _anthropic_process(self, text: str, extra_context: str = "") -> ProcessResult:
+        """Native Anthropic /v1/messages POST with prompt caching.
+
+        The static part of the system prompt (prompt file + append +
+        user context) is sent as a cached block; the dynamic part
+        (dynamic-context.sh output + clipboard) is sent uncached so the
+        cache point stays stable across calls.
+        """
+        api_key = resolve_secret(self.profile.api_key, self.profile.api_key_env)
+        if not api_key:
+            raise RuntimeError(
+                "Anthropic API key not found.\n"
+                f"  Set api_key in the profile, export {self.profile.api_key_env},\n"
+                "  or put it in ~/.config/justsayit/.env."
+            )
+        if not self.profile.model:
+            raise RuntimeError(
+                "Anthropic backend: profile.model is empty — "
+                "set 'model' in the profile (e.g. \"claude-sonnet-4-6\")."
+            )
+
+        static_prompt, dynamic_prompt = self._build_system_prompt_parts(extra_context)
+        log.info("assembled Anthropic system prompt (static/cached):\n%s", static_prompt)
+        if dynamic_prompt:
+            log.info("assembled Anthropic system prompt (dynamic/uncached):\n%s", dynamic_prompt)
+
+        system_blocks: list[dict[str, Any]] = []
+        if static_prompt:
+            system_blocks.append({
+                "type": "text",
+                "text": static_prompt,
+                "cache_control": {"type": "ephemeral"},
+            })
+        if dynamic_prompt:
+            system_blocks.append({"type": "text", "text": dynamic_prompt})
+
+        body: dict[str, Any] = {
+            "model": self.profile.model,
+            "max_tokens": self.profile.max_tokens,
+            "messages": [
+                {"role": "user", "content": self.profile.user_template.format(text=text)}
+            ],
+        }
+        if system_blocks:
+            body["system"] = system_blocks
+        if self.profile.anthropic_web_search:
+            body["tools"] = [{"type": "web_search_20250305", "name": "web_search"}]
+
+        betas = ["prompt-caching-2024-07-31"]
+        if self.profile.anthropic_extended_cache:
+            betas.append("extended-cache-ttl-2025-02-19")
+
+        url = self.profile.endpoint.rstrip("/") + "/messages"
+        attempts = 1 + max(0, self.profile.remote_retries)
+        last_error: RuntimeError | None = None
+        for attempt in range(1, attempts + 1):
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(body).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "x-api-key": api_key,
+                    "anthropic-version": self.profile.anthropic_version,
+                    "anthropic-beta": ",".join(betas),
+                    "User-Agent": "justsayit",
+                },
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(
+                    req, timeout=self.profile.request_timeout
+                ) as resp:
+                    data = json.loads(resp.read())
+                break
+            except urllib.error.HTTPError as exc:
+                retryable = exc.code in {408, 409, 425, 429, 500, 502, 503, 504}
+                try:
+                    detail = exc.read().decode("utf-8", errors="replace")[:500]
+                except Exception:
+                    detail = ""
+                last_error = RuntimeError(
+                    f"Anthropic endpoint returned HTTP {exc.code}: {exc.reason}\n  {detail}"
+                )
+                if not retryable or attempt >= attempts:
+                    raise last_error from exc
+                log.warning(
+                    "Anthropic request failed with HTTP %d; retrying %d/%d in %.1fs",
+                    exc.code, attempt, attempts - 1,
+                    self.profile.remote_retry_delay_seconds,
+                )
+            except (urllib.error.URLError, TimeoutError) as exc:
+                reason = getattr(exc, "reason", exc)
+                last_error = RuntimeError(f"Anthropic request failed: {reason}")
+                if attempt >= attempts:
+                    raise last_error from exc
+                log.warning(
+                    "Anthropic request failed; retrying %d/%d in %.1fs: %s",
+                    attempt, attempts - 1,
+                    self.profile.remote_retry_delay_seconds, reason,
+                )
+            time.sleep(max(0.0, self.profile.remote_retry_delay_seconds))
+        else:
+            assert last_error is not None
+            raise last_error
+
+        # Collect text blocks; ignore tool_use / tool_result blocks from
+        # web search (the final answer always comes in a text block).
+        content_blocks = data.get("content") or []
+        content = " ".join(
+            b.get("text", "") for b in content_blocks if b.get("type") == "text"
+        ).strip()
+
+        # Normalize Anthropic usage fields to the shape _log_usage expects.
+        raw = data.get("usage") or {}
+        cache_read = int(raw.get("cache_read_input_tokens") or 0)
+        cache_write = int(raw.get("cache_creation_input_tokens") or 0)
+        if cache_read or cache_write:
+            log.info(
+                "Anthropic cache: %d tokens read from cache, %d tokens written to cache",
+                cache_read, cache_write,
+            )
+        self._log_usage({
+            "prompt_tokens": int(raw.get("input_tokens") or 0) + cache_write,
+            "completion_tokens": int(raw.get("output_tokens") or 0),
+            "prompt_tokens_details": {"cached_tokens": cache_read},
+        })
+        return ProcessResult(text=content)
+
     def process_with_reasoning(
         self, text: str, *, extra_context: str = ""
     ) -> ProcessResult:
@@ -905,6 +1261,10 @@ class LLMPostprocessor:
         """
         if self.profile.base == "remote":
             result = self._remote_process(text, extra_context)
+        elif self.profile.base == "responses":
+            result = self._responses_process(text, extra_context)
+        elif self.profile.base == "anthropic":
+            result = self._anthropic_process(text, extra_context)
         else:
             result = self._local_process(text, extra_context)
         if not result.text:

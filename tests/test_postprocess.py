@@ -1802,7 +1802,7 @@ def test_log_usage_cached_tokens_subtracted(monkeypatch, caplog):
         ).process("hi")
     msgs = [r.message for r in caplog.records if "LLM usage" in r.message]
     assert len(msgs) == 1
-    # input $0.15 - cached $0.075 = total $0.075
+    # 0 non-cached × 0.15 + 1M cached × 0.075 = $0.075
     assert "cost $0.075000" in msgs[0]
     assert "cached $0.075000" in msgs[0]
 
