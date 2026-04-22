@@ -189,6 +189,11 @@ class PostprocessProfile:
     request_timeout: float = 60.0
     remote_retries: int = 3
     remote_retry_delay_seconds: float = 1.0
+    # OpenAI reasoning models (o1/o3/o4-mini/gpt-5.x) accept an
+    # optional ``reasoning_effort`` ("low" | "medium" | "high"). Empty
+    # string = don't send the field, so requests to non-reasoning
+    # models (gpt-4o-mini, …) or other providers stay clean.
+    reasoning_effort: str = ""
 
     def __post_init__(self) -> None:
         # Auto-infer remote backend when endpoint is set and base wasn't
@@ -680,23 +685,34 @@ class LLMPostprocessor:
                 "set 'model' in the profile (e.g. \"gpt-4o-mini\")."
             )
         url = self.profile.endpoint.rstrip("/") + "/chat/completions"
+        # OpenAI reasoning models (o1/o3/o4/gpt-5.x …) reject most of the
+        # classic sampling knobs with HTTP 400 — only the defaults are
+        # allowed — and renamed ``max_tokens`` → ``max_completion_tokens``.
+        # Detect from the model name and build a minimal body for them.
+        # Non-reasoning models (and non-OpenAI servers that use the
+        # OpenAI schema) keep the full knob set.
+        is_reasoning = bool(
+            re.match(r"^(o[1-9]|gpt-[5-9])", self.profile.model or "")
+        )
         body: dict[str, Any] = {
             "model": self.profile.model,
             "messages": self._build_messages(text, extra_context),
-            "temperature": self.profile.temperature,
-            "top_p": self.profile.top_p,
-            "presence_penalty": self.profile.presence_penalty,
-            "frequency_penalty": self.profile.frequency_penalty,
         }
-        # OpenAI reasoning models (o1/o3/o4/gpt-5.x …) renamed max_tokens
-        # to max_completion_tokens and 400 on the legacy name. Detect from
-        # the model string and send the field the server actually accepts.
-        # Other OpenAI-compatible servers (vLLM, Ollama, llama.cpp-server)
-        # keep the classic max_tokens, so the default stays the same.
-        if re.match(r"^(o[1-9]|gpt-[5-9])", self.profile.model or ""):
+        if is_reasoning:
             body["max_completion_tokens"] = self.profile.max_tokens
+            if self.profile.reasoning_effort:
+                body["reasoning_effort"] = self.profile.reasoning_effort
         else:
             body["max_tokens"] = self.profile.max_tokens
+            body["temperature"] = self.profile.temperature
+            body["top_p"] = self.profile.top_p
+            body["presence_penalty"] = self.profile.presence_penalty
+            body["frequency_penalty"] = self.profile.frequency_penalty
+            if self.profile.reasoning_effort:
+                # Non-reasoning models won't use it, but some OpenAI-
+                # compatible servers (vLLM, llama.cpp-server) accept and
+                # forward it — let the profile opt in explicitly.
+                body["reasoning_effort"] = self.profile.reasoning_effort
         if self.profile.chat_template_kwargs:
             # Forwarded to the server's template renderer. Supported by
             # Ollama, vLLM, SGLang, LM Studio, llama.cpp-server. OpenAI

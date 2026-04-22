@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.26] - 2026-04-22
+
+### Added
+
+- `reasoning_effort` field on `PostprocessProfile` (default: `""` =
+  not sent). Forwarded to the remote endpoint when non-empty so users
+  can opt a profile into an OpenAI reasoning model
+  (`gpt-5.x`, `o1`/`o3`/`o4-mini`, …) with `reasoning_effort =
+  "medium"`. Empty string stays compatible with non-reasoning models
+  and non-OpenAI servers.
+- `evals/IMPROVING.md` — pick-up doc for future prompt-iteration
+  sessions: the target-only → edit → judge loop, the landmines this
+  project has already walked onto (lenient judge, token leakage,
+  self-agreement bias, reasoning-model param rejection, clipboard
+  forcing assistant mode, small-N uncertainty), and a kick-off prompt
+  template. Use this when coming back after time away.
+
+### Fixed
+
+- `postprocess.py` remote path now builds a minimal body for OpenAI
+  reasoning models — reasoning models 400 on `temperature` != 1,
+  `top_p`, `presence_penalty`, `frequency_penalty` in addition to
+  the already-handled `max_tokens` → `max_completion_tokens` rename.
+  Detection stays by model-name prefix (`o[1-9]` / `gpt-[5-9]`).
+  Fixes "Unsupported parameter" 400s when pointing any profile at a
+  reasoning model; eval suite scores 100% on gpt-5.4-mini +
+  `reasoning_effort = "medium"` with the current cleanup prompt.
+
 ## [0.13.25] - 2026-04-22
 
 ### Changed
