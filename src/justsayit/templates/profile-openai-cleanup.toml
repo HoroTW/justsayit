@@ -50,6 +50,13 @@ reasoning_effort = "low"
 # api_key = "sk-..."
 # api_key_env = "OPENAI_API_KEY"
 
+# Token pricing (USD per 1 million tokens). 0.0 = don't log cost.
+# Uncomment + fill in the prices for your model to see per-call cost
+# in the log. gpt-5.4-mini (2026-04 pricing) as an example:
+# input_price_per_1m = 0.75
+# output_price_per_1m = 4.50
+# cached_input_price_per_1m = 0.075
+
 # HTTP timeout (seconds) for the chat-completions request.
 # request_timeout = 60.0
 

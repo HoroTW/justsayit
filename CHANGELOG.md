@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.28] - 2026-04-22
+
+### Added
+
+- **Token-usage logging after every remote LLM call.** Each call now
+  emits an `INFO` log line with prompt + completion token counts.
+- **Optional per-call cost logging.** Set `input_price_per_1m`,
+  `output_price_per_1m`, and/or `cached_input_price_per_1m` (USD per
+  1 million tokens) in any remote profile to get a cost breakdown
+  alongside the token counts. All three default to `0.0` (no cost
+  logged). Cached tokens (`prompt_tokens_details.cached_tokens`) are
+  subtracted from the total. Example prices for `gpt-5.4-mini` are
+  included as comments in the shipped `openai-cleanup` profile.
+
 ## [0.13.27] - 2026-04-22
 
 ### Changed

@@ -194,6 +194,11 @@ class PostprocessProfile:
     # string = don't send the field, so requests to non-reasoning
     # models (gpt-4o-mini, …) or other providers stay clean.
     reasoning_effort: str = ""
+    # Token pricing (per 1 million tokens). 0.0 means "don't log cost".
+    # Only the cost breakdown is suppressed — token counts are always logged.
+    input_price_per_1m: float = 0.0
+    output_price_per_1m: float = 0.0
+    cached_input_price_per_1m: float = 0.0
 
     def __post_init__(self) -> None:
         # Auto-infer remote backend when endpoint is set and base wasn't
@@ -668,6 +673,30 @@ class LLMPostprocessor:
         log.info("assembled LLM system prompt:\n%s", messages[0]["content"])
         return messages
 
+    def _log_usage(self, usage: dict) -> None:
+        prompt_tokens = int(usage.get("prompt_tokens") or 0)
+        completion_tokens = int(usage.get("completion_tokens") or 0)
+        details = usage.get("prompt_tokens_details") or {}
+        cached_tokens = int(details.get("cached_tokens") or 0)
+        p = self.profile
+        any_price = p.input_price_per_1m or p.output_price_per_1m or p.cached_input_price_per_1m
+        if any_price:
+            input_cost = prompt_tokens / 1_000_000 * p.input_price_per_1m
+            output_cost = completion_tokens / 1_000_000 * p.output_price_per_1m
+            cached_cost = cached_tokens / 1_000_000 * p.cached_input_price_per_1m
+            total_cost = input_cost + output_cost - cached_cost
+            log.info(
+                "LLM usage: %d prompt + %d completion = %d tokens | "
+                "cost $%.6f (input $%.6f, output $%.6f, cached $%.6f)",
+                prompt_tokens, completion_tokens, prompt_tokens + completion_tokens,
+                total_cost, input_cost, output_cost, cached_cost,
+            )
+        else:
+            log.info(
+                "LLM usage: %d prompt + %d completion = %d tokens",
+                prompt_tokens, completion_tokens, prompt_tokens + completion_tokens,
+            )
+
     def _remote_process(self, text: str, extra_context: str = "") -> ProcessResult:
         """OpenAI-compatible /chat/completions POST.  Pure stdlib (no
         ``openai`` dep) — same response shape as ``llama_cpp`` so the
@@ -792,6 +821,7 @@ class LLMPostprocessor:
             reasoning = reasoning.strip()
         else:
             reasoning = ""
+        self._log_usage(data.get("usage") or {})
         return ProcessResult(text=content, reasoning=reasoning)
 
     def _install_chat_template_kwargs(self) -> None:

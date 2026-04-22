@@ -1734,3 +1734,102 @@ def test_process_with_reasoning_handles_non_string_reasoning(monkeypatch):
     result = _remote_pp().process_with_reasoning("in")
     assert result.text == "ok"
     assert result.reasoning == ""
+
+
+# ---------------------------------------------------------------------------
+# Token-usage / cost logging
+# ---------------------------------------------------------------------------
+
+
+def _pp_with_prices(**prices) -> LLMPostprocessor:
+    return LLMPostprocessor(
+        PostprocessProfile(
+            endpoint="https://api.example.com/v1",
+            model="gpt-5.4-mini",
+            api_key="sk",
+            **prices,
+        )
+    )
+
+
+def _usage_response(prompt=100, completion=50, cached=0) -> dict:
+    details = {}
+    if cached:
+        details["cached_tokens"] = cached
+    usage = {"prompt_tokens": prompt, "completion_tokens": completion, "total_tokens": prompt + completion}
+    if details:
+        usage["prompt_tokens_details"] = details
+    return {
+        "choices": [{"message": {"content": "ok"}}],
+        "usage": usage,
+    }
+
+
+def test_log_usage_tokens_only_when_no_prices(monkeypatch, caplog):
+    import logging
+    _fake_remote_response(monkeypatch, _usage_response(prompt=200, completion=80))
+    with caplog.at_level(logging.INFO, logger="justsayit.postprocess"):
+        _pp_with_prices().process("hi")
+    msgs = [r.message for r in caplog.records if "LLM usage" in r.message]
+    assert len(msgs) == 1
+    assert "200 prompt + 80 completion = 280 tokens" in msgs[0]
+    assert "$" not in msgs[0]
+
+
+def test_log_usage_with_cost_when_prices_set(monkeypatch, caplog):
+    import logging
+    _fake_remote_response(monkeypatch, _usage_response(prompt=1_000_000, completion=500_000))
+    with caplog.at_level(logging.INFO, logger="justsayit.postprocess"):
+        _pp_with_prices(
+            input_price_per_1m=0.15,
+            output_price_per_1m=0.60,
+        ).process("hi")
+    msgs = [r.message for r in caplog.records if "LLM usage" in r.message]
+    assert len(msgs) == 1
+    # 1M input × 0.15 + 0.5M output × 0.60 = 0.15 + 0.30 = $0.45
+    assert "cost $0.450000" in msgs[0]
+    assert "input $0.150000" in msgs[0]
+    assert "output $0.300000" in msgs[0]
+
+
+def test_log_usage_cached_tokens_subtracted(monkeypatch, caplog):
+    import logging
+    _fake_remote_response(monkeypatch, _usage_response(prompt=1_000_000, completion=0, cached=1_000_000))
+    with caplog.at_level(logging.INFO, logger="justsayit.postprocess"):
+        _pp_with_prices(
+            input_price_per_1m=0.15,
+            cached_input_price_per_1m=0.075,
+        ).process("hi")
+    msgs = [r.message for r in caplog.records if "LLM usage" in r.message]
+    assert len(msgs) == 1
+    # input $0.15 - cached $0.075 = total $0.075
+    assert "cost $0.075000" in msgs[0]
+    assert "cached $0.075000" in msgs[0]
+
+
+def test_log_usage_no_crash_when_usage_absent(monkeypatch, caplog):
+    import logging
+    _fake_remote_response(monkeypatch, {"choices": [{"message": {"content": "ok"}}]})
+    with caplog.at_level(logging.INFO, logger="justsayit.postprocess"):
+        _pp_with_prices(input_price_per_1m=0.15).process("hi")
+    msgs = [r.message for r in caplog.records if "LLM usage" in r.message]
+    assert len(msgs) == 1
+    assert "0 prompt + 0 completion = 0 tokens" in msgs[0]
+
+
+def test_pricing_fields_load_from_toml(tmp_path):
+    toml_content = """
+base = "remote"
+endpoint = "https://api.example.com/v1"
+model = "gpt-5.4-mini"
+api_key = "sk"
+input_price_per_1m = 0.15
+output_price_per_1m = 0.60
+cached_input_price_per_1m = 0.075
+"""
+    profile_file = tmp_path / "test.toml"
+    profile_file.write_text(toml_content)
+    profile = load_profile(str(profile_file))
+    assert profile.input_price_per_1m == 0.15
+    assert profile.output_price_per_1m == 0.60
+    assert profile.cached_input_price_per_1m == 0.075

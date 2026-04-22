@@ -35,6 +35,14 @@ request_timeout = 60.0
 remote_retries = 3
 remote_retry_delay_seconds = 1.0
 
+# Token pricing (USD per 1 million tokens). 0.0 = don't log cost.
+# When any price is non-zero, each call logs a cost breakdown alongside
+# the token counts. Cached-input cost is subtracted from the total
+# (prompt_tokens_details.cached_tokens × cached_input_price_per_1m).
+input_price_per_1m = 0.0
+output_price_per_1m = 0.0
+cached_input_price_per_1m = 0.0
+
 # --- Cleanup tuning -----------------------------------------------------
 
 # Temperature. Keep very low (≤ 0.1) for deterministic cleanup.
