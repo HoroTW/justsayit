@@ -94,7 +94,13 @@ if you don't read this list first.
 | target | prompt | honest overall | cleanup | assistant |
 |---|---|---|---|---|
 | gpt-4o-mini | current `Hey`-only | 84.2% | 10/12 | 6/7 |
+| gpt-5.4-nano (reasoning medium) | same | 94.7% | 12/12 | 6/7 (flaky) |
 | gpt-5.4-mini (reasoning medium) | same | **100.0%** | 12/12 | 7/7 |
+
+`gpt-5.4-nano` target-only probe showed `clipboard-translate-de` is
+2/3 correct, 1/3 echoed — single-run eval rolls the failure side
+sometimes. Honest nano score is between 94.7% and 100% depending on
+sampling; use `--runs 3+` when comparing nano vs mini more carefully.
 
 ## Kick-off prompt for a new iteration
 
