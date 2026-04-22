@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.27] - 2026-04-22
+
+### Changed
+
+- **Shipped `openai-cleanup` profile now defaults to `gpt-5.4-mini`
+  with `reasoning_effort = "low"`** (was: `gpt-4o-mini`, no reasoning).
+  Measured on the eval suite against the current `cleanup_openai.md`
+  prompt:
+  - accuracy: 84.2% → 100.0% (all cleanup + all assistant cases)
+  - median latency: 754 ms → 781 ms (+27 ms, negligible)
+  - p90 latency: 1259 ms → 992 ms (**−267 ms** — reasoning models
+    are tail-consistent)
+  Cost per call is higher (reasoning-model token pricing). For
+  cost-sensitive or high-volume use the profile still ships a
+  clearly-marked fallback: swap `model = "gpt-4o-mini"` back in and
+  delete the `reasoning_effort` line and it reverts to the old
+  defaults. All commented-out sampling knobs now carry a note that
+  reasoning models reject them — the HTTP layer auto-strips those
+  fields by model-name prefix (`o[1-9]` / `gpt-[5-9]`), so they
+  quietly no-op on the new default without needing user action.
+- Comments in the profile template call out the trade-off and the
+  fallback path so anyone running `install.sh --update` (which
+  diffs against `justsayit show-defaults config`) sees what
+  changed and why.
+
 ## [0.13.26] - 2026-04-22
 
 ### Added

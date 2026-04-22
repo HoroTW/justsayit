@@ -158,7 +158,8 @@ def test_openai_profile_template_has_base_endpoint_and_model_uncommented(
     # Defining keys live as bare assignments at the top of the file.
     assert '\nbase = "remote"' in text
     assert '\nendpoint = "https://api.openai.com/v1"' in text
-    assert '\nmodel = "gpt-4o-mini"' in text
+    assert '\nmodel = "gpt-5.4-mini"' in text
+    assert '\nreasoning_effort = "low"' in text
     assert "# remote_retries = 3" in text
     assert "# remote_retry_delay_seconds = 1.0" in text
     # No embedded system prompt block — `system_prompt_file` is the
@@ -168,7 +169,8 @@ def test_openai_profile_template_has_base_endpoint_and_model_uncommented(
     profile = load_profile("openai-cleanup")
     assert profile.base == "remote"
     assert profile.endpoint == "https://api.openai.com/v1"
-    assert profile.model == "gpt-4o-mini"
+    assert profile.model == "gpt-5.4-mini"
+    assert profile.reasoning_effort == "low"
     assert profile.api_key == ""  # falls through to env / .env
     # System prompt: file reference picked up from remote-defaults.toml.
     assert profile.system_prompt_file == "cleanup_openai.md"

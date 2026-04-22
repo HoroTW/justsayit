@@ -23,8 +23,21 @@ base = "remote"
 # Endpoint base URL (no trailing /chat/completions — that's appended).
 endpoint = "https://api.openai.com/v1"
 
-# Model name. Pick whatever your provider supports.
-model = "gpt-4o-mini"
+# Model name. Default is gpt-5.4-mini with reasoning_effort=low — eval
+# harness shows 100% accuracy on the 19-case suite at ~780 ms median
+# (vs ~84% / ~750 ms for gpt-4o-mini). The reasoning pass is what
+# makes `Computer, translate this to German: …` echo verbatim instead
+# of being half-translated. If you want the cheaper / non-reasoning
+# path (e.g. cost concerns on high volume), swap in "gpt-4o-mini" and
+# delete the `reasoning_effort = "low"` line below.
+model = "gpt-5.4-mini"
+
+# Opt this profile into the reasoning pass. Accepted values on OpenAI
+# reasoning models (o-series, gpt-5.x): "low" / "medium" / "high".
+# Empty string = don't send the field — required for non-reasoning
+# models and most non-OpenAI OpenAI-compatible servers, which 400 on
+# it. "low" is the measured sweet spot for this workload.
+reasoning_effort = "low"
 
 # --- Override any remote-defaults.toml value below ---------------------
 # (Reference for the full list of overridable keys lives in the
@@ -45,6 +58,12 @@ model = "gpt-4o-mini"
 # remote_retry_delay_seconds = 1.0
 
 # Cleanup tuning. Raise temperature for more creative output.
+# NOTE: OpenAI reasoning models (the default gpt-5.4-mini and any
+# o-series / gpt-5+ name) reject temperature != 1, top_p, penalties,
+# and require max_completion_tokens instead of max_tokens. The app
+# auto-strips those fields by model-name prefix — these lines only
+# take effect if you swap `model` back to a non-reasoning model
+# (e.g. gpt-4o-mini).
 # temperature = 0.08
 # max_tokens = 4096
 
@@ -52,6 +71,7 @@ model = "gpt-4o-mini"
 # are forwarded over HTTP (universal OpenAI schema); `top_k`, `min_p`,
 # `repeat_penalty` are llama.cpp-specific and runtime-only. Raise
 # `presence_penalty` (e.g. 1.5) if a self-hosted small model loops.
+# Ignored on reasoning models (see note above).
 # top_p = 0.95
 # top_k = 40
 # min_p = 0.05

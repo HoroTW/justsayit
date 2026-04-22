@@ -26,7 +26,8 @@ def test_show_defaults_profile_openai_prints_shipped_openai_profile(capsys):
     out = capsys.readouterr().out
     assert "# Profile: openai-cleanup" in out
     assert 'endpoint = "https://api.openai.com/v1"' in out
-    assert 'model = "gpt-4o-mini"' in out
+    assert 'model = "gpt-5.4-mini"' in out
+    assert 'reasoning_effort = "low"' in out
     assert "# remote_retries = 3" in out
     assert "# remote_retry_delay_seconds = 1.0" in out
 
