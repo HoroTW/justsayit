@@ -1,0 +1,196 @@
+# Curated cases for scripts/eval-cleanup-prompt.py.
+#
+# Each [[case]] drives one target + one judge call. No case here is a
+# 1:1 copy of any example in src/justsayit/prompts/cleanup_openai.md —
+# the harness tests whether the rules *generalize*, not whether the
+# model memorized examples.
+#
+# Fields:
+#   id             — stable short slug (used in reports and --only)
+#   description    — one-line human note on why this case is here
+#   input          — raw dictation passed as the user message
+#   clipboard      — optional; when non-empty, injected as extra_context
+#                    (identical to the overlay 📋 button / CLI
+#                    --use-clipboard path)
+#   expected_mode  — "cleanup" | "assistant"
+#   language       — free-form tag (e.g. "de", "en", "mix")
+#   tags           — list of tags for filtering via --tag
+
+schema_version = 1
+
+
+# ── Filler, punctuation, mishear → cleanup ──────────────────────────────
+
+[[case]]
+id = "filler-ahm-de"
+description = "Plain filler removal, German — 'ähm' is canonical filler."
+input = "Ich wollte ähm nur kurz Bescheid sagen."
+expected_mode = "cleanup"
+language = "de"
+tags = ["filler"]
+
+[[case]]
+id = "spoken-punctuation-en"
+description = "Spoken 'comma' / 'new line' become characters without triggering assistant mode."
+input = "Hello comma new line greetings"
+expected_mode = "cleanup"
+language = "en"
+tags = ["punctuation"]
+
+[[case]]
+id = "stt-mishear-en"
+description = "Likely STT mishear — 'there' vs 'their'. Prompt allows STT fixes; still cleanup."
+input = "Please send they're report before noon."
+expected_mode = "cleanup"
+language = "en"
+tags = ["stt-fix"]
+
+
+# ── Regression family: bare question, no 'Computer', no clipboard → cleanup ──
+
+[[case]]
+id = "bare-clipboard-question"
+description = "User's original bug: asks about clipboard, none provided, no 'Computer'. Must echo verbatim."
+input = "Can you see the content of my current clipboard?"
+clipboard = ""
+expected_mode = "cleanup"
+language = "en"
+tags = ["bare-question", "no-trigger", "regression"]
+
+[[case]]
+id = "bare-question-time-de"
+description = "Bare German question, no trigger. Prompt calls this out explicitly — still a model failure mode."
+input = "Wie viel Uhr ist es gerade?"
+expected_mode = "cleanup"
+language = "de"
+tags = ["bare-question", "no-trigger"]
+
+[[case]]
+id = "bare-question-capital-en"
+description = "Bare factual question, no trigger. Trivially answerable but must stay cleanup."
+input = "What is the capital of France?"
+expected_mode = "cleanup"
+language = "en"
+tags = ["bare-question", "no-trigger"]
+
+[[case]]
+id = "bare-request-translate-en"
+description = "Imperative phrasing (Translate this …) but no 'Computer' — must echo verbatim, NOT translate."
+input = "Translate this to German: hello world"
+expected_mode = "cleanup"
+language = "en"
+tags = ["no-trigger", "would-be-translation"]
+
+
+# ── Explicit Hey Computer → assistant ───────────────────────────────────
+
+[[case]]
+id = "hey-computer-translate-de"
+description = "Explicit trigger + translate request — assistant returns the translation only."
+input = "Hey computer, translate this to German: hello world"
+expected_mode = "assistant"
+language = "en"
+tags = ["hey-computer", "translate"]
+
+[[case]]
+id = "hey-computer-capital-fr"
+description = "Explicit trigger + factual question — assistant answers."
+input = "Hey Computer, was ist die Hauptstadt von Frankreich?"
+expected_mode = "assistant"
+language = "de"
+tags = ["hey-computer", "qna"]
+
+[[case]]
+id = "hey-computer-define-en"
+description = "Explicit trigger + define request — assistant gives a short definition, no preamble."
+input = "Hey computer, define petrichor."
+expected_mode = "assistant"
+language = "en"
+tags = ["hey-computer", "define"]
+
+
+# ── Clipboard present → assistant (system prompt forces this) ───────────
+
+[[case]]
+id = "clipboard-translate-de"
+description = "Clipboard attached + translate request — assistant translates the clipboard."
+input = "Kannst du das bitte ins Deutsche übersetzen?"
+clipboard = "Hey, nice to see you!"
+expected_mode = "assistant"
+language = "de"
+tags = ["clipboard-present", "translate"]
+
+[[case]]
+id = "clipboard-summarize-en"
+description = "Clipboard attached + summarise request — assistant."
+input = "Summarise this in one sentence."
+clipboard = "The quick brown fox jumps over the lazy dog three times in a row under a bright autumn sun."
+expected_mode = "assistant"
+language = "en"
+tags = ["clipboard-present", "summarise"]
+
+[[case]]
+id = "hey-computer-with-clipboard"
+description = "Hey Computer + clipboard — assistant acts on clipboard content (cross-product)."
+input = "Hey computer, rewrite the clipboard in a more formal tone."
+clipboard = "yo dude wanna grab lunch later??"
+expected_mode = "assistant"
+language = "en"
+tags = ["hey-computer", "clipboard-present"]
+
+
+# ── Tricky cleanup cases ────────────────────────────────────────────────
+
+[[case]]
+id = "reported-hey-computer-en"
+description = "Quoted 'hey computer' inside a sentence — not addressed to the system, stay cleanup."
+input = "…and then I told him, hey computer remind me tomorrow, but he just laughed."
+expected_mode = "cleanup"
+language = "en"
+tags = ["reported-speech", "tricky"]
+
+[[case]]
+id = "german-modal-particles"
+description = "Modal particles 'denn', 'doch', 'mal' must survive — cleanup preserves them."
+input = "Ich weiß nicht, was denkst du denn? Schau doch mal drüber."
+expected_mode = "cleanup"
+language = "de"
+tags = ["modal-particles", "colloquial"]
+
+[[case]]
+id = "mixed-de-en-no-trigger"
+description = "Natural code-switching. Cleanup must not normalise to one language."
+input = "Ich hatte gestern ein richtig gutes Meeting mit dem client, war wirklich smooth."
+expected_mode = "cleanup"
+language = "mix"
+tags = ["code-switch"]
+
+[[case]]
+id = "bare-computer-no-hey"
+description = "Bare 'Computer' without preceding 'Hey' is NOT a trigger per the prompt."
+input = "Computer, translate this to German: hello world"
+expected_mode = "cleanup"
+language = "en"
+tags = ["no-trigger", "edge"]
+
+
+# ── Long input + trailing trigger → assistant ───────────────────────────
+
+[[case]]
+id = "long-dictation-hey-computer-polish"
+description = "Free-form draft ending in Hey Computer command — return the polished version only."
+input = """Please polish this note. I wanted to reach out because, um, I saw your message and I think, like, the proposal could work but, um, we need to talk budget. Hey Computer, make this sound more formal."""
+expected_mode = "assistant"
+language = "en"
+tags = ["hey-computer", "polish", "long-input"]
+
+
+# ── Trivial smoke ───────────────────────────────────────────────────────
+
+[[case]]
+id = "very-short-cleanup"
+description = "Minimal input — echoed verbatim. Smoke case for wiring verification."
+input = "okay."
+expected_mode = "cleanup"
+language = "en"
+tags = ["short", "smoke"]

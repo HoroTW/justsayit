@@ -7,8 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.23] - 2026-04-22
+
+### Added
+
+- Prompt-evaluation harness under `evals/` + `scripts/eval-cleanup-prompt.py`
+  for iterating on the remote cleanup prompt. 19 curated dictation
+  cases (cleanup and assistant-mode coverage, including the bare-
+  clipboard-question regression), a stdlib-only `urllib` judge call
+  that runs through `LLMPostprocessor.process_with_reasoning` so the
+  eval path is byte-identical to production, a confusion-matrix
+  report, per-failing-case context dump, `--runs N` for flakiness
+  measurement, `--json` for diffing between revisions, and a
+  prompt-length / efficiency metric so shorter prompts that hold
+  accuracy visibly win.
+
+### Changed
+
 - Clipboard usage now automatically triggers assistant mode + improved
   clipboard usage via system message clarification.
+- `cleanup_openai.md` rewritten around two leading rules ("default is
+  cleanup" + "assistant mode ONLY if `Hey Computer` or a clipboard
+  section is present"), with redundant examples trimmed and the
+  clipboard override surfaced upfront. 7882 → 4823 chars (-39%).
+  Measured against the new eval harness:
+  - accuracy: 78.9% → 84.2% (+5.3 pp)
+  - cleanup-expected: 75.0% → 91.7% (+16.7 pp)
+  - efficiency (% per 1000 prompt chars): 10.0 → 17.5 (+75%)
+  Remaining failures (`clipboard-translate-de`,
+  `clipboard-summarize-en`, `bare-computer-no-hey`) are gpt-4o-mini
+  capability limits — the model either ignores the clipboard block
+  or over-translates on bare `Computer, …` patterns regardless of
+  wording.
 
 ## [0.13.22] - 2026-04-22
 
