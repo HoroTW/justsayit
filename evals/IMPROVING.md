@@ -94,13 +94,29 @@ if you don't read this list first.
 | target | prompt | honest overall | cleanup | assistant |
 |---|---|---|---|---|
 | gpt-4o-mini | current `Hey`-only | 84.2% | 10/12 | 6/7 |
+| gpt-5-mini (reasoning medium) | same | 94.7% | 11/12 | 7/7 |
 | gpt-5.4-nano (reasoning medium) | same | 94.7% | 12/12 | 6/7 (flaky) |
 | gpt-5.4-mini (reasoning medium) | same | **100.0%** | 12/12 | 7/7 |
+
+Latency comparison — target-only, 15 runs each across 5 representative cases:
+
+| target | median | mean | p90 | max |
+|---|---|---|---|---|
+| gpt-4o-mini | 754 ms | 782 ms | 1259 ms | 1337 ms |
+| gpt-5.4-mini (reasoning medium) | 1033 ms | 1068 ms | 1516 ms | 1601 ms |
+| gpt-5.4-nano (reasoning medium) | 1204 ms | 1276 ms | 1843 ms | 1851 ms |
+| gpt-5-mini (reasoning medium) | 3912 ms | 4984 ms | 7977 ms | 10320 ms |
 
 `gpt-5.4-nano` target-only probe showed `clipboard-translate-de` is
 2/3 correct, 1/3 echoed — single-run eval rolls the failure side
 sometimes. Honest nano score is between 94.7% and 100% depending on
 sampling; use `--runs 3+` when comparing nano vs mini more carefully.
+
+`gpt-5-mini` is the **slowest** of the reasoning options (3-10s
+vs 0.7-1.6s for the gpt-5.4 siblings) and scores 94.7% with a
+different failure mode: it treats reported/quoted `hey computer`
+as a real trigger and responds conversationally, instead of echoing.
+Strictly worse on latency AND accuracy compared to gpt-5.4-mini.
 
 ## Kick-off prompt for a new iteration
 
