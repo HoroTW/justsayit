@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.21] - 2026-04-22
+
+### Added
+
+- New `justsayit toggle` subcommand for binding keyboard shortcuts to
+  "special mode" recordings. Talks to the running primary directly
+  over the session bus (same `org.gtk.Actions.Activate` path `busctl`
+  uses) — no models loaded, no main loop, ~80 ms cold start. Flags:
+  - `--profile NAME` switches the LLM profile before toggling
+    (persistent, same effect as the tray submenu). The sentinel
+    `--profile off` disables postprocessing — mirrors the tray's
+    "Off" radio item.
+  - `--use-clipboard` arms clipboard-context for the recording this
+    toggle starts.
+  Lets a single shortcut select e.g. a privacy-tuned local model, a
+  console-command-tuned model, or prime clipboard context for a
+  one-off dictation. Extensible via new keys on the underlying
+  `toggle-ex` action's `a{sv}` parameter.
+- The entry point now goes through a thin `_entry.py` dispatcher that
+  forwards the `toggle` subcommand to a new `toggle_client.py`
+  importing only `gi.repository.Gio` / `GLib`. Skips Gtk, numpy,
+  sherpa-onnx, llama-cpp, and the whole audio/overlay/postprocess
+  import graph — shortcut-bound invocations now feel instant. The raw
+  `busctl` call remains the lowest-latency option for users who want
+  zero Python startup.
+- Layer-shell preload and systemd-scope re-execs at module load are
+  now skipped for remote-only subcommands (currently just `toggle`),
+  so even invocations that do reach `cli.py` stay snappy.
+
+### Fixed
+
+- Clipboard-context arming from the new CLI path survives the audio
+  worker's `IDLE → VALIDATING / MANUAL` stale-defense disarm via a
+  separate "arm next recording" flag consumed at the transition edge.
+  The overlay's in-recording 📋 arm behavior is unchanged.
+
 ## [0.13.20] - 2026-04-21
 
 ### Fixed

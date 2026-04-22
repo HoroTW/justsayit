@@ -180,8 +180,23 @@ def _preload_layer_shell() -> None:
     _os.execvpe(cmd[0], cmd, env)
 
 
-_reexec_under_systemd_scope()
-_preload_layer_shell()
+# Subcommands that only talk to the already-running primary over D-Bus
+# don't need layer-shell preload or systemd scoping — skip both re-execs
+# so keyboard-shortcut-bound invocations stay snappy.
+_REMOTE_SUBCOMMANDS = {"toggle"}
+
+
+def _is_remote_subcommand() -> bool:
+    for tok in _sys.argv[1:]:
+        if tok.startswith("-"):
+            continue
+        return tok in _REMOTE_SUBCOMMANDS
+    return False
+
+
+if not _is_remote_subcommand():
+    _reexec_under_systemd_scope()
+    _preload_layer_shell()
 
 # --- regular imports below; safe now -------------------------------------
 import argparse
@@ -290,6 +305,20 @@ class App:
         # _handle_segment; when True, clipboard contents are appended to
         # the LLM system prompt for that single transcription.
         self._clipboard_context_armed: bool = False
+        # "Arm the NEXT recording" — set by the CLI toggle-ex action
+        # (which runs on the main loop) BEFORE the audio worker thread
+        # has transitioned state. Consumed by on_state at the IDLE →
+        # VALIDATING / MANUAL edge: promotes to _clipboard_context_armed
+        # instead of calling _disarm. Lets a single CLI invocation swap
+        # profile + arm clipboard + trigger recording atomically without
+        # losing the arm to the stale-defense disarm.
+        self._clipboard_context_arm_next: bool = False
+        # Tray LLM radio items — stored here (not captured in a closure)
+        # so _apply_llm_profile can refresh their checked state from
+        # outside the tray setup (e.g. from the toggle-ex D-Bus action).
+        self._llm_profile_items: dict[str, MenuItem] = {}
+        self._llm_off_item: MenuItem | None = None
+        self._llm_submenu_item: MenuItem | None = None
 
     # --- setup -------------------------------------------------------------
 
@@ -389,10 +418,20 @@ class App:
             prev = prev_state[0]
             prev_state[0] = state
             if prev is State.IDLE and state in (State.VALIDATING, State.MANUAL):
-                # Fresh recording — clipboard-context arming is strictly
-                # per-recording, so clear any leftover flag before it can
-                # feed a stale clipboard into this session's LLM call.
-                self._disarm_clipboard_context()
+                if self._clipboard_context_arm_next:
+                    # CLI asked to arm *this* recording. Promote the
+                    # pending flag to _armed here, where we're
+                    # guaranteed to be past the stale-defense disarm.
+                    self._clipboard_context_arm_next = False
+                    self._clipboard_context_armed = True
+                    log.info("clipboard-context flag → armed (CLI, next recording)")
+                    if self.overlay is not None:
+                        self.overlay.push_clipboard_context_armed(True)
+                else:
+                    # Fresh recording — clipboard-context arming is strictly
+                    # per-recording, so clear any leftover flag before it can
+                    # feed a stale clipboard into this session's LLM call.
+                    self._disarm_clipboard_context()
             if self.overlay is not None:
                 self.overlay.push_state(state)
             if self.sound_player is not None:
@@ -658,11 +697,6 @@ class App:
 
         # --- LLM profile submenu -------------------------------------------
 
-        def _llm_label() -> str:
-            if self.cfg.postprocess.enabled:
-                return f"LLM: {self.cfg.postprocess.profile}"
-            return "LLM: off"
-
         # List every profile whose TOML parses. We deliberately do NOT
         # gate on backend-specific readiness (builtin GGUF on disk,
         # remote endpoint set) — silent filtering hid remote profiles
@@ -682,64 +716,12 @@ class App:
                 profile_names.append(p.stem)
 
         # Build radio items for each profile + an "Off" item.
-        llm_profile_items: dict[str, MenuItem] = {}
         llm_submenu_item: MenuItem | None = None
 
         if profile_names:
             active = (
                 self.cfg.postprocess.profile if self.cfg.postprocess.enabled else None
             )
-
-            def _on_llm_profile(key: str | None) -> None:
-                if key is None:
-                    self.cfg.postprocess.enabled = False
-                else:
-                    self.cfg.postprocess.enabled = True
-                    self.cfg.postprocess.profile = key
-                try:
-                    save_config(self.cfg)
-                except Exception:
-                    log.exception("failed to save config after LLM profile switch")
-                # Reinitialize exactly like startup so dynamic-context and
-                # warmup behavior stay consistent after tray profile switches.
-                self.setup_postprocessor()
-                if self.cfg.postprocess.enabled and self.postprocessor is not None:
-                    log.info("LLM profile switched to: %s", self.cfg.postprocess.profile)
-                # Update radio states and parent label via ItemsPropertiesUpdated
-                # (not LayoutUpdated) so the client replaces its cached values
-                # directly — LayoutUpdated goes through a merge path that leaves
-                # the previously-selected radio still checked.
-                cur = (
-                    self.cfg.postprocess.profile
-                    if self.cfg.postprocess.enabled
-                    else None
-                )
-                prop_updates: list[tuple[int, dict]] = []
-                for k, item in llm_profile_items.items():
-                    item.toggle_state = 1 if k == cur else 0
-                    prop_updates.append(
-                        (
-                            item.id,
-                            {"toggle-state": GLib.Variant("i", item.toggle_state)},
-                        )
-                    )
-                llm_off_item.toggle_state = 1 if cur is None else 0
-                prop_updates.append(
-                    (
-                        llm_off_item.id,
-                        {"toggle-state": GLib.Variant("i", llm_off_item.toggle_state)},
-                    )
-                )
-                llm_submenu_item.label = _llm_label()  # type: ignore[union-attr]
-                prop_updates.append(
-                    (
-                        llm_submenu_item.id,
-                        {"label": GLib.Variant("s", llm_submenu_item.label)},
-                    )  # type: ignore[union-attr]
-                )
-                if self.tray is not None:
-                    self.tray.notify_properties_updated(prop_updates)
-
             children: list[MenuItem] = []
             for i, name in enumerate(profile_names):
                 item = MenuItem(
@@ -747,28 +729,29 @@ class App:
                     label=name,
                     toggle_type="radio",
                     toggle_state=1 if name == active else 0,
-                    on_activate=lambda n=name: _on_llm_profile(n),
+                    on_activate=lambda n=name: self._apply_llm_profile(n),
                 )
-                llm_profile_items[name] = item
+                self._llm_profile_items[name] = item
                 children.append(item)
 
-            llm_off_item = MenuItem(
+            self._llm_off_item = MenuItem(
                 id=MID_LLM_OFF,
                 label="Off",
                 toggle_type="radio",
                 toggle_state=1 if active is None else 0,
-                on_activate=lambda: _on_llm_profile(None),
+                on_activate=lambda: self._apply_llm_profile(None),
             )
             children += [
                 MenuItem(id=MID_LLM_SEP_INNER, is_separator=True),
-                llm_off_item,
+                self._llm_off_item,
             ]
 
             llm_submenu_item = MenuItem(
                 id=MID_LLM_SUBMENU,
-                label=_llm_label(),
+                label=self._llm_tray_label(),
                 children=children,
             )
+            self._llm_submenu_item = llm_submenu_item
 
         # --- assemble main menu --------------------------------------------
 
@@ -858,6 +841,79 @@ class App:
             self.overlay.push_clipboard_context_armed(
                 self._clipboard_context_armed
             )
+
+    def _arm_clipboard_next_recording(self) -> None:
+        """Mark the NEXT recording as clipboard-armed. Used by the
+        toggle-ex D-Bus action: we can't set ``_clipboard_context_armed``
+        directly because the audio worker transitions IDLE → MANUAL/VALIDATING
+        asynchronously and clears it via ``_disarm_clipboard_context``.
+        Instead, set a pending flag that ``on_state`` consumes at the
+        transition edge."""
+        self._clipboard_context_arm_next = True
+        log.info("clipboard-context → arm_next (CLI)")
+
+    def _llm_tray_label(self) -> str:
+        if self.cfg.postprocess.enabled:
+            return f"LLM: {self.cfg.postprocess.profile}"
+        return "LLM: off"
+
+    def _apply_llm_profile(self, name: str | None) -> None:
+        """Switch LLM profile (``name=None`` disables postprocessing).
+        Persists to state.toml, rebuilds the postprocessor, and refreshes
+        any tray radio items. Shared by the tray menu and the toggle-ex
+        D-Bus action, so both paths stay in sync.
+        """
+        if name is None:
+            self.cfg.postprocess.enabled = False
+        else:
+            self.cfg.postprocess.enabled = True
+            self.cfg.postprocess.profile = name
+        try:
+            save_config(self.cfg)
+        except Exception:
+            log.exception("failed to save config after LLM profile switch")
+        # Reinitialize exactly like startup so dynamic-context and
+        # warmup behavior stay consistent after profile switches.
+        self.setup_postprocessor()
+        if self.cfg.postprocess.enabled and self.postprocessor is not None:
+            log.info("LLM profile switched to: %s", self.cfg.postprocess.profile)
+        self._refresh_llm_tray_state()
+
+    def _refresh_llm_tray_state(self) -> None:
+        """Update the LLM submenu's radio items + parent label to match
+        the current cfg. Uses ItemsPropertiesUpdated (not LayoutUpdated)
+        so the client replaces its cached values directly — LayoutUpdated
+        goes through a merge path that leaves the previously-selected
+        radio still checked."""
+        if self.tray is None or self._llm_submenu_item is None:
+            return
+        cur = (
+            self.cfg.postprocess.profile
+            if self.cfg.postprocess.enabled
+            else None
+        )
+        prop_updates: list[tuple[int, dict]] = []
+        for k, item in self._llm_profile_items.items():
+            item.toggle_state = 1 if k == cur else 0
+            prop_updates.append(
+                (item.id, {"toggle-state": GLib.Variant("i", item.toggle_state)})
+            )
+        if self._llm_off_item is not None:
+            self._llm_off_item.toggle_state = 1 if cur is None else 0
+            prop_updates.append(
+                (
+                    self._llm_off_item.id,
+                    {"toggle-state": GLib.Variant("i", self._llm_off_item.toggle_state)},
+                )
+            )
+        self._llm_submenu_item.label = self._llm_tray_label()
+        prop_updates.append(
+            (
+                self._llm_submenu_item.id,
+                {"label": GLib.Variant("s", self._llm_submenu_item.label)},
+            )
+        )
+        self.tray.notify_properties_updated(prop_updates)
 
     def _disarm_clipboard_context(self) -> None:
         """Clear the armed flag without reading the clipboard. Called at
@@ -1069,6 +1125,48 @@ class App:
         toggle_action = Gio.SimpleAction.new("toggle", None)
         toggle_action.connect("activate", lambda _a, _p: self.toggle())
         app.add_action(toggle_action)
+
+        # toggle-ex: composite action fired by `justsayit toggle [...]`
+        # from a second process. Keeps profile-switch + arm-clipboard +
+        # toggle atomic on the main loop so the arm survives the audio
+        # worker's IDLE→MANUAL/VALIDATING state-transition disarm.
+        #   a{sv} keys:
+        #     "profile"       (s) — switch to this LLM profile first.
+        #                           The sentinel "off" (case-insensitive)
+        #                           disables postprocessing, mirroring the
+        #                           tray submenu's "Off" radio item.
+        #     "arm-clipboard" (b) — arm clipboard for this recording
+        # Unknown keys are ignored so we can grow the surface later
+        # without bumping the action name.
+        toggle_ex_action = Gio.SimpleAction.new(
+            "toggle-ex", GLib.VariantType.new("a{sv}")
+        )
+
+        def _on_toggle_ex(_a, param):
+            try:
+                opts = dict(param.unpack()) if param is not None else {}
+            except Exception:
+                log.exception("toggle-ex: could not unpack parameters")
+                opts = {}
+            profile = opts.get("profile")
+            arm_clip = bool(opts.get("arm-clipboard", False))
+            log.info(
+                "toggle-ex received: profile=%r arm-clipboard=%s",
+                profile,
+                arm_clip,
+            )
+            if isinstance(profile, str) and profile:
+                # "off" disables postprocessing — same effect as the
+                # tray's "Off" radio item. Case-insensitive because
+                # users type it from shortcut scripts.
+                target = None if profile.lower() == "off" else profile
+                self._apply_llm_profile(target)
+            if arm_clip:
+                self._arm_clipboard_next_recording()
+            self.toggle()
+
+        toggle_ex_action.connect("activate", _on_toggle_ex)
+        app.add_action(toggle_ex_action)
         if not self.no_overlay:
 
             def _on_overlay_abort() -> None:
@@ -1478,6 +1576,20 @@ def _run_setup_llm(model_key: str | None = None, cpu: bool = False) -> int:
     return 0
 
 
+def _send_toggle(*, profile: str | None, use_clipboard: bool) -> int:
+    """Fallback path used when someone reaches this entry directly
+    (e.g. ``python -m justsayit.cli toggle`` or a stale entry-point
+    link). Normal invocations go through :mod:`justsayit._entry` which
+    dispatches to :mod:`justsayit.toggle_client` and skips this module
+    entirely. Shares the same D-Bus helper so both paths behave the
+    same and neither triggers the ``Gtk.Application``-destruction
+    warning.
+    """
+    from justsayit.toggle_client import send_toggle as _send
+
+    return _send(profile=profile, use_clipboard=use_clipboard)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="justsayit")
     ap.add_argument("--version", action="version", version=f"justsayit {__version__}")
@@ -1533,6 +1645,32 @@ def _build_parser() -> argparse.ArgumentParser:
         help="install CPU-only llama-cpp-python (skip Vulkan GPU compilation)",
     )
 
+    toggle_sub = sub.add_parser(
+        "toggle",
+        help="toggle recording on the running instance (for custom shortcuts)",
+        description=(
+            "Send a toggle command to the already-running justsayit "
+            "instance. Optional flags let one keyboard shortcut switch "
+            "LLM profile and/or arm clipboard-context for the recording "
+            "it starts — e.g. bind a 'privacy mode' shortcut to "
+            "`justsayit toggle --profile my-local-llm`."
+        ),
+    )
+    toggle_sub.add_argument(
+        "--profile",
+        default=None,
+        help=(
+            "switch LLM profile before toggling (persistent, like the "
+            "tray menu); pass 'off' to disable postprocessing"
+        ),
+    )
+    toggle_sub.add_argument(
+        "--use-clipboard",
+        action="store_true",
+        default=False,
+        help="arm clipboard-context for the recording this toggle starts",
+    )
+
     show_sub = sub.add_parser(
         "show-defaults",
         help="print the shipped default for a user-managed file to stdout "
@@ -1566,6 +1704,11 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
+    if args.subcommand == "toggle":
+        return _send_toggle(
+            profile=args.profile,
+            use_clipboard=args.use_clipboard,
+        )
     if args.subcommand == "init":
         _write_default_config(force=False, backend=getattr(args, "backend", None))
         return 0

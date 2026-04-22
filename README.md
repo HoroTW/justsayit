@@ -146,15 +146,22 @@ justsayit init
 - **GNOME Mutter** doesn't implement `zwlr_layer_shell_v1`. Run with
   `--no-overlay` there.
 - The XDG GlobalShortcuts portal requires KDE Plasma 6 / GNOME 45+. On
-  compositors without it (sway, niri, Hyprland) use a compositor keybind
-  to toggle recording via DBus instead:
+  compositors without it (sway, niri, Hyprland) bind a compositor
+  keybind to the `toggle` subcommand instead:
   ```sh
-  busctl --user call dev.horotw.justsayit /dev/horotw/justsayit org.gtk.Actions Activate "sava{sv}" toggle 0 0
+  justsayit toggle
   ```
   For example, in a niri config:
   ```
-  Super+T { spawn "busctl" "--user" "call" "dev.horotw.justsayit" "/dev/horotw/justsayit" "org.gtk.Actions" "Activate" "sava{sv}" "toggle" "0" "0"; }
+  Super+T { spawn "justsayit" "toggle"; }
   ```
+  The subcommand also accepts `--profile NAME` to switch LLM profile and
+  `--use-clipboard` to arm clipboard-context for that recording — bind
+  extra keys for "special mode" shortcuts (privacy-tuned model,
+  console-command model, clipboard-aware dictation, …).
+
+  > If you're upgrading from an older setup that called `busctl … org.gtk.Actions Activate toggle`
+  > directly, replace the whole `busctl` invocation with `justsayit toggle`.
 - If the Parakeet model URL has moved, override `model.parakeet_archive_url`
   and `model.parakeet_archive_dir` in `config.toml`.
 - **Paste sometimes drops characters / pastes the wrong text?** Slow
