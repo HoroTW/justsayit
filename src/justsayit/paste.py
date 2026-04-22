@@ -117,14 +117,73 @@ def copy_to_clipboard(
             raise exc
 
 
-def read_clipboard(*, timeout: float = 2.0) -> str | None:
-    """Return the current regular (Ctrl+V) clipboard text, or None if empty/unavailable."""
+_TEXT_MIME_PREFERENCE = (
+    "text/plain;charset=utf-8",
+    "text/plain",
+    "UTF8_STRING",
+    "STRING",
+    "TEXT",
+)
+
+
+def _pick_text_mime(offered: list[str]) -> str | None:
+    """Pick the best text MIME from what the clipboard advertises.
+    Returns ``None`` when no text type is offered (e.g. an image-only
+    clipboard) — signals the caller to skip instead of decoding binary
+    bytes as UTF-8."""
+    for pref in _TEXT_MIME_PREFERENCE:
+        if pref in offered:
+            return pref
+    # Fallback: any ``text/*`` type we don't know by name.
+    for t in offered:
+        if t.startswith("text/"):
+            return t
+    return None
+
+
+def read_clipboard(*, timeout: float = 2.0, text_only: bool = False) -> str | None:
+    """Return the current regular (Ctrl+V) clipboard contents as a
+    string, or ``None`` if empty / unavailable.
+
+    With ``text_only=True`` the function first probes ``wl-paste
+    --list-types`` and returns ``None`` when the clipboard only offers
+    non-text MIME types (images, files, …). Without the guard an
+    image-only clipboard would be decoded as UTF-8-with-replacement and
+    produce kilobytes of ``\\ufffd`` noise — fine for a raw-bytes
+    snapshot (paste-restore path keeps the default), catastrophic if
+    the result is about to be fed to an LLM as context.
+    """
     wl_paste = shutil.which("wl-paste")
     if not wl_paste:
         return None
+    mime: str | None = None
+    if text_only:
+        try:
+            probe = subprocess.run(
+                [wl_paste, "--list-types"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return None
+        if probe.returncode != 0:
+            return None
+        offered = probe.stdout.decode("ascii", "replace").split()
+        mime = _pick_text_mime(offered)
+        if mime is None:
+            log.info(
+                "clipboard has no text MIME type (offered: %s); skipping text read",
+                ", ".join(offered) or "<none>",
+            )
+            return None
+    cmd = [wl_paste, "--no-newline"]
+    if mime is not None:
+        cmd += ["--type", mime]
     try:
         proc = subprocess.run(
-            [wl_paste, "--no-newline"],
+            cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             timeout=timeout,

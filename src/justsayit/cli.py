@@ -934,9 +934,12 @@ class App:
         self._clipboard_context_armed = False
         if self.overlay is not None:
             self.overlay.push_clipboard_context_armed(False)
-        clip = read_clipboard()
+        clip = read_clipboard(text_only=True)
         if not clip:
-            log.info("clipboard-context armed but clipboard is empty / unavailable")
+            log.info(
+                "clipboard-context armed but clipboard is empty, unavailable,"
+                " or non-text (e.g. an image) — skipping injection"
+            )
             return ""
         log.info("injecting clipboard as one-time LLM context: %d chars", len(clip))
         return clip

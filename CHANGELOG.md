@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.22] - 2026-04-22
+
+### Fixed
+
+- Clipboard-context injection (`--use-clipboard` / overlay 📋) now
+  refuses non-text clipboards. Previously an image in the clipboard
+  would be handed to `wl-paste` with no MIME filter, the raw PNG
+  bytes decoded as UTF-8 with replacement characters, and kilobytes
+  of `�` noise fed to the LLM as "additional context" — wasting
+  tokens and confusing the model. `read_clipboard(text_only=True)`
+  probes `wl-paste --list-types` first, prefers
+  `text/plain;charset=utf-8`, falls back through the standard text
+  MIMEs, and skips cleanly if none are offered. Paste's
+  clipboard-restore snapshot keeps the previous permissive behavior
+  via the default `text_only=False`.
+
 ## [0.13.21] - 2026-04-22
 
 ### Added

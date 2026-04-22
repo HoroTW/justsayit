@@ -353,7 +353,8 @@ def test_armed_clipboard_context_is_passed_to_postprocessor_and_disarms(
     pp = _StubPostprocessor(text="cleaned hello")
     app.postprocessor = pp
     monkeypatch.setattr(
-        "justsayit.cli.read_clipboard", lambda: "extra context from clipboard"
+        "justsayit.cli.read_clipboard",
+        lambda **_kw: "extra context from clipboard",
     )
     app._clipboard_context_armed = True
 
@@ -392,7 +393,7 @@ def test_armed_with_empty_clipboard_still_disarms(capsys, monkeypatch):
     app.transcriber = _StubTranscriber("hello")
     pp = _StubPostprocessor(text="cleaned hello")
     app.postprocessor = pp
-    monkeypatch.setattr("justsayit.cli.read_clipboard", lambda: None)
+    monkeypatch.setattr("justsayit.cli.read_clipboard", lambda **_kw: None)
     app._clipboard_context_armed = True
 
     app._handle_segment(_make_seg())
