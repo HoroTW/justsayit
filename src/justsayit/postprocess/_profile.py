@@ -35,7 +35,6 @@ _BASE_DEFAULTS: dict[str, dict[str, Any]] = {
     "builtin": tomllib.loads(_load_template("builtin-defaults.toml")),
     "remote": tomllib.loads(_load_template("remote-defaults.toml")),
     "responses": tomllib.loads(_load_template("responses-defaults.toml")),
-    "anthropic": tomllib.loads(_load_template("anthropic-defaults.toml")),
 }
 
 
@@ -146,11 +145,6 @@ class PostprocessProfile:
     responses_web_search_trigger: str = ""
     # All models: $0.010/call + search content tokens at model rate.
     web_search_price_per_call: float = 0.0
-
-    # --- Anthropic native backend (base = "anthropic") ------------------
-    anthropic_version: str = "2023-06-01"
-    anthropic_web_search: bool = False
-    anthropic_extended_cache: bool = True
 
     def __post_init__(self) -> None:
         # Auto-infer remote backend when endpoint is set and base wasn't

@@ -250,7 +250,7 @@ class LLMPostprocessor:
 
     def warmup(self) -> None:
         """Eagerly load the local model. No-op for remote-endpoint profiles."""
-        if self.profile.base in {"remote", "responses", "anthropic"}:
+        if self.profile.base in {"remote", "responses"}:
             return
         with self._lock:
             if self._llm is None:
@@ -265,7 +265,7 @@ class LLMPostprocessor:
         *dynamic* — ``dynamic-context.sh`` output + clipboard content.
                     Changes every call; must not be cached.
 
-        Used by :meth:`_responses_process` and :meth:`_anthropic_process`.
+        Used by :meth:`_responses_process`.
         """
         prompt = self.profile.system_prompt.strip()
         if not prompt and self.profile.system_prompt_file.strip():
@@ -557,94 +557,6 @@ class LLMPostprocessor:
         })
         return ProcessResult(text=content)
 
-    def _anthropic_process(self, text: str, extra_context: str = "") -> ProcessResult:
-        """Native Anthropic /v1/messages POST with prompt caching.
-
-        The static part of the system prompt is sent as a cached block;
-        the dynamic part is sent uncached so the cache point stays stable.
-        """
-        api_key = resolve_secret(self.profile.api_key, self.profile.api_key_env)
-        if not api_key:
-            raise RuntimeError(
-                "Anthropic API key not found.\n"
-                f"  Set api_key in the profile, export {self.profile.api_key_env},\n"
-                "  or put it in ~/.config/justsayit/.env."
-            )
-        if not self.profile.model:
-            raise RuntimeError(
-                "Anthropic backend: profile.model is empty — "
-                "set 'model' in the profile (e.g. \"claude-sonnet-4-6\")."
-            )
-
-        static_prompt, dynamic_prompt = self._build_system_prompt_parts(extra_context)
-        log.info("assembled Anthropic system prompt (static/cached):\n%s", static_prompt)
-        if dynamic_prompt:
-            log.info("assembled Anthropic system prompt (dynamic/uncached):\n%s", dynamic_prompt)
-
-        system_blocks: list[dict[str, Any]] = []
-        if static_prompt:
-            system_blocks.append({
-                "type": "text",
-                "text": static_prompt,
-                "cache_control": {"type": "ephemeral"},
-            })
-        if dynamic_prompt:
-            system_blocks.append({"type": "text", "text": dynamic_prompt})
-
-        body: dict[str, Any] = {
-            "model": self.profile.model,
-            "max_tokens": self.profile.max_tokens,
-            "messages": [
-                {"role": "user", "content": self.profile.user_template.format(text=text)}
-            ],
-        }
-        if system_blocks:
-            body["system"] = system_blocks
-        if self.profile.anthropic_web_search:
-            body["tools"] = [{"type": "web_search_20250305", "name": "web_search"}]
-
-        betas = ["prompt-caching-2024-07-31"]
-        if self.profile.anthropic_extended_cache:
-            betas.append("extended-cache-ttl-2025-02-19")
-
-        url = self.profile.endpoint.rstrip("/") + "/messages"
-        data = _http_post(
-            url,
-            body,
-            {
-                "x-api-key": api_key,
-                "anthropic-version": self.profile.anthropic_version,
-                "anthropic-beta": ",".join(betas),
-            },
-            remote_retries=self.profile.remote_retries,
-            remote_retry_delay_seconds=self.profile.remote_retry_delay_seconds,
-            request_timeout=self.profile.request_timeout,
-            label="Anthropic",
-        )
-
-        # Collect text blocks; ignore tool_use / tool_result blocks from
-        # web search (the final answer always comes in a text block).
-        content_blocks = data.get("content") or []
-        content = " ".join(
-            b.get("text", "") for b in content_blocks if b.get("type") == "text"
-        ).strip()
-
-        # Normalize Anthropic usage fields to the shape _log_usage expects.
-        raw = data.get("usage") or {}
-        cache_read = int(raw.get("cache_read_input_tokens") or 0)
-        cache_write = int(raw.get("cache_creation_input_tokens") or 0)
-        if cache_read or cache_write:
-            log.info(
-                "Anthropic cache: %d tokens read from cache, %d tokens written to cache",
-                cache_read, cache_write,
-            )
-        _log_usage(self.profile, {
-            "prompt_tokens": int(raw.get("input_tokens") or 0) + cache_write,
-            "completion_tokens": int(raw.get("output_tokens") or 0),
-            "prompt_tokens_details": {"cached_tokens": cache_read},
-        })
-        return ProcessResult(text=content)
-
     # --- Dispatch -----------------------------------------------------------
 
     def process_with_reasoning(
@@ -662,8 +574,6 @@ class LLMPostprocessor:
             result = self._remote_process(text, extra_context)
         elif self.profile.base == "responses":
             result = self._responses_process(text, extra_context)
-        elif self.profile.base == "anthropic":
-            result = self._anthropic_process(text, extra_context)
         else:
             result = self._local_process(text, extra_context)
         if not result.text:

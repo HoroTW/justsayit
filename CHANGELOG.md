@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.30] - 2026-04-22
+
+### Removed
+
+- **Anthropic native backend** (`base = "anthropic"`). Too expensive for
+  routine cleanup. Removed `_anthropic_process`, the three
+  `anthropic_*` profile fields, `anthropic-defaults.toml`, and
+  `profile-anthropic-cleanup.toml`. The `remote` and `responses`
+  (OpenAI Responses API) backends are unaffected.
+
 ## [0.13.29] - 2026-04-22
 
 ### Changed
