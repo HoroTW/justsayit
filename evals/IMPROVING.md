@@ -95,28 +95,55 @@ if you don't read this list first.
 |---|---|---|---|---|
 | gpt-4o-mini | current `Hey`-only | 84.2% | 10/12 | 6/7 |
 | gpt-5-mini (reasoning medium) | same | 94.7% | 11/12 | 7/7 |
+| gpt-5.4-nano (reasoning low) | same | 78.9% | 12/12 | 3/7 |
+| gpt-5.4-nano (reasoning low, *nano-tuned*) | cleanup_openai_nano.md | 89.5% | 12/12 | 5/7 |
 | gpt-5.4-nano (reasoning medium) | same | 94.7% | 12/12 | 6/7 (flaky) |
-| gpt-5.4-mini (reasoning medium) | same | **100.0%** | 12/12 | 7/7 |
+| gpt-5.4-nano (reasoning medium, *nano-tuned*) | cleanup_openai_nano.md | 94.7% | 12/12 | 6/7 |
+| gpt-5.4-nano (reasoning high, *nano-tuned*) | cleanup_openai_nano.md | **100.0%** | 12/12 | 7/7 |
+| gpt-5.4-mini (reasoning low) | same | **100.0%** | 12/12 | 7/7 |
+| gpt-5.4-mini (reasoning medium) | same | 100.0% | 12/12 | 7/7 |
 
 Latency comparison — target-only, 15 runs each across 5 representative cases:
 
 | target | median | mean | p90 | max |
 |---|---|---|---|---|
 | gpt-4o-mini | 754 ms | 782 ms | 1259 ms | 1337 ms |
+| **gpt-5.4-mini (reasoning low)** | **781 ms** | 792 ms | **992 ms** | 1086 ms |
 | gpt-5.4-mini (reasoning medium) | 1033 ms | 1068 ms | 1516 ms | 1601 ms |
+| gpt-5.4-nano (reasoning low) | 900 ms | 936 ms | 1179 ms | 1278 ms |
 | gpt-5.4-nano (reasoning medium) | 1204 ms | 1276 ms | 1843 ms | 1851 ms |
+| gpt-5.4-nano (reasoning high, nano-tuned) | 1153 ms | 1417 ms | 2378 ms | 2464 ms |
 | gpt-5-mini (reasoning medium) | 3912 ms | 4984 ms | 7977 ms | 10320 ms |
 
-`gpt-5.4-nano` target-only probe showed `clipboard-translate-de` is
-2/3 correct, 1/3 echoed — single-run eval rolls the failure side
-sometimes. Honest nano score is between 94.7% and 100% depending on
-sampling; use `--runs 3+` when comparing nano vs mini more carefully.
+## Winners (pick one)
 
-`gpt-5-mini` is the **slowest** of the reasoning options (3-10s
-vs 0.7-1.6s for the gpt-5.4 siblings) and scores 94.7% with a
-different failure mode: it treats reported/quoted `hey computer`
-as a real trigger and responds conversationally, instead of echoing.
-Strictly worse on latency AND accuracy compared to gpt-5.4-mini.
+- **gpt-5.4-mini @ reasoning=low** with the default `cleanup_openai.md`.
+  100% accuracy, 781 ms median, 992 ms p90 (lower p90 than gpt-4o-mini
+  because the reasoning model is more consistent). Profile lives at
+  `~/.config/justsayit/postprocess/gpt-5.4-mini-low.toml`. This is
+  the recommended default — approaches gpt-4o-mini speed at full
+  correctness.
+- **gpt-5.4-nano @ reasoning=high** with the `cleanup_openai_nano.md`
+  variant. Also 100% accuracy but p90 is 2.4x the mini-low p90, so
+  there is no speed or p99-consistency reason to prefer it. If nano's
+  per-token cost at `reasoning=high` ends up meaningfully cheaper
+  than mini@low in practice, worth a look — otherwise not.
+
+## Lessons learned in this tuning round
+
+- `reasoning=low` is enough for mini to maintain 100%. The `medium`
+  default is leaving latency on the table; drop to `low`.
+- `reasoning=low` is NOT enough for nano — it becomes too conservative
+  and echoes `Hey Computer, …` inputs instead of acting. Nano
+  apparently uses the reasoning pass to commit to assistant mode.
+- A nano-specific prompt tweak (stronger "when triggered you MUST
+  act; echoing is failure" reminder at the end of the prompt, saved
+  as `cleanup_openai_nano.md`) raised nano@low from 78.9% to 89.5%
+  but didn't close the gap to mini@low's 100%. The last 10% requires
+  more reasoning budget.
+- Per-model prompts are fine when they help. Keep the default
+  `cleanup_openai.md` unchanged for the mini/4o-mini profiles;
+  point the nano profile at `cleanup_openai_nano.md`.
 
 ## Kick-off prompt for a new iteration
 
