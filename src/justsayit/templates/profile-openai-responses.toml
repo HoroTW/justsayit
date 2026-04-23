@@ -26,7 +26,8 @@ reasoning_effort = "low"
 # responses_web_search_trigger = '\b[hH]?e[yi][,\.!?]?\s*[Cc]omput(er|a)\b'
 
 # Flat fee per web_search_call action (USD). $0.010 for all models.
-# web_search_price_per_call = 0.010
+# web_search_price_per_call = 0.010   # flat fee per `search` action
+# web_open_page_price_per_call = 0.010 # flat fee per `open_page` action (not in LLM usage tokens)
 
 # --- Pricing (USD / 1M tokens) — uncomment to log per-call cost ----------
 # gpt-5.4-mini pricing (2026-04):

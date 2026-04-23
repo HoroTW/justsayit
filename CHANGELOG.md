@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-04-23
+
+### Fixed
+
+- **Web search cost now counts only `search` actions** — `open_page` (URL
+  fetch) actions were previously included in the flat-fee count, inflating
+  the reported cost. Only `action.type == "search"` triggers the
+  `web_search_price_per_call` charge.
+- **`open_page` actions logged and priced separately** — new profile field
+  `web_open_page_price_per_call` (default `0.0`). These are billed as a flat
+  fee and do **not** appear in the LLM input-token usage field (unlike search
+  result content, which does).
+
 ## [0.15.0] - 2026-04-23
 
 ### Added

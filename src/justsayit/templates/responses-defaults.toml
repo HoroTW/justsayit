@@ -42,11 +42,13 @@ responses_web_search = false
 # plain cleanup calls. Empty = always include (when responses_web_search=true).
 responses_web_search_trigger = ""
 
-# Flat fee per web_search_call action (USD). 0.0 = don't log search cost.
+# Flat fee per `search` action (USD). 0.0 = don't log cost.
 # Pricing (all models): $10.00 / 1k calls = $0.010/call.
-# Search content tokens are billed additionally at the model's input rate.
-# Not reported in the API usage field — we count web_search_call items.
+# Search result tokens are billed at the model's input rate (in LLM usage).
 web_search_price_per_call = 0.0
+# Flat fee per `open_page` action (URL fetch). Billed separately from input
+# tokens — does NOT appear in the LLM usage field. 0.0 = don't log cost.
+web_open_page_price_per_call = 0.0
 
 # Image detail level when an image is supplied (e.g. via clipboard context).
 # "off" = never send images. "auto" = model decides low vs. high (default).

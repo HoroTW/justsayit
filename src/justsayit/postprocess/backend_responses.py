@@ -89,27 +89,43 @@ class ResponsesBackend(PostprocessorBase):
         output_items = data.get("output") or []
         text_parts = []
         search_count = 0
+        open_page_count = 0
         for item in output_items:
             if item.get("type") == "web_search_call" and item.get("status") == "completed":
-                search_count += 1
+                action_type = (item.get("action") or {}).get("type", "")
+                if action_type == "search":
+                    search_count += 1
+                elif action_type == "open_page":
+                    open_page_count += 1
             elif item.get("type") == "message":
                 for block in item.get("content") or []:
                     if block.get("type") == "output_text":
                         text_parts.append(block.get("text", ""))
         content = " ".join(text_parts).strip()
-        if search_count:
-            search_cost = search_count * self.profile.web_search_price_per_call
-            if search_cost:
-                log.info(
-                    "web search: %d call(s) × $%.4f = $%.4f "
-                    "(token cost for search results included in LLM usage below)",
-                    search_count, self.profile.web_search_price_per_call, search_cost,
-                )
+        if search_count or open_page_count:
+            any_price = (
+                self.profile.web_search_price_per_call
+                or self.profile.web_open_page_price_per_call
+            )
+            if any_price:
+                search_cost = search_count * self.profile.web_search_price_per_call
+                open_page_cost = open_page_count * self.profile.web_open_page_price_per_call
+                total_ws_cost = search_cost + open_page_cost
+                parts = []
+                if search_count:
+                    parts.append(f"{search_count} search × ${self.profile.web_search_price_per_call:.4f} = ${search_cost:.4f}")
+                if open_page_count:
+                    parts.append(f"{open_page_count} open_page × ${self.profile.web_open_page_price_per_call:.4f} = ${open_page_cost:.4f}")
+                log.info("web search: %s | total $%.4f", ", ".join(parts), total_ws_cost)
             else:
+                parts = []
+                if search_count:
+                    parts.append(f"{search_count} search")
+                if open_page_count:
+                    parts.append(f"{open_page_count} open_page")
                 log.info(
-                    "web search: %d call(s) "
-                    "(set web_search_price_per_call in profile to log cost)",
-                    search_count,
+                    "web search: %s (set web_search_price_per_call / web_open_page_price_per_call to log cost)",
+                    ", ".join(parts),
                 )
 
         # Normalize Responses API usage to the shape _log_usage expects.

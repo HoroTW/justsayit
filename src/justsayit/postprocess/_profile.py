@@ -143,8 +143,11 @@ class PostprocessProfile:
     # matches this regex (re.search). Keeps the ~4k token tool-schema
     # out of plain cleanup calls.
     responses_web_search_trigger: str = ""
-    # All models: $0.010/call + search content tokens at model rate.
+    # All models: $0.010/call flat fee per `search` action.
     web_search_price_per_call: float = 0.0
+    # Flat fee per `open_page` action (URL fetch). Billed separately from
+    # input tokens — not included in the LLM usage field.
+    web_open_page_price_per_call: float = 0.0
     # Image detail level when an image is provided (e.g. from the clipboard).
     # "off" = never send images. "auto" = model decides low vs. high (default).
     # "low" | "high" = force detail tier. "original" = full resolution (5.4+).
