@@ -52,9 +52,18 @@ Local Parakeet v3 voice dictation for Wayland.
   **fully customisable system prompts** for emojification,
   translation, summarisation, or your own style. Runs locally via
   `llama-cpp-python` or remotely against any **OpenAI-compatible
-  `/chat/completions` endpoint** (OpenAI, OpenRouter, Groq, vLLM,
-  Ollama, LM Studio, …). API keys can live in a shared
+  `/chat/completions` or `/v1/responses` endpoint** (OpenAI, OpenRouter,
+  Groq, vLLM, Ollama, LM Studio, …). API keys can live in a shared
   `~/.config/justsayit/.env`. See [docs/postprocessing.md](docs/postprocessing.md).
+  - **OpenAI Responses API** (`base = "responses"`) — 24 h cached system-prompt
+    prefix keeps repeat costs near zero; shipped default is `gpt-5.4-mini` with
+    `reasoning_effort = low` (~0.0003 € per cleanup, ~0.0008 € per Hey-Computer
+    request without web search)
+  - **Web search on demand** — add `responses_web_search = true` to the profile;
+    the model fetches live pages when it needs them (e.g. "summarise the article
+    at the link in my clipboard"). ~0.025 € for a request with two searches
+  - **Cost logging** — set `input_price_per_1m` / `output_price_per_1m` in the
+    profile to log a per-request cost breakdown at INFO level
 - **JSON regex post-processing** with capture groups (default chain
   handles dictated punctuation in DE+EN — works without an LLM)
 - **Personal context sidecar** (`~/.config/justsayit/context.toml`) so
@@ -130,17 +139,13 @@ You can check the [CHANGELOG.md](CHANGELOG.md) for new features and fixes.
 To update, pull the latest changes and run the update command:
 
 ```sh
-justsayit --update
+./install.sh --update
 
-# To check for the new feature config flags in the config use:
+# To check for new config flags:
 diff -u --color <(justsayit show-defaults config) ~/.config/justsayit/config.toml
-# or your favorite diff tool, e.g. meld
-```
 
-
-# for a harder reset + all new config options (but loosing your current):
+# For a harder reset (picks up all new config keys, loses your overrides):
 justsayit init
-
 ```
 
 ## Known gotchas
@@ -186,12 +191,16 @@ justsayit init
 src/justsayit/
     audio.py             mic capture + Silero VAD state machine
     cli.py               argparse + GLib glue
-    config.py            TOML loader with dataclass defaults + .env
+    pipeline.py          transcribe → filter → LLM → paste flow
+    config/              TOML loader, dataclass schema, .env, path helpers
     filters.py           regex post-processor
     model.py             download Parakeet + VAD to ~/.cache/justsayit
     overlay.py           gtk4-layer-shell bar with mic meter
     paste.py             wl-copy + dotool helpers
-    postprocess.py       LLM cleanup (local llama-cpp + remote OpenAI)
+    postprocess/         LLM cleanup backends
+        backend_local.py     llama-cpp-python GGUF
+        backend_remote.py    OpenAI /chat/completions
+        backend_responses.py OpenAI /v1/responses (cached + web search)
     shortcuts.py         XDG Desktop Portal GlobalShortcuts client
     sound.py             notification chimes
     transcribe.py        backend dispatcher
@@ -199,6 +208,7 @@ src/justsayit/
     transcribe_whisper.py    faster-whisper backend
     transcribe_openai.py     OpenAI-compatible /audio/transcriptions
     tray.py              StatusNotifier tray icon + menu
+    _http.py             shared HTTP retry helper
 docs/
     install.md           detailed install (Arch + Nix)
     configuration.md     backends, activation, overlay, sounds, tray, filters

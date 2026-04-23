@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-04-23
+
+### Changed
+
+- README: document Responses API, web search, cost logging, updated Layout
+  section to reflect package structure, fix `--update` command.
+
 ## [0.14.0] - 2026-04-23
 
 ### Added
