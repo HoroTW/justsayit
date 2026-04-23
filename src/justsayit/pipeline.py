@@ -83,17 +83,20 @@ class SegmentPipeline:
             llm_overlay_text = final
             llm_overlay_thought = ""
             paste_text = final
-            extra_context = consume_clipboard_fn() if consume_clipboard_fn is not None else ""
+            if consume_clipboard_fn is not None:
+                extra_context, extra_image, extra_image_mime = consume_clipboard_fn()
+            else:
+                extra_context, extra_image, extra_image_mime = "", None, ""
             t_llm0 = time.monotonic()
             try:
                 result = pp.process_with_reasoning(
-                    final, extra_context=extra_context
+                    final, extra_context=extra_context,
+                    extra_image=extra_image, extra_image_mime=extra_image_mime,
                 )
                 t_llm1 = time.monotonic()
                 log.info("LLM call took %.0fms", (t_llm1 - t_llm0) * 1000)
                 cleaned = result.text
-                if cleaned != final:
-                    log.info("LLM cleaned: %r -> %r", final, cleaned)
+                log.info("LLM: %r -> %r", final, cleaned)
                 llm_overlay_text = cleaned
                 paste_text = cleaned
             except Exception as exc:
@@ -176,7 +179,7 @@ class SegmentPipeline:
             elapsed = time.monotonic() - seg.stop_requested_at
             wait = delay_target - elapsed
             if wait > 0:
-                log.info(
+                log.debug(
                     "waiting %.0fms for hotkey modifiers to release "
                     "(elapsed since stop=%.0fms, target=%.0fms)",
                     wait * 1000,
@@ -185,7 +188,7 @@ class SegmentPipeline:
                 )
                 time.sleep(wait)
             else:
-                log.info(
+                log.debug(
                     "processing already took %.0fms ≥ release target %.0fms; "
                     "pasting immediately",
                     elapsed * 1000,
@@ -198,15 +201,10 @@ class SegmentPipeline:
                 self.overlay.push_linger_start()
             return
         try:
-            log.info(
-                "pasting %d chars via %s (backend=%s)",
-                len(final),
-                self.cfg.paste.paste_combo,
-                self.cfg.paste.backend,
-            )
+            log.info("pasting %d chars", len(final))
             t_paste0 = time.monotonic()
             self.paster.paste(final)
-            log.info("paste call returned after %.0fms", (time.monotonic() - t_paste0) * 1000)
+            log.debug("paste call returned after %.0fms", (time.monotonic() - t_paste0) * 1000)
         except PasteError as e:
             log.error("paste failed: %s", e)
         finally:

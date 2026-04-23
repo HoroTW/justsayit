@@ -9,7 +9,7 @@ from ._profile import ProcessResult
 
 
 class RemoteBackend(PostprocessorBase):
-    def _run(self, text: str, extra_context: str = "") -> ProcessResult:
+    def _run(self, text: str, extra_context: str = "", extra_image: bytes | None = None, extra_image_mime: str = "") -> ProcessResult:
         """OpenAI-compatible /chat/completions POST."""
         api_key = self._require_api_key()
         if not self.profile.model:

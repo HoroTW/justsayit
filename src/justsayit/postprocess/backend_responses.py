@@ -1,6 +1,7 @@
 """OpenAI Responses API backend (/v1/responses)."""
 from __future__ import annotations
 
+import base64
 import re
 from typing import Any
 
@@ -9,7 +10,7 @@ from ._profile import ProcessResult
 
 
 class ResponsesBackend(PostprocessorBase):
-    def _run(self, text: str, extra_context: str = "") -> ProcessResult:
+    def _run(self, text: str, extra_context: str = "", extra_image: bytes | None = None, extra_image_mime: str = "") -> ProcessResult:
         """OpenAI Responses API POST (/v1/responses).
 
         The static system prompt goes in ``instructions`` (cached prefix);
@@ -23,23 +24,39 @@ class ResponsesBackend(PostprocessorBase):
                 "set 'model' in the profile (e.g. \"gpt-5.4-mini\")."
             )
 
-        static_prompt, dynamic_prompt = self._build_system_prompt_parts(extra_context)
+        has_image = bool(extra_image and extra_image_mime and self.profile.image_detail != "off")
+        static_prompt, dynamic_prompt = self._build_system_prompt_parts(
+            extra_context, extra_image_provided=has_image
+        )
         log.debug("assembled Responses API instructions (static/cached):\n%s", static_prompt)
         if dynamic_prompt:
             log.debug("assembled Responses API dynamic context (uncached):\n%s", dynamic_prompt)
 
         user_text = self.profile.user_template.format(text=text)
-        if dynamic_prompt:
-            input_payload: Any = [
-                {
+        user_content: list[dict] = [{"type": "input_text", "text": user_text}]
+        if has_image:
+            b64 = base64.b64encode(extra_image).decode("ascii")  # type: ignore[arg-type]
+            user_content.append({
+                "type": "input_image",
+                "image_url": f"data:{extra_image_mime};base64,{b64}",
+                "detail": self.profile.image_detail,
+            })
+            log.debug(
+                "attaching image (%s, %d bytes, detail=%s)",
+                extra_image_mime, len(extra_image), self.profile.image_detail,
+            )
+
+        if dynamic_prompt or len(user_content) > 1:
+            input_payload: Any = []
+            if dynamic_prompt:
+                input_payload.append({
                     "role": "developer",
                     "content": [{"type": "input_text", "text": dynamic_prompt}],
-                },
-                {
-                    "role": "user",
-                    "content": [{"type": "input_text", "text": user_text}],
-                },
-            ]
+                })
+            input_payload.append({
+                "role": "user",
+                "content": user_content,
+            })
         else:
             input_payload = user_text
 
@@ -55,7 +72,7 @@ class ResponsesBackend(PostprocessorBase):
             body["reasoning"] = {"effort": self.profile.reasoning_effort}
         if self.profile.responses_web_search:
             trigger = self.profile.responses_web_search_trigger
-            if not trigger or extra_context or re.search(trigger, text):
+            if not trigger or extra_context or has_image or re.search(trigger, text):
                 body["tools"] = [{"type": "web_search"}]
 
         url = self.profile.endpoint.rstrip("/") + "/responses"

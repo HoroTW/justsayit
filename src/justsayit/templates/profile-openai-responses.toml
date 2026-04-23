@@ -34,6 +34,12 @@ reasoning_effort = "low"
 # output_price_per_1m = 4.50
 # cached_input_price_per_1m = 0.075
 
+# Image detail when an image is provided (e.g. clipboard-context button armed).
+# Default "auto" lets the model pick low vs. high. "high" for OCR / screenshots;
+# "low" ~85 tokens flat; "original" = no resize (gpt-5.4 only). "off" disables.
+# Max cost at gpt-5.4-mini rate: ~0.0015 € per high-detail image.
+# image_detail = "auto"
+
 # --- Common overrides -----------------------------------------------------
 # api_key = "sk-..."
 # api_key_env = "OPENAI_API_KEY"

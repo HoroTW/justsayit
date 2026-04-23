@@ -145,6 +145,10 @@ class PostprocessProfile:
     responses_web_search_trigger: str = ""
     # All models: $0.010/call + search content tokens at model rate.
     web_search_price_per_call: float = 0.0
+    # Image detail level when an image is provided (e.g. from the clipboard).
+    # "off" = never send images. "auto" = model decides low vs. high (default).
+    # "low" | "high" = force detail tier. "original" = full resolution (5.4+).
+    image_detail: str = "auto"
 
     def __post_init__(self) -> None:
         # Auto-infer remote backend when endpoint is set and base wasn't

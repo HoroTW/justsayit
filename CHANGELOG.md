@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-04-23
+
+### Added
+
+- **Clipboard image input for Responses API** — arm the clipboard-context
+  button when an image is on the clipboard; the image is sent to the model
+  alongside your dictation. New profile setting `image_detail`
+  (`"auto"` default | `"low"` | `"high"` | `"off"`). Set `"high"` for OCR
+  and screenshot analysis; `"off"` disables image sending. Max cost at
+  gpt-5.4-mini input rate: ~0.0015 € per high-detail image. Only
+  `base = "responses"` uses it; other backends silently ignore. Wayland
+  image reading via `wl-paste --type image/png` (also supports
+  jpeg/webp/gif).
+
+### Changed
+
+- **LLM input→output always logged at INFO** — logs `LLM: <input> -> <output>`
+  unconditionally, even when the model echoes the transcript unchanged.
+- **Dynamic context log split** — INFO shows only "using dynamic context from
+  \<path\>"; the content itself is now at DEBUG.
+- **Paste and release-delay timing logs moved to DEBUG.**
+
 ## [0.14.1] - 2026-04-23
 
 ### Changed

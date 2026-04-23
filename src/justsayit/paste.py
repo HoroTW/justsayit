@@ -107,7 +107,7 @@ def copy_to_clipboard(
         t.start()
     for t in threads:
         t.join()
-    log.info(
+    log.debug(
         "wl-copy parallel: regular=%.0fms primary=%.0fms",
         results[0][0],
         results[1][0],
@@ -123,6 +123,13 @@ _TEXT_MIME_PREFERENCE = (
     "UTF8_STRING",
     "STRING",
     "TEXT",
+)
+
+_IMAGE_MIME_PREFERENCE = (
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+    "image/gif",
 )
 
 
@@ -194,6 +201,47 @@ def read_clipboard(*, timeout: float = 2.0, text_only: bool = False) -> str | No
     if proc.returncode != 0:
         return None
     return proc.stdout.decode("utf-8", errors="replace")
+
+
+def read_clipboard_image(*, timeout: float = 2.0) -> tuple[bytes, str] | None:
+    """Return ``(raw_bytes, mime_type)`` for an image on the clipboard, or ``None``.
+
+    Probes ``wl-paste --list-types`` and picks the first supported image MIME
+    type (png > jpeg > webp > gif). Returns ``None`` if no image is offered,
+    ``wl-paste`` is unavailable, or reading fails.
+    """
+    wl_paste = shutil.which("wl-paste")
+    if not wl_paste:
+        return None
+    try:
+        probe = subprocess.run(
+            [wl_paste, "--list-types"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return None
+    if probe.returncode != 0:
+        return None
+    offered = probe.stdout.decode("ascii", "replace").split()
+    mime = next((m for m in _IMAGE_MIME_PREFERENCE if m in offered), None)
+    if mime is None:
+        return None
+    try:
+        proc = subprocess.run(
+            [wl_paste, "--type", mime],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return None
+    if proc.returncode != 0 or not proc.stdout:
+        return None
+    return proc.stdout, mime
 
 
 def restore_clipboard(text: str, *, timeout: float = 2.0, sensitive: bool = False) -> None:
@@ -347,7 +395,7 @@ class Paster:
             # Inject via dotool type — clipboard never touched.
             self._send_dotool_type(text)
             t_key = time.monotonic()
-            log.info(
+            log.debug(
                 "paste (type-direct) timings: total=%.0fms",
                 (t_key - t0) * 1000,
             )
@@ -367,7 +415,7 @@ class Paster:
             t_settle = time.monotonic()
             self._send_key(self.combo)
             t_key = time.monotonic()
-            log.info(
+            log.debug(
                 "paste timings: snap=%.0fms copy=%.0fms settle=%.0fms key=%.0fms total=%.0fms",
                 (t_snap - t0) * 1000,
                 (t_copy - t_snap) * 1000,

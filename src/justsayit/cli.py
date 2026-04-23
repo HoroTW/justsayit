@@ -64,7 +64,7 @@ from justsayit.postprocess import (
     profiles_dir,
 )
 from justsayit.overlay import OverlayWindow
-from justsayit.paste import PasteError, Paster, read_clipboard
+from justsayit.paste import PasteError, Paster, read_clipboard, read_clipboard_image
 from justsayit.shortcuts import GlobalShortcutClient
 from justsayit.sound import SoundPlayer
 from justsayit.transcribe import TranscriberBase, make_transcriber
@@ -750,23 +750,29 @@ class App:
         if self.overlay is not None:
             self.overlay.push_clipboard_context_armed(False)
 
-    def _consume_clipboard_context(self) -> str:
-        """If the flag is armed, read the clipboard, clear the flag, and
-        update the overlay. Returns "" when not armed or clipboard empty."""
+    def _consume_clipboard_context(self) -> tuple[str, bytes | None, str]:
+        """If the flag is armed, read the clipboard (text or image), clear the
+        flag, and update the overlay.
+        Returns ``("", None, "")`` when not armed or clipboard empty."""
         if not self._clipboard_context_armed:
-            return ""
+            return "", None, ""
         self._clipboard_context_armed = False
         if self.overlay is not None:
             self.overlay.push_clipboard_context_armed(False)
         clip = read_clipboard(text_only=True)
-        if not clip:
+        if clip:
+            log.info("injecting clipboard as one-time LLM context: %d chars", len(clip))
+            return clip, None, ""
+        img = read_clipboard_image()
+        if img:
+            img_bytes, img_mime = img
             log.info(
-                "clipboard-context armed but clipboard is empty, unavailable,"
-                " or non-text (e.g. an image) — skipping injection"
+                "injecting clipboard image as one-time LLM context: %d bytes (%s)",
+                len(img_bytes), img_mime,
             )
-            return ""
-        log.info("injecting clipboard as one-time LLM context: %d chars", len(clip))
-        return clip
+            return "", img_bytes, img_mime
+        log.info("clipboard-context armed but clipboard is empty or unavailable — skipping injection")
+        return "", None, ""
 
     def _handle_segment(self, seg: Segment) -> None:
         """Process one audio segment. Delegates to SegmentPipeline when set up,

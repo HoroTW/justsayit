@@ -48,6 +48,13 @@ responses_web_search_trigger = ""
 # Not reported in the API usage field — we count web_search_call items.
 web_search_price_per_call = 0.0
 
+# Image detail level when an image is supplied (e.g. via clipboard context).
+# "off" = never send images. "auto" = model decides low vs. high (default).
+# "low" ~85 tokens flat; "high" up to ~2,489 tokens (1,536 patches × 1.62).
+# "original" = full resolution without resizing (gpt-5.4 and later only).
+# Max cost at gpt-5.4-mini input rate: ~0.0015 € per high-detail image.
+image_detail = "auto"
+
 # --- Token pricing (USD per 1 million tokens) ----------------------------
 input_price_per_1m = 0.0
 output_price_per_1m = 0.0

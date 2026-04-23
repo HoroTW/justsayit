@@ -97,7 +97,7 @@ class LocalBackend(PostprocessorBase):
 
         self._llm.chat_handler = _handler
 
-    def _run(self, text: str, extra_context: str = "") -> ProcessResult:
+    def _run(self, text: str, extra_context: str = "", extra_image: bytes | None = None, extra_image_mime: str = "") -> ProcessResult:
         with self._lock:
             if self._llm is None:
                 self._llm = self._build()

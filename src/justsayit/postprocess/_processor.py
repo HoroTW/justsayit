@@ -127,11 +127,10 @@ class PostprocessorBase:
             return ""
         dynamic = proc.stdout.strip()
         if dynamic:
-            log.info(
-                "dynamic context from %s:\n%s", Path(script).expanduser(), dynamic,
-            )
+            log.info("using dynamic context from %s", Path(script).expanduser())
+            log.debug("dynamic context:\n%s", dynamic)
         else:
-            log.info("dynamic context script returned empty output: %s", script)
+            log.debug("dynamic context script returned empty output: %s", script)
         return dynamic
 
     def _require_api_key(self) -> str:
@@ -177,15 +176,17 @@ class PostprocessorBase:
             for m in self._paste_strip.finditer(text)
         ]
 
-    def _build_system_prompt_parts(self, extra_context: str = "") -> tuple[str, str]:
+    def _build_system_prompt_parts(
+        self,
+        extra_context: str = "",
+        extra_image_provided: bool = False,
+    ) -> tuple[str, str]:
         """Return ``(static, dynamic)`` parts of the system prompt.
 
         *static*  — prompt file + ``append_to_system_prompt`` + user context.
                     Stable across calls; safe to cache.
         *dynamic* — ``dynamic-context.sh`` output + clipboard content.
                     Changes every call; must not be cached.
-
-        Used by :meth:`_responses_process`.
         """
         prompt = self.profile.system_prompt.strip()
         if not prompt and self.profile.system_prompt_file.strip():
@@ -212,6 +213,12 @@ class PostprocessorBase:
                 f"{clip}\n"
                 "## END clipboard content\n"
             )
+        if extra_image_provided and not clip:
+            dynamic_parts.append(
+                "# The user has shared an image from their clipboard as additional context "
+                "(This always means you are in Assistant mode!)\n"
+                "Analyze or help with the image based on the spoken request."
+            )
         return prompt, "\n\n".join(dynamic_parts)
 
     def _build_system_prompt(self, extra_context: str = "") -> str:
@@ -232,21 +239,34 @@ class PostprocessorBase:
         """No-op for remote backends. LocalBackend overrides this."""
         pass
 
-    def _run(self, text: str, extra_context: str = "") -> ProcessResult:
+    def _run(
+        self,
+        text: str,
+        extra_context: str = "",
+        extra_image: bytes | None = None,
+        extra_image_mime: str = "",
+    ) -> ProcessResult:
         raise NotImplementedError
 
     def process_with_reasoning(
-        self, text: str, *, extra_context: str = ""
+        self,
+        text: str,
+        *,
+        extra_context: str = "",
+        extra_image: bytes | None = None,
+        extra_image_mime: str = "",
     ) -> ProcessResult:
         """Run the LLM on *text* and return the result including any reasoning.
 
         Routes to the subclass ``_run`` method. ``extra_context`` is appended
         to the system prompt under a labeled "Clipboard as additional context"
         section — used by the overlay's clipboard-context button.
-        ``text`` falls back to the original input when the model returns
-        an empty response.
+        ``extra_image`` / ``extra_image_mime`` carry a raw image captured from
+        the clipboard; only ``ResponsesBackend`` uses them (other backends
+        silently ignore). ``text`` falls back to the original input when the
+        model returns an empty response.
         """
-        result = self._run(text, extra_context)
+        result = self._run(text, extra_context, extra_image, extra_image_mime)
         if not result.text:
             result = ProcessResult(text=text, reasoning=result.reasoning)
         return result
