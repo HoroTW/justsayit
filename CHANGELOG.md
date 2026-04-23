@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-04-23
+
+### Added
+
+- **OpenAI Responses API backend** (`base = "responses"`) — uses `/v1/responses`
+  with a cached `instructions` prefix, optional web search tool, and
+  `reasoning_effort` support.
+- **Web search always attached in clipboard/assistant mode** — when clipboard
+  context is provided the `responses_web_search_trigger` regex is bypassed
+  (clipboard already forces assistant mode, so the tool should be available).
+- **Retry logic for OpenAI transcription backend** — new `ModelConfig` fields
+  `openai_retries` (default 3) and `openai_retry_delay` (default 1.0 s) retry
+  on transient HTTP errors, matching the postprocess backend behaviour.
+- **`install.sh --update` auto-restores llama-cpp-python** — if postprocess is
+  enabled but the package was dropped by `uv sync`, `--update` now reinstalls
+  it (Vulkan build if cmake + vulkan are present, CPU fallback otherwise).
+
+### Changed
+
+- **`postprocess.py` split into a package** — one file per backend:
+  `backend_local.py`, `backend_remote.py`, `backend_responses.py`. Adding a
+  backend is now one new file + one line in the factory.
+- **`config.py` split into `config/_schema.py` + `config/_io.py`** — dataclasses
+  separated from I/O helpers. Monkeypatch target: `justsayit.config._io.config_dir`.
+- **Segment pipeline extracted** into `pipeline.py`; boot helpers into `_boot.py`;
+  subcommands into `_subcommands.py`. `cli.py` is now UI-only.
+- **Centralized HTTP retry** into `src/justsayit/_http.py`
+  (`request_with_retry(req, *, timeout, retries, delay, label)`). Both the
+  postprocess `_http_post` and transcription backends delegate to it.
+- **`ensure_profile(content, path)`** replaces the 4 named `ensure_*_profile`
+  wrappers — callers now pass content and path explicitly.
+- **Unified system prompt ordering** — dynamic content (dynamic-context.sh,
+  clipboard) always appended after static instructions across all backends.
+- **System prompt log lines demoted** from `INFO` to `DEBUG`.
+- **CLAUDE.md** updated with current architecture and new §5 "Modularization
+  over DRY" guideline.
+
 ## [0.13.35] - 2026-04-23
 
 ### Changed
