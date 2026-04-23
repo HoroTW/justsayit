@@ -361,7 +361,7 @@ def test_warmup_loads_model(tmp_path):
     (tmp_path / "model.gguf").write_bytes(b"fake")
     pp = LLMPostprocessor(profile)
     mock_llm = MagicMock()
-    with patch("justsayit.postprocess.LLMPostprocessor._build", return_value=mock_llm):
+    with patch("justsayit.postprocess.backend_local.LocalBackend._build", return_value=mock_llm):
         with patch.object(pp, "_install_chat_template_kwargs"):
             pp.warmup()
     assert pp._llm is mock_llm
@@ -1232,7 +1232,7 @@ def test_remote_process_uses_env_key_when_literal_empty(monkeypatch, tmp_path):
     (which now also includes anything the .env loader merged in)."""
     from unittest.mock import MagicMock
     import json
-    import justsayit.config as cfg_mod
+    import justsayit.config._io as cfg_mod
 
     monkeypatch.setattr(cfg_mod, "config_dir", lambda: tmp_path)
     cfg_mod._DOTENV_LOADED = False
@@ -1263,7 +1263,7 @@ def test_remote_process_uses_env_key_when_literal_empty(monkeypatch, tmp_path):
 def test_remote_process_raises_when_no_key(monkeypatch, tmp_path):
     """Endpoint set but no key anywhere → clear error message that names
     the env var the user should set."""
-    import justsayit.config as cfg_mod
+    import justsayit.config._io as cfg_mod
 
     monkeypatch.setattr(cfg_mod, "config_dir", lambda: tmp_path)
     cfg_mod._DOTENV_LOADED = False

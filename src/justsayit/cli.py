@@ -42,6 +42,7 @@ from justsayit import __version__
 from justsayit.audio import AudioEngine, Segment, State
 from justsayit.config import (
     Config,
+    _default_filter_chain,
     config_dir,
     ensure_config_file,
     ensure_dirs,
@@ -50,7 +51,7 @@ from justsayit.config import (
     render_config_toml,
     save_config,
 )
-from justsayit.filters import apply_filters, load_filters
+from justsayit.filters import load_filters
 from justsayit.model import ensure_models, ensure_vad
 from justsayit.postprocess import (
     KNOWN_LLM_MODELS,
@@ -68,6 +69,7 @@ from justsayit.shortcuts import GlobalShortcutClient
 from justsayit.sound import SoundPlayer
 from justsayit.transcribe import TranscriberBase, make_transcriber
 from justsayit.tray import MenuItem, TrayIcon, open_with_xdg
+from justsayit.pipeline import SegmentPipeline
 
 ICON_ACTIVE = "audio-input-microphone"
 ICON_PAUSED = "microphone-sensitivity-muted-symbolic"
@@ -104,6 +106,7 @@ class App:
         self.paster: Paster | None = None
         self.sound_player: SoundPlayer | None = None
         self.postprocessor: LLMPostprocessor | None = None
+        self.pipeline: SegmentPipeline | None = None
         self.tray: TrayIcon | None = None
         self.gtk_app: Gtk.Application | None = None
         self.filters = []
@@ -168,6 +171,13 @@ class App:
         self.transcriber = make_transcriber(self.cfg, self.model_paths)
         log.info("warming up %s recognizer…", self.cfg.model.backend)
         self.transcriber.warmup()
+        self.pipeline = SegmentPipeline(
+            self.cfg,
+            self.transcriber,
+            self.filters,
+            self.paster,
+            no_paste=self.no_paste,
+        )
 
     def setup_postprocessor(self) -> None:
         if not self.cfg.postprocess.enabled:
@@ -176,6 +186,8 @@ class App:
             # keeps routing through it ("LLM: off" but text still cleaned).
             self.postprocessor = None
             log.info("LLM postprocessor disabled")
+            if self.pipeline is not None:
+                self.pipeline.postprocessor = None
             return
         try:
             profile = load_profile(self.cfg.postprocess.profile)
@@ -192,6 +204,8 @@ class App:
         except Exception:
             log.exception("LLM postprocessor failed to load; postprocessing disabled")
             self.postprocessor = None
+        if self.pipeline is not None:
+            self.pipeline.postprocessor = self.postprocessor
 
     def setup_sound(self) -> None:
         if not self.cfg.sound.enabled:
@@ -327,6 +341,8 @@ class App:
         except PasteError as e:
             log.error("paster failed to start: %s", e)
             self.paster = None
+        if self.pipeline is not None:
+            self.pipeline.paster = self.paster
 
     def toggle(self) -> None:
         """Toggle recording. Called by the global shortcut hotkey and the DBus action."""
@@ -753,177 +769,29 @@ class App:
         return clip
 
     def _handle_segment(self, seg: Segment) -> None:
+        """Process one audio segment. Delegates to SegmentPipeline when set up,
+        otherwise builds a transient pipeline from current App state (used in tests
+        that set app.transcriber directly without going through setup_transcriber).
+        """
+        if self.pipeline is not None:
+            self.pipeline._last_transcription_time = self._last_transcription_time
+            self.pipeline.handle(seg, consume_clipboard_fn=self._consume_clipboard_context)
+            self._last_transcription_time = self.pipeline._last_transcription_time
+            return
+        # Fallback: build a transient pipeline from App state (tests / no-setup path).
         assert self.transcriber is not None
-        duration = len(seg.samples) / seg.sample_rate
-        min_duration = self.cfg.audio.skip_segments_below_seconds
-        if min_duration > 0 and duration < min_duration:
-            log.info(
-                "skipping short segment: %.2fs < %.2fs (reason=%s)",
-                duration,
-                min_duration,
-                seg.reason,
-            )
-            if self.overlay is not None:
-                self.overlay.push_hide()
-            return
-        log.info("transcribing %.2fs (reason=%s)", duration, seg.reason)
-        t0 = time.monotonic()
-        raw = self.transcriber.transcribe(seg.samples, seg.sample_rate)
-        dt = time.monotonic() - t0
-        log.info("transcription done in %.2fs: raw=%r", dt, raw)
-        if not raw:
-            log.info("empty transcription; nothing to paste")
-            if self.overlay is not None:
-                self.overlay.push_hide()
-            return
-        final = apply_filters(raw, self.filters)
-        if final != raw:
-            log.info("filters changed output: %r -> %r", raw, final)
-
-        # Snapshot pp before the overlay update so we know whether to show the
-        # LLM field immediately (as "Wait for LLM processing…").
-        pp = self.postprocessor  # snapshot — avoids TOCTOU with tray thread
-
-        # Show the filtered text in the top field.  The bottom (LLM) field is
-        # shown as a waiting placeholder if the postprocessor is active.
-        if self.overlay is not None:
-            self.overlay.push_detected_text(final, llm_pending=(pp is not None))
-
-        if pp is not None:
-            llm_overlay_text = final
-            llm_overlay_thought = ""
-            paste_text = final
-            extra_context = self._consume_clipboard_context()
-            t_llm0 = time.monotonic()
-            try:
-                result = pp.process_with_reasoning(
-                    final, extra_context=extra_context
-                )
-                t_llm1 = time.monotonic()
-                log.info("LLM call took %.0fms", (t_llm1 - t_llm0) * 1000)
-                cleaned = result.text
-                if cleaned != final:
-                    log.info("LLM cleaned: %r -> %r", final, cleaned)
-                llm_overlay_text = cleaned
-                paste_text = cleaned
-            except Exception as exc:
-                log.exception("LLM postprocessor failed; using unprocessed text")
-                detail = str(exc).strip().splitlines()[0]
-                llm_overlay_text = f"LLM error: {detail or exc.__class__.__name__}"
-            else:
-                stripped = pp.strip_for_paste(paste_text)
-                # Surface the reasoning preamble (whatever paste_strip_regex
-                # matched) above the body so the user sees the full LLM reply
-                # but only the stripped body lands in the focused window.
-                if stripped != paste_text:
-                    matches = [
-                        m.strip()
-                        for m in pp.find_strip_matches(paste_text)
-                        if m.strip()
-                    ]
-                    llm_overlay_thought = "\n".join(matches)
-                    log.info(
-                        "paste_strip_regex applied: %d -> %d chars",
-                        len(paste_text),
-                        len(stripped),
-                    )
-                # Remote backends (DeepSeek, Qwen via vLLM, OpenRouter) can
-                # return structured reasoning in a separate field. When
-                # present, prefer that — it's cleaner than regex-matched
-                # inline blocks (and the local path can't populate it).
-                if result.reasoning:
-                    llm_overlay_thought = result.reasoning
-                    log.info(
-                        "remote returned reasoning field: %d chars",
-                        len(result.reasoning),
-                    )
-                llm_overlay_text = stripped
-                paste_text = stripped
-            # Always update the LLM field — clears "Wait…" even when text is unchanged.
-            if self.overlay is not None:
-                self.overlay.push_llm_text(
-                    llm_overlay_text, thought=llm_overlay_thought
-                )
-            final = paste_text
-
-        # Space prefix / suffix (applied to paste content only; not shown in overlay)
-        auto_space_ms = self.cfg.paste.auto_space_timeout_ms
-        trailing_space = self.cfg.paste.append_trailing_space
-        now = time.monotonic()
-
-        if auto_space_ms > 0 and not trailing_space:
-            if self._last_transcription_time is not None:
-                seg_duration = len(seg.samples) / seg.sample_rate
-                recording_started_at = now - seg_duration
-                elapsed_ms = (
-                    recording_started_at - self._last_transcription_time
-                ) * 1000.0
-                if elapsed_ms <= auto_space_ms:
-                    log.debug(
-                        "auto-space: elapsed=%.0fms ≤ timeout=%dms — prepending space",
-                        elapsed_ms,
-                        auto_space_ms,
-                    )
-                    final = " " + final
-
-        if trailing_space:
-            final = final + " "
-
-        self._last_transcription_time = now
-
-        print(final, flush=True)
-        if self.no_paste or not self.cfg.paste.enabled:
-            log.info("paste disabled — text only printed")
-            if self.overlay is not None:
-                self.overlay.push_linger_start()
-            return
-
-        # Give the user a moment to let go of the stop-hotkey modifiers
-        # before we synthesise ctrl+shift+v, otherwise the compositor may
-        # see e.g. "Super+Ctrl+Shift+V" and not paste.
-        if seg.stop_requested_at is not None:
-            delay_target = self.cfg.paste.release_delay_ms / 1000.0
-            elapsed = time.monotonic() - seg.stop_requested_at
-            wait = delay_target - elapsed
-            if wait > 0:
-                log.info(
-                    "waiting %.0fms for hotkey modifiers to release "
-                    "(elapsed since stop=%.0fms, target=%.0fms)",
-                    wait * 1000,
-                    elapsed * 1000,
-                    delay_target * 1000,
-                )
-                time.sleep(wait)
-            else:
-                log.info(
-                    "processing already took %.0fms ≥ release target %.0fms; "
-                    "pasting immediately",
-                    elapsed * 1000,
-                    delay_target * 1000,
-                )
-
-        if self.paster is None:
-            log.warning("paster not ready; skipping paste")
-            if self.overlay is not None:
-                self.overlay.push_linger_start()
-            return
-        try:
-            log.info(
-                "pasting %d chars via %s (backend=%s)",
-                len(final),
-                self.cfg.paste.paste_combo,
-                self.cfg.paste.backend,
-            )
-            t_paste0 = time.monotonic()
-            self.paster.paste(final)
-            log.info("paste call returned after %.0fms", (time.monotonic() - t_paste0) * 1000)
-        except PasteError as e:
-            log.error("paste failed: %s", e)
-        finally:
-            # Linger so the user can read the transcribed text regardless of
-            # whether paste succeeded or failed.
-            if self.overlay is not None:
-                self.overlay.push_linger_start()
+        _pl = SegmentPipeline(
+            self.cfg,
+            self.transcriber,
+            self.filters,
+            self.paster,
+            no_paste=self.no_paste,
+        )
+        _pl.postprocessor = self.postprocessor
+        _pl.overlay = self.overlay
+        _pl._last_transcription_time = self._last_transcription_time
+        _pl.handle(seg, consume_clipboard_fn=self._consume_clipboard_context)
+        self._last_transcription_time = _pl._last_transcription_time
 
     # --- GTK lifecycle -----------------------------------------------------
 
@@ -1000,6 +868,8 @@ class App:
                 self.setup_models()
                 self.setup_filters()
                 self.setup_transcriber()
+                if self.pipeline is not None:
+                    self.pipeline.overlay = self.overlay
                 self.setup_postprocessor()
                 self.setup_sound()
                 self.setup_audio()

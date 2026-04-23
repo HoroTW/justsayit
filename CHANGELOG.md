@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.31] - 2026-04-23
+
+### Changed
+
+- **Postprocess backends split into separate files.** `_processor.py` is
+  now a base class (`PostprocessorBase`) + shared HTTP/logging utilities.
+  Each backend is its own file — `backend_local.py` (llama-cpp-python
+  GGUF), `backend_remote.py` (OpenAI-compatible `/chat/completions`),
+  `backend_responses.py` (OpenAI Responses API). `make_postprocessor()`
+  factory selects the right one; `LLMPostprocessor` remains as an alias.
+  Adding a new backend is now a single file + one factory line.
+- **Config split into a package.** `config.py` → `config/` with
+  `_schema.py` (dataclasses) and `_io.py` (paths, env, load/save). All
+  existing `from justsayit.config import …` imports still work.
+- **Segment pipeline extracted from `cli.py`.** `App._handle_segment`
+  logic moved to `SegmentPipeline` in `pipeline.py`; `App` keeps a thin
+  delegating wrapper so tests are unaffected.
+
 ## [0.13.30] - 2026-04-22
 
 ### Removed

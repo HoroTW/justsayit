@@ -21,7 +21,7 @@ from ._models import (
     find_hf_q4_filename,
     update_profile_model,
 )
-from ._processor import LLMPostprocessor
+from ._processor import LLMPostprocessor, PostprocessorBase
 from ._profile import (
     PostprocessProfile,
     ProcessResult,
@@ -48,6 +48,25 @@ from ._profile import (
     profiles_dir,
 )
 
+def make_postprocessor(
+    profile: "PostprocessProfile", *, dynamic_context_script: str = ""
+) -> PostprocessorBase:
+    """Return the right backend for profile.base."""
+    if profile.base == "remote":
+        from .backend_remote import RemoteBackend
+        return RemoteBackend(profile, dynamic_context_script=dynamic_context_script)
+    if profile.base == "responses":
+        from .backend_responses import ResponsesBackend
+        return ResponsesBackend(profile, dynamic_context_script=dynamic_context_script)
+    from .backend_local import LocalBackend
+    return LocalBackend(profile, dynamic_context_script=dynamic_context_script)
+
+
+# LLMPostprocessor now points at make_postprocessor for new code.
+# The alias in _processor.py keeps old isinstance() checks working.
+LLMPostprocessor = make_postprocessor
+
+
 __all__ = [
     # Profile management
     "PostprocessProfile",
@@ -66,6 +85,8 @@ __all__ = [
     "load_context_sidecar",
     # Processor
     "LLMPostprocessor",
+    "PostprocessorBase",
+    "make_postprocessor",
     # Model catalogue
     "KNOWN_LLM_MODELS",
     "apply_profile_overrides",
