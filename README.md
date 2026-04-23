@@ -41,12 +41,17 @@ Local Parakeet v3 voice dictation for Wayland.
 - **Add current clipboard as additional context** — click the 📋 button
   on the overlay during a manual recording to feed your current
   clipboard contents into the next LLM call as one-shot context, then
-  ask `Hey Computer` (you don't have to use `Hey Computer`, sharing 
-  the clipboard implicitly activates the assistant mode) to 
-  summarise / translate / rewrite / explain / classify it without 
-  copy-pasting it into a chat window. One-shot:
-  auto-disarms after the request; click again before recording ends to
-  cancel.
+  ask `Hey Computer` (you don't have to use `Hey Computer`, sharing
+  the clipboard implicitly activates the assistant mode) to
+  summarise / translate / rewrite / explain / classify it without
+  copy-pasting it into a chat window. One-shot: auto-disarms after the
+  request; click again before recording ends to cancel.
+  - **Image support** (`base = "responses"` only) — when an image is on
+    the clipboard the 📋 button sends it to the model alongside your
+    dictation. Great for OCR, screenshot Q&A, or image-based instructions.
+    Detail level (`image_detail = "auto" | "low" | "high" | "original" | "off"`)
+    is configurable per profile. Max cost at gpt-5.4-mini rate: ~0.0015 € per
+    high-detail image.
 - **Optional LLM cleanup pass** with shipped profiles (cleanup, emoji,
   OpenAI-compatible endpoint), a per-request dynamic-context script, and
   **fully customisable system prompts** for emojification,
