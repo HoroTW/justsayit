@@ -67,10 +67,13 @@ class ProcessResult:
     keeps reasoning inline in ``content`` (handled via
     ``paste_strip_regex``), so for the local path ``reasoning`` is always
     ``""``.
+    ``session_data`` is populated by backends when they successfully
+    process a request; ``pipeline.py`` writes it to session.json.
     """
 
     text: str
     reasoning: str = ""
+    session_data: dict | None = None
 
 
 @dataclass

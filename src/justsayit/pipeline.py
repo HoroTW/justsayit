@@ -1,8 +1,10 @@
 """Segment processing pipeline: transcribe → filter → LLM → paste."""
 from __future__ import annotations
 
+import json
 import logging
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from justsayit.filters import apply_filters
@@ -16,6 +18,31 @@ if TYPE_CHECKING:
     from justsayit.paste import Paster
 
 log = logging.getLogger(__name__)
+
+
+def _session_path() -> Path:
+    from justsayit.config import cache_dir
+    return cache_dir() / "session.json"
+
+
+def _load_session() -> dict | None:
+    try:
+        return json.loads(_session_path().read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _save_session(data: dict) -> None:
+    p = _session_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(data), encoding="utf-8")
+
+
+def _clear_session() -> None:
+    try:
+        _session_path().unlink(missing_ok=True)
+    except Exception:
+        pass
 
 
 class SegmentPipeline:
@@ -39,7 +66,7 @@ class SegmentPipeline:
         self.overlay: "OverlayWindow | None" = None             # set externally
         self._last_transcription_time: float | None = None
 
-    def handle(self, seg: "Segment", *, consume_clipboard_fn=None) -> None:
+    def handle(self, seg: "Segment", *, consume_clipboard_fn=None, is_continue: bool = False) -> None:
         """Process one audio segment end-to-end."""
         from justsayit.paste import PasteError
 
@@ -87,11 +114,13 @@ class SegmentPipeline:
                 extra_context, extra_image, extra_image_mime = consume_clipboard_fn()
             else:
                 extra_context, extra_image, extra_image_mime = "", None, ""
+            previous_session = _load_session() if is_continue else None
             t_llm0 = time.monotonic()
             try:
                 result = pp.process_with_reasoning(
                     final, extra_context=extra_context,
                     extra_image=extra_image, extra_image_mime=extra_image_mime,
+                    previous_session=previous_session,
                 )
                 t_llm1 = time.monotonic()
                 log.info("LLM call took %.0fms", (t_llm1 - t_llm0) * 1000)
@@ -103,6 +132,8 @@ class SegmentPipeline:
                 log.exception("LLM postprocessor failed; using unprocessed text")
                 detail = str(exc).strip().splitlines()[0]
                 llm_overlay_text = f"LLM error: {detail or exc.__class__.__name__}"
+                if not is_continue:
+                    _clear_session()
             else:
                 stripped = pp.strip_for_paste(paste_text)
                 # Surface the reasoning preamble (whatever paste_strip_regex
@@ -132,6 +163,10 @@ class SegmentPipeline:
                     )
                 llm_overlay_text = stripped
                 paste_text = stripped
+                if is_continue and result.session_data:
+                    _save_session(result.session_data)
+                elif not is_continue:
+                    _clear_session()
             # Always update the LLM field — clears "Wait…" even when text is unchanged.
             if self.overlay is not None:
                 self.overlay.push_llm_text(

@@ -97,13 +97,23 @@ class LocalBackend(PostprocessorBase):
 
         self._llm.chat_handler = _handler
 
-    def _run(self, text: str, extra_context: str = "", extra_image: bytes | None = None, extra_image_mime: str = "") -> ProcessResult:
+    def _run(self, text: str, extra_context: str = "", extra_image: bytes | None = None, extra_image_mime: str = "", previous_session: dict | None = None) -> ProcessResult:
+        import time
+        same_backend = previous_session is not None and previous_session.get("backend") == "local"
+        prev_msgs: list[dict] = (previous_session.get("prev_messages") or []) if previous_session else []
+        if same_backend and prev_msgs:
+            messages = self._build_messages_continued(text, extra_context, prev_msgs)
+        elif prev_msgs:
+            history_text = self._format_history_text(prev_msgs)
+            messages = self._build_messages(text, extra_context, history_text=history_text)
+        else:
+            messages = self._build_messages(text, extra_context)
         with self._lock:
             if self._llm is None:
                 self._llm = self._build()
                 self._install_chat_template_kwargs()
             kwargs: dict[str, Any] = {
-                "messages": self._build_messages(text, extra_context),
+                "messages": messages,
                 "temperature": self.profile.temperature,
                 "max_tokens": self.profile.max_tokens,
                 "top_p": self.profile.top_p,
@@ -116,4 +126,12 @@ class LocalBackend(PostprocessorBase):
             resp = self._llm.create_chat_completion(**kwargs)
         # llama-cpp-python keeps thinking inline in ``content``; the
         # display/paste split is done downstream via ``paste_strip_regex``.
-        return ProcessResult(text=resp["choices"][0]["message"]["content"].strip())
+        content = resp["choices"][0]["message"]["content"].strip()
+        user_msg = {"role": "user", "content": self.profile.user_template.format(text=text)}
+        new_prev_messages = prev_msgs + [user_msg, {"role": "assistant", "content": content}]
+        session_data = {
+            "backend": "local",
+            "prev_messages": new_prev_messages,
+            "ts": time.time(),
+        }
+        return ProcessResult(text=content, session_data=session_data)

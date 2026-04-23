@@ -41,7 +41,7 @@ def _bus_path(app_id: str) -> str:
     )
 
 
-def send_toggle(*, profile: str | None, use_clipboard: bool) -> int:
+def send_toggle(*, profile: str | None, use_clipboard: bool, continue_flag: bool = False) -> int:
     """Send either ``toggle`` (cheap) or ``toggle-ex`` (with options) to
     the running primary. Returns a shell-style exit code."""
     app_id = _app_id()
@@ -52,6 +52,8 @@ def send_toggle(*, profile: str | None, use_clipboard: bool) -> int:
         opts["profile"] = GLib.Variant("s", profile)
     if use_clipboard:
         opts["arm-clipboard"] = GLib.Variant("b", True)
+    if continue_flag:
+        opts["arm-continue"] = GLib.Variant("b", True)
 
     if opts:
         action = "toggle-ex"
@@ -126,5 +128,12 @@ def main(argv: list[str] | None = None) -> int:
         default=False,
         help="arm clipboard-context for the recording this toggle starts",
     )
+    ap.add_argument(
+        "--continue",
+        dest="continue_flag",
+        action="store_true",
+        default=False,
+        help="start/extend continue window for LLM session continuation",
+    )
     args = ap.parse_args(argv)
-    return send_toggle(profile=args.profile, use_clipboard=args.use_clipboard)
+    return send_toggle(profile=args.profile, use_clipboard=args.use_clipboard, continue_flag=args.continue_flag)

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import time
 from typing import Any
 
 from ._processor import PostprocessorBase, _http_post, _log_usage, log
@@ -9,7 +10,7 @@ from ._profile import ProcessResult
 
 
 class RemoteBackend(PostprocessorBase):
-    def _run(self, text: str, extra_context: str = "", extra_image: bytes | None = None, extra_image_mime: str = "") -> ProcessResult:
+    def _run(self, text: str, extra_context: str = "", extra_image: bytes | None = None, extra_image_mime: str = "", previous_session: dict | None = None) -> ProcessResult:
         """OpenAI-compatible /chat/completions POST."""
         api_key = self._require_api_key()
         if not self.profile.model:
@@ -17,15 +18,24 @@ class RemoteBackend(PostprocessorBase):
                 "LLM endpoint is set but profile.model is empty — "
                 "set 'model' in the profile (e.g. \"gpt-4o-mini\")."
             )
+        same_backend = previous_session is not None and previous_session.get("backend") == "remote"
+        prev_msgs: list[dict] = (previous_session.get("prev_messages") or []) if previous_session else []
         url = self.profile.endpoint.rstrip("/") + "/chat/completions"
         # OpenAI reasoning models (o1/o3/o4/gpt-5.x …) reject most classic
         # sampling knobs and renamed ``max_tokens`` → ``max_completion_tokens``.
         is_reasoning = bool(
             re.match(r"^(o[1-9]|gpt-[5-9])", self.profile.model or "")
         )
+        if same_backend and prev_msgs:
+            messages = self._build_messages_continued(text, extra_context, prev_msgs)
+        elif prev_msgs:
+            history_text = self._format_history_text(prev_msgs)
+            messages = self._build_messages(text, extra_context, history_text=history_text)
+        else:
+            messages = self._build_messages(text, extra_context)
         body: dict[str, Any] = {
             "model": self.profile.model,
-            "messages": self._build_messages(text, extra_context),
+            "messages": messages,
         }
         if is_reasoning:
             body["max_completion_tokens"] = self.profile.max_tokens
@@ -65,4 +75,11 @@ class RemoteBackend(PostprocessorBase):
         else:
             reasoning = reasoning.strip()
         _log_usage(self.profile, data.get("usage") or {})
-        return ProcessResult(text=content, reasoning=reasoning)
+        user_msg = {"role": "user", "content": self.profile.user_template.format(text=text)}
+        new_prev_messages = prev_msgs + [user_msg, {"role": "assistant", "content": content}]
+        session_data = {
+            "backend": "remote",
+            "prev_messages": new_prev_messages,
+            "ts": time.time(),
+        }
+        return ProcessResult(text=content, reasoning=reasoning, session_data=session_data)

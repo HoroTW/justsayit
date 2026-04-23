@@ -180,12 +180,13 @@ class PostprocessorBase:
         self,
         extra_context: str = "",
         extra_image_provided: bool = False,
+        history_text: str = "",
     ) -> tuple[str, str]:
         """Return ``(static, dynamic)`` parts of the system prompt.
 
         *static*  — prompt file + ``append_to_system_prompt`` + user context.
                     Stable across calls; safe to cache.
-        *dynamic* — ``dynamic-context.sh`` output + clipboard content.
+        *dynamic* — history (if any) + ``dynamic-context.sh`` output + clipboard.
                     Changes every call; must not be cached.
         """
         prompt = self.profile.system_prompt.strip()
@@ -199,6 +200,8 @@ class PostprocessorBase:
             prompt = f"{prompt}\n\n# User context\n{ctx}"
 
         dynamic_parts: list[str] = []
+        if history_text:
+            dynamic_parts.append(history_text)
         dynamic = self._dynamic_context()
         if dynamic:
             dynamic_parts.append(f"# STATE (DYNAMIC CONTEXT):\n{dynamic}")
@@ -221,19 +224,42 @@ class PostprocessorBase:
             )
         return prompt, "\n\n".join(dynamic_parts)
 
-    def _build_system_prompt(self, extra_context: str = "") -> str:
-        static, dynamic = self._build_system_prompt_parts(extra_context)
+    def _build_system_prompt(self, extra_context: str = "", history_text: str = "") -> str:
+        static, dynamic = self._build_system_prompt_parts(extra_context, history_text=history_text)
         return "\n\n".join(filter(None, [static, dynamic]))
 
     def _build_messages(
-        self, text: str, extra_context: str = ""
+        self, text: str, extra_context: str = "", history_text: str = ""
     ) -> list[dict[str, str]]:
         messages = [
-            {"role": "system", "content": self._build_system_prompt(extra_context)},
+            {"role": "system", "content": self._build_system_prompt(extra_context, history_text=history_text)},
             {"role": "user", "content": self.profile.user_template.format(text=text)},
         ]
         log.debug("assembled LLM system prompt:\n%s", messages[0]["content"])
         return messages
+
+    def _build_messages_continued(
+        self, text: str, extra_context: str, prev_messages: list[dict]
+    ) -> list[dict]:
+        messages = [
+            {"role": "system", "content": self._build_system_prompt(extra_context)},
+            *prev_messages,
+            {"role": "user", "content": self.profile.user_template.format(text=text)},
+        ]
+        log.debug("assembled LLM system prompt (continued):\n%s", messages[0]["content"])
+        return messages
+
+    @staticmethod
+    def _format_history_text(prev_messages: list[dict]) -> str:
+        lines = ["## PREVIOUS SESSION HISTORY"]
+        for msg in prev_messages:
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+            if role == "user":
+                lines.append(f"User: {content}")
+            elif role == "assistant":
+                lines.append(f"Assistant: {content}")
+        return "\n".join(lines)
 
     def warmup(self) -> None:
         """No-op for remote backends. LocalBackend overrides this."""
@@ -245,6 +271,7 @@ class PostprocessorBase:
         extra_context: str = "",
         extra_image: bytes | None = None,
         extra_image_mime: str = "",
+        previous_session: dict | None = None,
     ) -> ProcessResult:
         raise NotImplementedError
 
@@ -255,6 +282,7 @@ class PostprocessorBase:
         extra_context: str = "",
         extra_image: bytes | None = None,
         extra_image_mime: str = "",
+        previous_session: dict | None = None,
     ) -> ProcessResult:
         """Run the LLM on *text* and return the result including any reasoning.
 
@@ -265,10 +293,13 @@ class PostprocessorBase:
         the clipboard; only ``ResponsesBackend`` uses them (other backends
         silently ignore). ``text`` falls back to the original input when the
         model returns an empty response.
+        ``previous_session`` carries the session.json payload when continue
+        mode is active; backends use it to prepend history or chain via
+        ``previous_response_id``.
         """
-        result = self._run(text, extra_context, extra_image, extra_image_mime)
+        result = self._run(text, extra_context, extra_image, extra_image_mime, previous_session)
         if not result.text:
-            result = ProcessResult(text=text, reasoning=result.reasoning)
+            result = ProcessResult(text=text, reasoning=result.reasoning, session_data=result.session_data)
         return result
 
     def process(self, text: str) -> str:

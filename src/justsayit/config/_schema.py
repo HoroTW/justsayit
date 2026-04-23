@@ -240,6 +240,8 @@ class PostprocessConfig:
     dynamic_context_script: str = field(
         default_factory=lambda: str(_lazy_config_dir() / "dynamic-context.sh")
     )
+    # How long (minutes) the continue window stays open after being armed.
+    continue_window_minutes: int = 5
 
 
 @dataclass

@@ -106,6 +106,28 @@ window.justsayit-overlay {
 .justsayit-clip-button.armed:hover {
     color: rgba(255, 120, 120, 0.95);
 }
+.justsayit-cont-button {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    padding: 0 4px;
+    margin: 0;
+    min-height: 16px;
+    min-width: 16px;
+    color: rgba(255, 255, 255, 0.55);
+    font-family: "Inter", "Cantarell", "Noto Sans", sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+}
+.justsayit-cont-button:hover {
+    color: rgba(180, 255, 180, 0.95);
+}
+.justsayit-cont-button.armed {
+    color: rgba(120, 255, 140, 1.0);
+}
+.justsayit-cont-button.armed:hover {
+    color: rgba(255, 120, 120, 0.95);
+}
 .justsayit-update-badge {
     color: rgba(255, 215, 90, 0.95);
     font-family: "Inter", "Cantarell", "Noto Sans", sans-serif;
@@ -164,12 +186,14 @@ class OverlayWindow(Gtk.ApplicationWindow):
         *,
         on_abort: Callable[[], None] | None = None,
         on_toggle_clipboard_context: Callable[[], None] | None = None,
+        on_toggle_continue_window: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(application=application)
         self._cfg = cfg
         self._state = State.IDLE
         self._on_abort = on_abort
         self._on_toggle_clipboard_context = on_toggle_clipboard_context
+        self._on_toggle_continue_window = on_toggle_continue_window
 
         self._level = 0.0
         self._level_smoothed = 0.0
@@ -235,8 +259,19 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._update_badge.set_visible(False)
         end_box.append(self._update_badge)
 
+        # Continue-session button. Arms a timed window during which each
+        # recording continues the previous LLM conversation thread.
+        self._cont_button = Gtk.Button(label="↩")
+        self._cont_button.add_css_class("justsayit-cont-button")
+        self._cont_button.set_tooltip_text(
+            "Continue previous LLM session (starts 5 min window)"
+        )
+        self._cont_button.connect("clicked", self._on_cont_clicked)
+        self._cont_button.set_visible(False)
+        end_box.append(self._cont_button)
+
         # Clipboard-context arming button. One click → next LLM call
-        # receives the clipboard contents under a "Clipboard as additional 
+        # receives the clipboard contents under a "Clipboard as additional
         # context" section in the system prompt; click again to disarm
         # before recording. The armed state has its own CSS class so it's
         # visually obvious whether the next transcription will be enriched.
@@ -378,7 +413,22 @@ class OverlayWindow(Gtk.ApplicationWindow):
             priority=GLib.PRIORITY_DEFAULT,
         )
 
+    def push_continue_armed(self, armed: bool) -> None:
+        """Visually indicate whether the continue window is active.
+        Toggles the ``armed`` CSS class on the ↩ button."""
+        GLib.idle_add(
+            self._apply_cont_armed, armed,
+            priority=GLib.PRIORITY_DEFAULT,
+        )
+
     # ── User actions ─────────────────────────────────────────────────────────
+
+    def _on_cont_clicked(self, _button: Gtk.Button) -> None:
+        if self._on_toggle_continue_window is not None:
+            try:
+                self._on_toggle_continue_window()
+            except Exception:
+                log.exception("on_toggle_continue_window callback raised")
 
     def _on_clip_clicked(self, _button: Gtk.Button) -> None:
         if self._on_toggle_clipboard_context is not None:
@@ -410,9 +460,9 @@ class OverlayWindow(Gtk.ApplicationWindow):
         prev = self._state
         self._state = state
 
-        # Clipboard arming is only meaningful while a manual recording is
-        # in progress: by the time processing/results land, the clipboard
-        # has already been consumed (or the user can re-arm next time).
+        # Both context buttons are only meaningful while a manual recording
+        # is in progress; hidden in idle / VAD / result phases.
+        self._cont_button.set_visible(state is State.MANUAL)
         self._clip_button.set_visible(state is State.MANUAL)
 
         if state is State.IDLE:
@@ -520,6 +570,15 @@ class OverlayWindow(Gtk.ApplicationWindow):
                 "Use clipboard contents, as LLM context (just once for this recording) "
                 "recording"
             )
+        return False
+
+    def _apply_cont_armed(self, armed: bool) -> bool:
+        if armed:
+            self._cont_button.add_css_class("armed")
+            self._cont_button.set_tooltip_text("Continue window active — click to disarm")
+        else:
+            self._cont_button.remove_css_class("armed")
+            self._cont_button.set_tooltip_text("Continue previous LLM session (starts 5 min window)")
         return False
 
     def _start_linger(self) -> bool:

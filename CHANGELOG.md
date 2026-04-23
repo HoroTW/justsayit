@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-04-23
+
+### Added
+- **Continue session** — arm the ↩ button in the overlay (or `justsayit toggle --continue`) to start a 5-minute window in which each recording continues the previous LLM conversation. Session history grows with each turn and persists in `~/.cache/justsayit/session.json`. The Responses API uses `previous_response_id` natively; other backends prepend the full message history.
+- `postprocess.continue_window_minutes` config option (default 5).
+
 ## [0.15.1] - 2026-04-23
 
 ### Fixed

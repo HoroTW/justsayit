@@ -132,6 +132,13 @@ class App:
         # profile + arm clipboard + trigger recording atomically without
         # losing the arm to the stale-defense disarm.
         self._clipboard_context_arm_next: bool = False
+        # Continue-session state. _continue_window_active means the timer
+        # is running; _continue_this_recording is snapshotted per segment
+        # at the IDLE→MANUAL/VALIDATING edge so the transcribe thread can
+        # read it without racing the timer callback.
+        self._continue_window_active: bool = False
+        self._continue_this_recording: bool = False
+        self._continue_timer_id: int | None = None
         # Tray LLM radio items — stored here (not captured in a closure)
         # so _apply_llm_profile can refresh their checked state from
         # outside the tray setup (e.g. from the toggle-ex D-Bus action).
@@ -248,6 +255,7 @@ class App:
             prev = prev_state[0]
             prev_state[0] = state
             if prev is State.IDLE and state in (State.VALIDATING, State.MANUAL):
+                self._continue_this_recording = self._continue_window_active
                 if self._clipboard_context_arm_next:
                     # CLI asked to arm *this* recording. Promote the
                     # pending flag to _armed here, where we're
@@ -676,6 +684,44 @@ class App:
         self._clipboard_context_arm_next = True
         log.info("clipboard-context → arm_next (CLI)")
 
+    def _activate_continue_window(self) -> None:
+        self._continue_window_active = True
+        self._continue_this_recording = True
+        self._reset_continue_timer()
+        if self.overlay is not None:
+            self.overlay.push_continue_armed(True)
+
+    def _deactivate_continue_window(self) -> None:
+        self._continue_window_active = False
+        self._continue_this_recording = False
+        if self._continue_timer_id is not None:
+            GLib.source_remove(self._continue_timer_id)
+            self._continue_timer_id = None
+        if self.overlay is not None:
+            self.overlay.push_continue_armed(False)
+
+    def _toggle_continue_window(self) -> None:
+        if self._continue_window_active:
+            self._deactivate_continue_window()
+        else:
+            self._activate_continue_window()
+
+    def _reset_continue_timer(self) -> None:
+        if self._continue_timer_id is not None:
+            GLib.source_remove(self._continue_timer_id)
+        mins = self.cfg.postprocess.continue_window_minutes or 5
+        self._continue_timer_id = GLib.timeout_add_seconds(
+            mins * 60, self._on_continue_timer_expired
+        )
+
+    def _on_continue_timer_expired(self) -> bool:
+        self._continue_window_active = False
+        self._continue_timer_id = None
+        if self.overlay is not None:
+            self.overlay.push_continue_armed(False)
+        log.info("continue window expired")
+        return False
+
     def _llm_tray_label(self) -> str:
         if self.cfg.postprocess.enabled:
             return f"LLM: {self.cfg.postprocess.profile}"
@@ -779,10 +825,13 @@ class App:
         otherwise builds a transient pipeline from current App state (used in tests
         that set app.transcriber directly without going through setup_transcriber).
         """
+        is_continue = self._continue_this_recording
         if self.pipeline is not None:
             self.pipeline._last_transcription_time = self._last_transcription_time
-            self.pipeline.handle(seg, consume_clipboard_fn=self._consume_clipboard_context)
+            self.pipeline.handle(seg, consume_clipboard_fn=self._consume_clipboard_context, is_continue=is_continue)
             self._last_transcription_time = self.pipeline._last_transcription_time
+            if is_continue and self._continue_window_active:
+                GLib.idle_add(self._reset_continue_timer)
             return
         # Fallback: build a transient pipeline from App state (tests / no-setup path).
         assert self.transcriber is not None
@@ -796,8 +845,10 @@ class App:
         _pl.postprocessor = self.postprocessor
         _pl.overlay = self.overlay
         _pl._last_transcription_time = self._last_transcription_time
-        _pl.handle(seg, consume_clipboard_fn=self._consume_clipboard_context)
+        _pl.handle(seg, consume_clipboard_fn=self._consume_clipboard_context, is_continue=is_continue)
         self._last_transcription_time = _pl._last_transcription_time
+        if is_continue and self._continue_window_active:
+            GLib.idle_add(self._reset_continue_timer)
 
     # --- GTK lifecycle -----------------------------------------------------
 
@@ -835,10 +886,12 @@ class App:
                 opts = {}
             profile = opts.get("profile")
             arm_clip = bool(opts.get("arm-clipboard", False))
+            arm_continue = bool(opts.get("arm-continue", False))
             log.info(
-                "toggle-ex received: profile=%r arm-clipboard=%s",
+                "toggle-ex received: profile=%r arm-clipboard=%s arm-continue=%s",
                 profile,
                 arm_clip,
+                arm_continue,
             )
             if isinstance(profile, str) and profile:
                 # "off" disables postprocessing — same effect as the
@@ -848,6 +901,8 @@ class App:
                 self._apply_llm_profile(target)
             if arm_clip:
                 self._arm_clipboard_next_recording()
+            if arm_continue:
+                self._activate_continue_window()
             self.toggle()
 
         toggle_ex_action.connect("activate", _on_toggle_ex)
@@ -863,6 +918,7 @@ class App:
                 self.cfg,
                 on_abort=_on_overlay_abort,
                 on_toggle_clipboard_context=self._toggle_clipboard_context,
+                on_toggle_continue_window=self._toggle_continue_window,
             )
             # Explicitly hidden until the engine reports a non-idle state.
             self.overlay.set_visible(False)
@@ -1011,6 +1067,13 @@ def _build_parser() -> argparse.ArgumentParser:
         default=False,
         help="arm clipboard-context for the recording this toggle starts",
     )
+    toggle_sub.add_argument(
+        "--continue",
+        dest="continue_flag",
+        action="store_true",
+        default=False,
+        help="start/extend continue window for LLM session continuation",
+    )
 
     show_sub = sub.add_parser(
         "show-defaults",
@@ -1049,6 +1112,7 @@ def main(argv: list[str] | None = None) -> int:
         return _send_toggle(
             profile=args.profile,
             use_clipboard=args.use_clipboard,
+            continue_flag=getattr(args, "continue_flag", False),
         )
     if args.subcommand == "init":
         _write_default_config(force=False, backend=getattr(args, "backend", None))

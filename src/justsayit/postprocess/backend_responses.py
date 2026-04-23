@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import re
+import time
 from typing import Any
 
 from ._processor import PostprocessorBase, _http_post, _log_usage, log
@@ -10,7 +11,7 @@ from ._profile import ProcessResult
 
 
 class ResponsesBackend(PostprocessorBase):
-    def _run(self, text: str, extra_context: str = "", extra_image: bytes | None = None, extra_image_mime: str = "") -> ProcessResult:
+    def _run(self, text: str, extra_context: str = "", extra_image: bytes | None = None, extra_image_mime: str = "", previous_session: dict | None = None) -> ProcessResult:
         """OpenAI Responses API POST (/v1/responses).
 
         The static system prompt goes in ``instructions`` (cached prefix);
@@ -24,9 +25,14 @@ class ResponsesBackend(PostprocessorBase):
                 "set 'model' in the profile (e.g. \"gpt-5.4-mini\")."
             )
 
+        same_backend = previous_session is not None and previous_session.get("backend") == "responses"
+        prev_msgs: list[dict] = (previous_session.get("prev_messages") or []) if previous_session else []
+        prev_response_id: str = (previous_session.get("response_id") or "") if same_backend else ""
+        history_text = "" if same_backend else (self._format_history_text(prev_msgs) if prev_msgs else "")
+
         has_image = bool(extra_image and extra_image_mime and self.profile.image_detail != "off")
         static_prompt, dynamic_prompt = self._build_system_prompt_parts(
-            extra_context, extra_image_provided=has_image
+            extra_context, extra_image_provided=has_image, history_text=history_text
         )
         log.debug("assembled Responses API instructions (static/cached):\n%s", static_prompt)
         if dynamic_prompt:
@@ -66,6 +72,8 @@ class ResponsesBackend(PostprocessorBase):
             "input": input_payload,
             "max_output_tokens": self.profile.max_tokens,
         }
+        if prev_response_id:
+            body["previous_response_id"] = prev_response_id
         if self.profile.prompt_cache_retention:
             body["prompt_cache_retention"] = self.profile.prompt_cache_retention
         if self.profile.reasoning_effort:
@@ -142,4 +150,12 @@ class ResponsesBackend(PostprocessorBase):
                 "cached_tokens": int(cache_details.get("cached_tokens") or 0)
             },
         })
-        return ProcessResult(text=content)
+        user_msg = {"role": "user", "content": self.profile.user_template.format(text=text)}
+        new_prev_messages = prev_msgs + [user_msg, {"role": "assistant", "content": content}]
+        session_data = {
+            "backend": "responses",
+            "prev_messages": new_prev_messages,
+            "response_id": data.get("id", ""),
+            "ts": time.time(),
+        }
+        return ProcessResult(text=content, session_data=session_data)
