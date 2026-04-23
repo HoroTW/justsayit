@@ -21,19 +21,22 @@ from justsayit.postprocess import (
     _CLEANUP_PROFILE_TOML,
     _DYNAMIC_CONTEXT_SCRIPT,
     _FUN_PROFILE_TOML,
+    _OLLAMA_GEMMA_PROFILE_TOML,
+    _OPENAI_PROFILE_TOML,
     apply_profile_overrides,
     _load_prompt,
     context_file_path,
     dynamic_context_script_path,
     ensure_context_file,
-    ensure_default_profile,
+    ensure_default_profiles,
     ensure_dynamic_context_script,
-    ensure_fun_profile,
+    ensure_profile,
     find_hf_q4_filename,
     load_context_sidecar,
     load_profile,
     profiles_dir,
 )
+import justsayit._http as _http_mod
 import justsayit.postprocess._processor as _proc_mod
 
 # Convenience: read the shipped prompt files exactly the way the
@@ -105,7 +108,7 @@ def test_load_profile_defaults_are_applied(tmp_path):
 
 def test_ensure_default_profile_creates_file(tmp_path, monkeypatch):
     monkeypatch.setattr("justsayit.postprocess._profile.config_dir", lambda: tmp_path)
-    path = ensure_default_profile()
+    path = ensure_profile(_CLEANUP_PROFILE_TOML, profiles_dir() / "gemma4-cleanup.toml")
     assert path.exists()
     assert path.name == "gemma4-cleanup.toml"
     content = path.read_text(encoding="utf-8")
@@ -124,7 +127,6 @@ def test_ensure_default_profiles_writes_all_four(tmp_path, monkeypatch):
     All four must exist after a single call so the tray menu has them
     to offer."""
     monkeypatch.setattr("justsayit.postprocess._profile.config_dir", lambda: tmp_path)
-    from justsayit.postprocess import ensure_default_profiles
 
     cleanup, fun, openai, ollama_gemma = ensure_default_profiles()
     assert cleanup.name == "gemma4-cleanup.toml"
@@ -152,9 +154,8 @@ def test_openai_profile_template_has_base_endpoint_and_model_uncommented(
     via the `remote-defaults.toml` overlay — no auto-swap, no
     embedded copy."""
     monkeypatch.setattr("justsayit.postprocess._profile.config_dir", lambda: tmp_path)
-    from justsayit.postprocess import ensure_openai_profile, load_profile
 
-    p = ensure_openai_profile()
+    p = ensure_profile(_OPENAI_PROFILE_TOML, profiles_dir() / "openai-cleanup.toml")
     text = p.read_text(encoding="utf-8")
     # Defining keys live as bare assignments at the top of the file.
     assert '\nbase = "remote"' in text
@@ -186,9 +187,8 @@ def test_ollama_gemma_profile_demonstrates_orthogonal_backend_and_prompt(
     the worked example: HTTP backend (Ollama), Gemma's <|think|>
     cleanup prompt, channel stripper re-enabled."""
     monkeypatch.setattr("justsayit.postprocess._profile.config_dir", lambda: tmp_path)
-    from justsayit.postprocess import ensure_ollama_gemma_profile, load_profile
 
-    p = ensure_ollama_gemma_profile()
+    p = ensure_profile(_OLLAMA_GEMMA_PROFILE_TOML, profiles_dir() / "ollama-gemma.toml")
     profile = load_profile("ollama-gemma")
     assert profile.base == "remote"
     # Default points at LM Studio (port 1234); override to 11434 for Ollama.
@@ -225,11 +225,12 @@ def test_legacy_prompt_name_is_redirected_with_warning(caplog):
     )
 
 
-def test_ensure_default_profile_idempotent(tmp_path, monkeypatch):
+def test_ensure_profile_idempotent(tmp_path, monkeypatch):
     monkeypatch.setattr("justsayit.postprocess._profile.config_dir", lambda: tmp_path)
-    p1 = ensure_default_profile()
+    dest = profiles_dir() / "gemma4-cleanup.toml"
+    p1 = ensure_profile(_CLEANUP_PROFILE_TOML, dest)
     original = p1.read_text(encoding="utf-8")
-    p2 = ensure_default_profile()
+    p2 = ensure_profile(_CLEANUP_PROFILE_TOML, dest)
     assert p1 == p2
     assert p2.read_text(encoding="utf-8") == original  # not overwritten
 
@@ -785,7 +786,7 @@ def test_dynamic_context_script_failure_logged_and_ignored(monkeypatch, caplog):
 
 
 def test_dynamic_context_success_and_assembled_prompt_logged(monkeypatch, caplog):
-    caplog.set_level("INFO")
+    caplog.set_level("DEBUG")
     profile = PostprocessProfile(
         model_path="/fake/model.gguf", system_prompt="Base prompt."
     )
@@ -950,13 +951,13 @@ def test_ensure_default_profile_writes_commented_template_on_fresh_install(
     tmp_path: Path,
 ):
     p = tmp_path / "gemma4-cleanup.toml"
-    ensure_default_profile(p)
+    ensure_profile(_CLEANUP_PROFILE_TOML, p)
     assert p.read_text(encoding="utf-8") == _CLEANUP_PROFILE_TOML
 
 
 def test_ensure_fun_profile_writes_commented_template_on_fresh_install(tmp_path: Path):
     p = tmp_path / "gemma4-fun.toml"
-    ensure_fun_profile(p)
+    ensure_profile(_FUN_PROFILE_TOML, p)
     assert p.read_text(encoding="utf-8") == _FUN_PROFILE_TOML
 
 
@@ -967,7 +968,7 @@ def test_ensure_default_profile_migrates_legacy_fully_populated_file(tmp_path: P
     p = tmp_path / "gemma4-cleanup.toml"
     legacy = '# my custom profile\nmodel_path = "/tmp/x.gguf"\ntemperature = 0.5\n'
     p.write_text(legacy, encoding="utf-8")
-    ensure_default_profile(p)
+    ensure_profile(_CLEANUP_PROFILE_TOML, p)
     backup = p.with_name(p.name + ".bak-pre-commented-form")
     assert backup.exists()
     assert backup.read_text(encoding="utf-8") == legacy
@@ -976,15 +977,15 @@ def test_ensure_default_profile_migrates_legacy_fully_populated_file(tmp_path: P
 
 def test_ensure_default_profile_preserves_user_overrides_post_migration(tmp_path: Path):
     """After migration the file carries the commented-form marker. Even
-    if the user uncomments and edits a key, subsequent ensure_*() calls
-    must NOT back up + reset (that would discard their override) — the
-    marker tells us we're already in the new form."""
+    if the user uncomments and edits a key, subsequent ensure_profile()
+    calls must NOT back up + reset (that would discard their override) —
+    the marker tells us we're already in the new form."""
     p = tmp_path / "gemma4-cleanup.toml"
     user_edited = (
         _CLEANUP_PROFILE_TOML.rstrip() + "\n\n# user override\ntemperature = 0.42\n"
     )
     p.write_text(user_edited, encoding="utf-8")
-    ensure_default_profile(p)
+    ensure_profile(_CLEANUP_PROFILE_TOML, p)
     assert p.read_text(encoding="utf-8") == user_edited
     backup = p.with_name(p.name + ".bak-pre-commented-form")
     assert not backup.exists()
@@ -1017,7 +1018,7 @@ def test_ensure_default_profile_re_migrates_marker_carrying_corrupt_file(
         "<|think|> stray uncommented junk that breaks TOML parsing\n"
     )
     p.write_text(corrupt, encoding="utf-8")
-    ensure_default_profile(p)
+    ensure_profile(_CLEANUP_PROFILE_TOML, p)
     backup = p.with_name(p.name + ".bak-pre-commented-form")
     assert backup.exists()
     assert backup.read_text(encoding="utf-8") == corrupt
@@ -1355,7 +1356,7 @@ def test_remote_process_retries_transient_http_error_then_succeeds(monkeypatch):
         return _Resp()
 
     monkeypatch.setattr(_proc_mod.urllib.request, "urlopen", fake_urlopen)
-    monkeypatch.setattr(_proc_mod.time, "sleep", fake_sleep)
+    monkeypatch.setattr(_http_mod.time, "sleep", fake_sleep)
 
     assert pp.process("original") == "done"
     assert calls["count"] == 3
@@ -1384,7 +1385,7 @@ def test_remote_process_exhausts_retries_on_transient_error(monkeypatch):
         raise _proc_mod.urllib.error.URLError("temporary dns failure")
 
     monkeypatch.setattr(_proc_mod.urllib.request, "urlopen", fake_urlopen)
-    monkeypatch.setattr(_proc_mod.time, "sleep", fake_sleep)
+    monkeypatch.setattr(_http_mod.time, "sleep", fake_sleep)
 
     with pytest.raises(RuntimeError, match="temporary dns failure"):
         pp.process("original")

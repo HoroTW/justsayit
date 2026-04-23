@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.35] - 2026-04-23
+
+### Changed
+
+- **Extracted `src/justsayit/_http.py`** with a single `urllib_retry(req, *, timeout, retries, delay, label) -> bytes` helper. Both `postprocess._processor._http_post` and `transcribe_openai.OpenAIWhisperTranscriber.transcribe` now delegate their retry loops to it, eliminating the duplication. No new dependency added.
+
+## [0.13.34] - 2026-04-22
+
+### Changed
+
+- **Removed 4 redundant `ensure_*` profile wrappers** (`ensure_default_profile`,
+  `ensure_fun_profile`, `ensure_openai_profile`, `ensure_ollama_gemma_profile`).
+  The private `_ensure_profile` helper is now the public `ensure_profile(content, path)`.
+  Callers pass content and path explicitly; `ensure_default_profiles()` is unchanged.
+- **Retry logic for OpenAI transcription backend.** `transcribe_openai.py` now
+  retries on transient HTTP errors (408, 409, 425, 429, 500–504) with the same
+  retry/delay semantics as the postprocess remote backend. Two new `ModelConfig`
+  fields control this: `openai_retries` (default 3) and `openai_retry_delay`
+  (default 1.0 s).
+- **Added Modularization over DRY rule to `CLAUDE.md`.** Independent modules
+  may contain similar code that only slightly differs; only consolidate into
+  shared helpers when truly identical infrastructure would otherwise diverge.
+
 ## [0.13.33] - 2026-04-23
 
 ### Fixed

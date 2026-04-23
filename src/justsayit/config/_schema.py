@@ -176,6 +176,9 @@ class ModelConfig:
     openai_language: str = ""
     # HTTP timeout (seconds) for the transcription request.
     openai_timeout: float = 60.0
+    # Retry count + delay for transient HTTP errors (408, 429, 5xx, …).
+    openai_retries: int = 3
+    openai_retry_delay: float = 1.0
 
     # --- Shared ---------------------------------------------------------------
     # Silero VAD ONNX (tiny file, downloaded directly).

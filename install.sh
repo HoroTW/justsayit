@@ -75,6 +75,8 @@ Usage: install.sh [--uninstall] [--autostart] [--skip-models] [--update]
                          dataclass defaults). Files that are replaced are
                          backed up to *.bak.<ts> first. Implies
                          --skip-models and skips the postprocess prompt.
+                         Automatically restores llama-cpp-python (with
+                         Vulkan if available) when postprocess is enabled.
 EOF
 }
 
@@ -361,11 +363,28 @@ if [ "$UPDATE" -eq 1 ]; then
             done
             if [ "$_PP_ON" -eq 1 ]; then
                 echo
-                echo "WARNING: your config has [postprocess] enabled = true but"
-                echo "         llama-cpp-python is not installed in the venv."
-                echo "         The app will crash on the first dictation. To fix:"
-                echo "           ./install.sh --update --postprocess"
-                echo "         (re-installs llama-cpp-python with Vulkan GPU support)"
+                echo "==> postprocess is enabled but llama-cpp-python is missing — restoring..."
+                _VULKAN_OK=0
+                pkg-config --exists vulkan 2>/dev/null && command -v cmake >/dev/null 2>&1 && _VULKAN_OK=1
+                if [ "$_VULKAN_OK" -eq 1 ]; then
+                    echo "    (compiling with Vulkan GPU support — this may take a few minutes)"
+                    CMAKE_ARGS="-DGGML_VULKAN=1" UV_PROJECT_ENVIRONMENT="$VENV_DIR" \
+                        uv pip install --python "$VENV_DIR/bin/python" "llama-cpp-python>=0.3" || {
+                        echo "WARNING: Vulkan build failed — retrying CPU-only build" >&2
+                        UV_PROJECT_ENVIRONMENT="$VENV_DIR" \
+                            uv pip install --python "$VENV_DIR/bin/python" "llama-cpp-python>=0.3" || {
+                            echo "ERROR: could not restore llama-cpp-python. Run manually:" >&2
+                            echo "  CMAKE_ARGS=\"-DGGML_VULKAN=1\" uv pip install llama-cpp-python>=0.3" >&2
+                        }
+                    }
+                else
+                    echo "    (Vulkan/cmake not found — installing CPU-only build)"
+                    UV_PROJECT_ENVIRONMENT="$VENV_DIR" \
+                        uv pip install --python "$VENV_DIR/bin/python" "llama-cpp-python>=0.3" || {
+                        echo "ERROR: could not restore llama-cpp-python. Run manually:" >&2
+                        echo "  uv pip install llama-cpp-python>=0.3" >&2
+                    }
+                fi
             fi
         fi
     fi

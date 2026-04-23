@@ -245,54 +245,10 @@ def _toml_validator(text: str) -> None:
     tomllib.loads(text)
 
 
-def ensure_default_profile(path: Path | None = None) -> Path:
-    """Write the ``gemma4-cleanup.toml`` profile if it's missing."""
-    if path is None:
-        path = profiles_dir() / "gemma4-cleanup.toml"
+def ensure_profile(content: str, path: Path) -> Path:
+    """Write a profile in commented-defaults form to *path* if it is missing or stale."""
     ensure_commented_form_file(
-        path,
-        _CLEANUP_PROFILE_TOML,
-        _PROFILE_COMMENTED_FORM_MARKER,
-        validator=_toml_validator,
-    )
-    return path
-
-
-def ensure_fun_profile(path: Path | None = None) -> Path:
-    """Write the ``gemma4-fun.toml`` companion profile if it's missing."""
-    if path is None:
-        path = profiles_dir() / "gemma4-fun.toml"
-    ensure_commented_form_file(
-        path,
-        _FUN_PROFILE_TOML,
-        _PROFILE_COMMENTED_FORM_MARKER,
-        validator=_toml_validator,
-    )
-    return path
-
-
-def ensure_openai_profile(path: Path | None = None) -> Path:
-    """Write the ``openai-cleanup.toml`` profile if it's missing."""
-    if path is None:
-        path = profiles_dir() / "openai-cleanup.toml"
-    ensure_commented_form_file(
-        path,
-        _OPENAI_PROFILE_TOML,
-        _PROFILE_COMMENTED_FORM_MARKER,
-        validator=_toml_validator,
-    )
-    return path
-
-
-def ensure_ollama_gemma_profile(path: Path | None = None) -> Path:
-    """Write the ``ollama-gemma.toml`` profile if it's missing."""
-    if path is None:
-        path = profiles_dir() / "ollama-gemma.toml"
-    ensure_commented_form_file(
-        path,
-        _OLLAMA_GEMMA_PROFILE_TOML,
-        _PROFILE_COMMENTED_FORM_MARKER,
-        validator=_toml_validator,
+        path, content, _PROFILE_COMMENTED_FORM_MARKER, validator=_toml_validator
     )
     return path
 
@@ -301,11 +257,12 @@ def ensure_default_profiles() -> tuple[Path, Path, Path, Path]:
     """Write the cleanup, fun, openai, and ollama-gemma default profiles."""
     ensure_context_file()
     ensure_dynamic_context_script()
+    pd = profiles_dir()
     return (
-        ensure_default_profile(),
-        ensure_fun_profile(),
-        ensure_openai_profile(),
-        ensure_ollama_gemma_profile(),
+        ensure_profile(_CLEANUP_PROFILE_TOML, pd / "gemma4-cleanup.toml"),
+        ensure_profile(_FUN_PROFILE_TOML, pd / "gemma4-fun.toml"),
+        ensure_profile(_OPENAI_PROFILE_TOML, pd / "openai-cleanup.toml"),
+        ensure_profile(_OLLAMA_GEMMA_PROFILE_TOML, pd / "ollama-gemma.toml"),
     )
 
 

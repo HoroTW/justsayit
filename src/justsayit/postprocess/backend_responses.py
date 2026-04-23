@@ -4,7 +4,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from justsayit.config import resolve_secret
 from ._processor import PostprocessorBase, _http_post, _log_usage, log
 from ._profile import ProcessResult
 
@@ -17,13 +16,7 @@ class ResponsesBackend(PostprocessorBase):
         dynamic context and clipboard go in a developer message inside
         ``input`` (uncached per-call).
         """
-        api_key = resolve_secret(self.profile.api_key, self.profile.api_key_env)
-        if not api_key:
-            raise RuntimeError(
-                "LLM endpoint is set but no API key was found.\n"
-                f"  Set api_key in the profile, export {self.profile.api_key_env},\n"
-                "  or put it in ~/.config/justsayit/.env."
-            )
+        api_key = self._require_api_key()
         if not self.profile.model:
             raise RuntimeError(
                 "Responses API backend: profile.model is empty — "
@@ -31,9 +24,9 @@ class ResponsesBackend(PostprocessorBase):
             )
 
         static_prompt, dynamic_prompt = self._build_system_prompt_parts(extra_context)
-        log.info("assembled Responses API instructions (static/cached):\n%s", static_prompt)
+        log.debug("assembled Responses API instructions (static/cached):\n%s", static_prompt)
         if dynamic_prompt:
-            log.info("assembled Responses API dynamic context (uncached):\n%s", dynamic_prompt)
+            log.debug("assembled Responses API dynamic context (uncached):\n%s", dynamic_prompt)
 
         user_text = self.profile.user_template.format(text=text)
         if dynamic_prompt:
@@ -62,7 +55,7 @@ class ResponsesBackend(PostprocessorBase):
             body["reasoning"] = {"effort": self.profile.reasoning_effort}
         if self.profile.responses_web_search:
             trigger = self.profile.responses_web_search_trigger
-            if not trigger or re.search(trigger, text):
+            if not trigger or extra_context or re.search(trigger, text):
                 body["tools"] = [{"type": "web_search"}]
 
         url = self.profile.endpoint.rstrip("/") + "/responses"

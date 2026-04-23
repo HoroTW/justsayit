@@ -4,7 +4,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from justsayit.config import resolve_secret
 from ._processor import PostprocessorBase, _http_post, _log_usage, log
 from ._profile import ProcessResult
 
@@ -12,13 +11,7 @@ from ._profile import ProcessResult
 class RemoteBackend(PostprocessorBase):
     def _run(self, text: str, extra_context: str = "") -> ProcessResult:
         """OpenAI-compatible /chat/completions POST."""
-        api_key = resolve_secret(self.profile.api_key, self.profile.api_key_env)
-        if not api_key:
-            raise RuntimeError(
-                "LLM endpoint is set but no API key was found.\n"
-                f"  Set api_key in the profile, export {self.profile.api_key_env},\n"
-                "  or put it in ~/.config/justsayit/.env."
-            )
+        api_key = self._require_api_key()
         if not self.profile.model:
             raise RuntimeError(
                 "LLM endpoint is set but profile.model is empty — "

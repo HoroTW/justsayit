@@ -6,11 +6,12 @@ import json
 import logging
 import re
 import subprocess
-import time
-import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
+
+from justsayit._http import request_with_retry
+from justsayit.config import resolve_secret
 
 from ._profile import PostprocessProfile, ProcessResult, _resolve_system_prompt_file
 
@@ -33,46 +34,15 @@ def _http_post(
     label: str = "LLM",
 ) -> dict:
     """POST JSON *body* to *url*, retrying on transient HTTP errors."""
-    data = json.dumps(body).encode("utf-8")
+    encoded = json.dumps(body).encode("utf-8")
     all_headers = {
         "Content-Type": "application/json",
         "User-Agent": "justsayit",
         **headers,
     }
-    attempts = 1 + max(0, remote_retries)
-    last_error: RuntimeError | None = None
-    for attempt in range(1, attempts + 1):
-        req = urllib.request.Request(url, data=data, headers=all_headers, method="POST")
-        try:
-            with urllib.request.urlopen(req, timeout=request_timeout) as resp:
-                return json.loads(resp.read())
-        except urllib.error.HTTPError as exc:
-            retryable = exc.code in {408, 409, 425, 429, 500, 502, 503, 504}
-            try:
-                detail = exc.read().decode("utf-8", errors="replace")[:500]
-            except Exception:
-                detail = ""
-            last_error = RuntimeError(
-                f"{label} endpoint returned HTTP {exc.code}: {exc.reason}\n  {detail}"
-            )
-            if not retryable or attempt >= attempts:
-                raise last_error from exc
-            log.warning(
-                "%s request failed with HTTP %d; retrying %d/%d in %.1fs",
-                label, exc.code, attempt, attempts - 1, remote_retry_delay_seconds,
-            )
-        except (urllib.error.URLError, TimeoutError) as exc:
-            reason = getattr(exc, "reason", exc)
-            last_error = RuntimeError(f"{label} request failed: {reason}")
-            if attempt >= attempts:
-                raise last_error from exc
-            log.warning(
-                "%s request failed; retrying %d/%d in %.1fs: %s",
-                label, attempt, attempts - 1, remote_retry_delay_seconds, reason,
-            )
-        time.sleep(max(0.0, remote_retry_delay_seconds))
-    assert last_error is not None
-    raise last_error
+    req = urllib.request.Request(url, data=encoded, headers=all_headers, method="POST")
+    raw = request_with_retry(req, timeout=request_timeout, retries=remote_retries, delay=remote_retry_delay_seconds, label=label)
+    return json.loads(raw)
 
 
 def _log_usage(profile: PostprocessProfile, usage: dict) -> None:
@@ -164,6 +134,17 @@ class PostprocessorBase:
             log.info("dynamic context script returned empty output: %s", script)
         return dynamic
 
+    def _require_api_key(self) -> str:
+        """Resolve the profile API key or raise a clear RuntimeError."""
+        api_key = resolve_secret(self.profile.api_key, self.profile.api_key_env)
+        if not api_key:
+            raise RuntimeError(
+                "LLM endpoint is set but no API key was found.\n"
+                f"  Set api_key in the profile, export {self.profile.api_key_env},\n"
+                "  or put it in ~/.config/justsayit/.env."
+            )
+        return api_key
+
     @staticmethod
     def _compile_paste_strip(pattern: str) -> re.Pattern[str] | None:
         if not pattern.strip():
@@ -244,7 +225,7 @@ class PostprocessorBase:
             {"role": "system", "content": self._build_system_prompt(extra_context)},
             {"role": "user", "content": self.profile.user_template.format(text=text)},
         ]
-        log.info("assembled LLM system prompt:\n%s", messages[0]["content"])
+        log.debug("assembled LLM system prompt:\n%s", messages[0]["content"])
         return messages
 
     def warmup(self) -> None:

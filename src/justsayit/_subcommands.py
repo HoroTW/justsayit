@@ -24,11 +24,12 @@ from justsayit.config import (
 from justsayit.postprocess import (
     KNOWN_LLM_MODELS,
     LLMPostprocessor,
+    _CLEANUP_PROFILE_TOML,
     apply_profile_overrides,
     download_llm_model,
-    ensure_default_profile,
     ensure_default_profiles,
     ensure_dynamic_context_script,
+    ensure_profile,
     find_hf_q4_filename,
     load_profile,
     profiles_dir,
@@ -328,7 +329,7 @@ def _run_setup_llm(model_key: str | None = None, cpu: bool = False) -> int:
             print(f"  Profile: {fun_path}")
         else:
             profile_path = profiles_dir() / f"{key}.toml"
-            ensure_default_profile(profile_path)
+            ensure_profile(_CLEANUP_PROFILE_TOML, profile_path)
             update_profile_model(profile_path, model_path, hf_repo, hf_filename)
             overrides = info.get("profile_overrides") or {}
             if overrides:

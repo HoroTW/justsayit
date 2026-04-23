@@ -6,7 +6,7 @@ Each post-processor is driven by a *profile* — a small TOML file in
 Public API re-exported from the sub-modules:
 
 - Profile management: :func:`load_profile`, :func:`profiles_dir`,
-  :func:`ensure_default_profile`, :func:`ensure_default_profiles`, …
+  :func:`ensure_profile`, :func:`ensure_default_profiles`, …
 - Data types: :class:`PostprocessProfile`, :class:`ProcessResult`
 - Processor: :class:`LLMPostprocessor`
 - Model catalogue: :data:`KNOWN_LLM_MODELS`, :func:`find_hf_q4_filename`,
@@ -37,12 +37,9 @@ from ._profile import (
     context_file_path,
     dynamic_context_script_path,
     ensure_context_file,
-    ensure_default_profile,
     ensure_default_profiles,
     ensure_dynamic_context_script,
-    ensure_fun_profile,
-    ensure_ollama_gemma_profile,
-    ensure_openai_profile,
+    ensure_profile,
     load_context_sidecar,
     load_profile,
     profiles_dir,
@@ -76,12 +73,9 @@ __all__ = [
     "context_file_path",
     "dynamic_context_script_path",
     "ensure_context_file",
-    "ensure_default_profile",
     "ensure_default_profiles",
     "ensure_dynamic_context_script",
-    "ensure_fun_profile",
-    "ensure_ollama_gemma_profile",
-    "ensure_openai_profile",
+    "ensure_profile",
     "load_context_sidecar",
     # Processor
     "LLMPostprocessor",

@@ -194,3 +194,14 @@ For multi-step tasks, state a brief plan:
 ```
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+
+### 5. Modularization over DRY
+
+**Independent modules may contain similar code that only slightly differs — that is expected and fine.**
+
+Each backend (`backend_local.py`, `backend_remote.py`, `backend_responses.py`) and each transcriber (`transcribe_parakeet.py`, `transcribe_openai.py`, …) is self-contained by design. Similar-looking code across modules is acceptable when:
+- The modules are independently replaceable/removable.
+- Forcing a shared abstraction would couple them together.
+- The "duplication" is really just the same I/O pattern applied to different parameters.
+
+Only consolidate into shared helpers when the logic is truly identical infrastructure (retry loops, HTTP POST, logging helpers) and divergence across modules would cause bugs. Don't reach for an abstraction because two functions look alike — ask whether coupling them saves real maintenance cost.
