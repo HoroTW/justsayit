@@ -124,27 +124,24 @@ def test_pipeline_saves_session_when_is_continue(tmp_path):
 
     saved = {}
     with patch("justsayit.pipeline._load_session", return_value=None), \
-         patch("justsayit.pipeline._save_session", side_effect=lambda d: saved.update(d)), \
-         patch("justsayit.pipeline._clear_session") as mock_clear:
+         patch("justsayit.pipeline._save_session", side_effect=lambda d: saved.update(d)):
         pl.handle(_make_seg(), is_continue=True)
 
     assert saved["backend"] == "remote"
-    mock_clear.assert_not_called()
 
 
-def test_pipeline_clears_session_when_not_continue(tmp_path):
+def test_pipeline_saves_session_when_not_continue(tmp_path):
+    """Non-continue calls save the current exchange so a future continue can pick it up."""
     cfg = Config()
-    session_data = {"backend": "remote", "prev_messages": [], "ts": 1.0}
+    session_data = {"backend": "remote", "prev_messages": [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "yo"}], "ts": 1.0}
     pp = _RecordingPostprocessor(session_data=session_data)
     pl = _make_pipeline(cfg, "hello", pp)
 
-    with patch("justsayit.pipeline._load_session", return_value=None), \
-         patch("justsayit.pipeline._save_session") as mock_save, \
-         patch("justsayit.pipeline._clear_session") as mock_clear:
+    saved = {}
+    with patch("justsayit.pipeline._save_session", side_effect=lambda d: saved.update(d)):
         pl.handle(_make_seg(), is_continue=False)
 
-    mock_save.assert_not_called()
-    mock_clear.assert_called_once()
+    assert saved["backend"] == "remote"
 
 
 def test_pipeline_passes_previous_session_to_postprocessor():
@@ -154,8 +151,7 @@ def test_pipeline_passes_previous_session_to_postprocessor():
     pl = _make_pipeline(cfg, "follow up", pp)
 
     with patch("justsayit.pipeline._load_session", return_value=prev_session), \
-         patch("justsayit.pipeline._save_session"), \
-         patch("justsayit.pipeline._clear_session"):
+         patch("justsayit.pipeline._save_session"):
         pl.handle(_make_seg(), is_continue=True)
 
     assert len(pp.calls) == 1
@@ -168,14 +164,15 @@ def test_pipeline_passes_none_when_not_continue():
     pl = _make_pipeline(cfg, "hello", pp)
 
     with patch("justsayit.pipeline._load_session") as mock_load, \
-         patch("justsayit.pipeline._clear_session"):
+         patch("justsayit.pipeline._save_session"):
         pl.handle(_make_seg(), is_continue=False)
 
     mock_load.assert_not_called()
     assert pp.calls[0]["previous_session"] is None
 
 
-def test_pipeline_clears_session_on_llm_exception():
+def test_pipeline_does_not_save_on_llm_exception():
+    """If the LLM fails the session is left unchanged — don't save, don't clear."""
     cfg = Config()
 
     class _RaisingPP:
@@ -190,32 +187,11 @@ def test_pipeline_clears_session_on_llm_exception():
 
     pl = _make_pipeline(cfg, "hello", _RaisingPP())
 
-    with patch("justsayit.pipeline._load_session", return_value=None), \
+    with patch("justsayit.pipeline._save_session") as mock_save, \
          patch("justsayit.pipeline._clear_session") as mock_clear:
         pl.handle(_make_seg(), is_continue=False)
 
-    mock_clear.assert_called_once()
-
-
-def test_pipeline_does_not_clear_session_on_llm_exception_when_continue():
-    cfg = Config()
-
-    class _RaisingPP:
-        def process_with_reasoning(self, text, *, extra_context="", extra_image=None, extra_image_mime="", previous_session=None):
-            raise RuntimeError("boom")
-
-        def strip_for_paste(self, text):
-            return text
-
-        def find_strip_matches(self, text):
-            return []
-
-    pl = _make_pipeline(cfg, "hello", _RaisingPP())
-
-    with patch("justsayit.pipeline._load_session", return_value={"backend": "remote"}), \
-         patch("justsayit.pipeline._clear_session") as mock_clear:
-        pl.handle(_make_seg(), is_continue=True)
-
+    mock_save.assert_not_called()
     mock_clear.assert_not_called()
 
 

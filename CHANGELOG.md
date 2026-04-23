@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-04-23
+
+### Fixed
+- Continue session: session.json was cleared instead of saved on every non-continue LLM call, so there was never anything to load when continue mode was armed. Now every successful call saves its exchange (overwriting old history on a non-continue call, appending on a continue call).
+- Continue button (↩) clicks were silent — added INFO-level log on arm/disarm.
+- History load and save are now logged at INFO (`continue: loaded N-turn history` / `session saved (N turns)`).
+
 ## [0.16.0] - 2026-04-23
 
 ### Added

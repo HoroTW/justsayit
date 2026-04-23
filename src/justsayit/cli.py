@@ -688,6 +688,7 @@ class App:
         self._continue_window_active = True
         self._continue_this_recording = True
         self._reset_continue_timer()
+        log.info("continue window → armed (%d min)", self.cfg.postprocess.continue_window_minutes or 5)
         if self.overlay is not None:
             self.overlay.push_continue_armed(True)
 
@@ -697,6 +698,7 @@ class App:
         if self._continue_timer_id is not None:
             GLib.source_remove(self._continue_timer_id)
             self._continue_timer_id = None
+        log.info("continue window → disarmed")
         if self.overlay is not None:
             self.overlay.push_continue_armed(False)
 

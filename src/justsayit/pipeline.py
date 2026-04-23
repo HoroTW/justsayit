@@ -115,6 +115,16 @@ class SegmentPipeline:
             else:
                 extra_context, extra_image, extra_image_mime = "", None, ""
             previous_session = _load_session() if is_continue else None
+            if is_continue:
+                if previous_session:
+                    prev_msgs = previous_session.get("prev_messages") or []
+                    log.info(
+                        "continue: loaded %d-turn history (backend=%s)",
+                        len(prev_msgs) // 2,
+                        previous_session.get("backend", "?"),
+                    )
+                else:
+                    log.info("continue: no previous session found — starting fresh")
             t_llm0 = time.monotonic()
             try:
                 result = pp.process_with_reasoning(
@@ -132,8 +142,6 @@ class SegmentPipeline:
                 log.exception("LLM postprocessor failed; using unprocessed text")
                 detail = str(exc).strip().splitlines()[0]
                 llm_overlay_text = f"LLM error: {detail or exc.__class__.__name__}"
-                if not is_continue:
-                    _clear_session()
             else:
                 stripped = pp.strip_for_paste(paste_text)
                 # Surface the reasoning preamble (whatever paste_strip_regex
@@ -163,10 +171,14 @@ class SegmentPipeline:
                     )
                 llm_overlay_text = stripped
                 paste_text = stripped
-                if is_continue and result.session_data:
+                if result.session_data:
+                    prev_msgs = result.session_data.get("prev_messages") or []
+                    log.info(
+                        "session saved (%d turns, backend=%s)",
+                        len(prev_msgs) // 2,
+                        result.session_data.get("backend", "?"),
+                    )
                     _save_session(result.session_data)
-                elif not is_continue:
-                    _clear_session()
             # Always update the LLM field — clears "Wait…" even when text is unchanged.
             if self.overlay is not None:
                 self.overlay.push_llm_text(
