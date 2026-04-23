@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.33] - 2026-04-23
+
+### Fixed
+
+- **Unified system prompt ordering across all backends.** Dynamic content
+  (dynamic-context.sh output, clipboard) now always appears at the *end*
+  of the assembled prompt — after the static instructions and user
+  context — for both chat-completions and Responses API backends.
+  Previously the chat-completions path prepended dynamic context before
+  the static prompt with a `----` separator, which was inconsistent with
+  the Responses API split and unfriendly to sliding-window models (Gemma
+  4's dual context window). `_build_system_prompt` is now a three-line
+  delegation to `_build_system_prompt_parts`, eliminating the duplication
+  that caused the drift.
+
 ## [0.13.32] - 2026-04-23
 
 ### Changed

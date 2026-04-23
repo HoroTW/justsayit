@@ -477,7 +477,7 @@ def test_context_empty_no_heading():
     assert "User context" not in system_msg["content"]
 
 
-def test_dynamic_context_prepended_before_system_prompt_and_user_context(monkeypatch):
+def test_dynamic_context_appended_after_system_prompt_and_user_context(monkeypatch):
     profile = PostprocessProfile(
         model_path="/fake/model.gguf",
         system_prompt="Base prompt.",
@@ -491,13 +491,12 @@ def test_dynamic_context_prepended_before_system_prompt_and_user_context(monkeyp
     prompt = pp._build_system_prompt()
 
     assert prompt == (
-        "# STATE (DYNAMIC CONTEXT):\n"
-        "Date: 2026-04-17\n"
-        "Timezone: Europe/Berlin\n\n"
-        "----\n\n"
         "Base prompt.\n\n"
         "# User context\n"
-        "Name: Alice"
+        "Name: Alice\n\n"
+        "# STATE (DYNAMIC CONTEXT):\n"
+        "Date: 2026-04-17\n"
+        "Timezone: Europe/Berlin"
     )
 
 

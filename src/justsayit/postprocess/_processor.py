@@ -234,31 +234,8 @@ class PostprocessorBase:
         return prompt, "\n\n".join(dynamic_parts)
 
     def _build_system_prompt(self, extra_context: str = "") -> str:
-        # Inline ``system_prompt`` wins; otherwise resolve from the file.
-        prompt = self.profile.system_prompt.strip()
-        if not prompt and self.profile.system_prompt_file.strip():
-            prompt = _resolve_system_prompt_file(self.profile.system_prompt_file).strip()
-        extra = self.profile.append_to_system_prompt.strip()
-        if extra:
-            prompt = f"{prompt}\n\n{extra}" if prompt else extra
-        dynamic = self._dynamic_context()
-        if dynamic:
-            prompt = f"# STATE (DYNAMIC CONTEXT):\n{dynamic}\n\n----\n\n{prompt}"
-        ctx = self.profile.context.strip()
-        if ctx:
-            prompt = f"{prompt}\n\n# User context\n{ctx}"
-        clip = extra_context.strip()
-        if clip:
-            prompt = (
-                f"{prompt}\n\n# The user explicitly provided you with its current clipboard content as additional context "
-                f"(This always means you are in Assistant mode!)\n"
-                f"As the system assistant, you have access to the current clipboard content and need to use it as "
-                f"additional context for processing the user's request. "
-                f"## START clipboard content\n"
-                f"{clip}\n"
-                f"## END clipboard content\n"
-            )
-        return prompt
+        static, dynamic = self._build_system_prompt_parts(extra_context)
+        return "\n\n".join(filter(None, [static, dynamic]))
 
     def _build_messages(
         self, text: str, extra_context: str = ""
