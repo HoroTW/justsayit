@@ -356,7 +356,7 @@ def test_state_overlay_ignores_malformed_file(tmp_path):
 
 
 def test_resolve_secret_prefers_literal(monkeypatch, tmp_path):
-    import justsayit.config as cfg_mod
+    import justsayit.config._io as cfg_mod
 
     monkeypatch.setattr(cfg_mod, "config_dir", lambda: tmp_path)
     cfg_mod._DOTENV_LOADED = False
@@ -365,7 +365,7 @@ def test_resolve_secret_prefers_literal(monkeypatch, tmp_path):
 
 
 def test_resolve_secret_falls_back_to_process_env(monkeypatch, tmp_path):
-    import justsayit.config as cfg_mod
+    import justsayit.config._io as cfg_mod
 
     monkeypatch.setattr(cfg_mod, "config_dir", lambda: tmp_path)
     cfg_mod._DOTENV_LOADED = False
@@ -376,7 +376,7 @@ def test_resolve_secret_falls_back_to_process_env(monkeypatch, tmp_path):
 def test_resolve_secret_loads_dotenv(monkeypatch, tmp_path):
     """When the env var isn't already exported, a value from
     <config_dir>/.env should be picked up."""
-    import justsayit.config as cfg_mod
+    import justsayit.config._io as cfg_mod
 
     monkeypatch.setattr(cfg_mod, "config_dir", lambda: tmp_path)
     cfg_mod._DOTENV_LOADED = False
@@ -387,7 +387,7 @@ def test_resolve_secret_loads_dotenv(monkeypatch, tmp_path):
 
 def test_load_dotenv_does_not_override_process_env(monkeypatch, tmp_path):
     """Process env wins over .env (matches python-dotenv default)."""
-    import justsayit.config as cfg_mod
+    import justsayit.config._io as cfg_mod
 
     monkeypatch.setattr(cfg_mod, "config_dir", lambda: tmp_path)
     cfg_mod._DOTENV_LOADED = False
@@ -400,7 +400,7 @@ def test_load_dotenv_does_not_override_process_env(monkeypatch, tmp_path):
 
 
 def test_load_dotenv_strips_quotes_and_export(monkeypatch, tmp_path):
-    import justsayit.config as cfg_mod
+    import justsayit.config._io as cfg_mod
 
     monkeypatch.setattr(cfg_mod, "config_dir", lambda: tmp_path)
     cfg_mod._DOTENV_LOADED = False
@@ -424,7 +424,7 @@ def test_load_dotenv_strips_quotes_and_export(monkeypatch, tmp_path):
 
 
 def test_load_dotenv_missing_file_is_noop(monkeypatch, tmp_path):
-    import justsayit.config as cfg_mod
+    import justsayit.config._io as cfg_mod
 
     monkeypatch.setattr(cfg_mod, "config_dir", lambda: tmp_path)
     cfg_mod._DOTENV_LOADED = False
@@ -432,7 +432,7 @@ def test_load_dotenv_missing_file_is_noop(monkeypatch, tmp_path):
 
 
 def test_resolve_secret_returns_empty_when_unset(monkeypatch, tmp_path):
-    import justsayit.config as cfg_mod
+    import justsayit.config._io as cfg_mod
 
     monkeypatch.setattr(cfg_mod, "config_dir", lambda: tmp_path)
     cfg_mod._DOTENV_LOADED = False

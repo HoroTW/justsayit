@@ -1,0 +1,65 @@
+# justsayit postprocess: OpenAI Responses API backend defaults.
+#
+# These values populate the PostprocessProfile dataclass at runtime
+# when a user profile sets `base = "responses"`. Uses the OpenAI
+# /v1/responses endpoint instead of the older /v1/chat/completions.
+#
+# Key advantages over `base = "remote"` (chat/completions):
+#   - prompt_cache_retention: "24h" keeps the static system prompt cached
+#     for 24 hours (free; cached tokens are 90% cheaper than uncached).
+#   - The static system prompt goes in `instructions` (cached prefix);
+#     dynamic context + clipboard go in `input` (uncached, per-call).
+#   - Built-in web search via `responses_web_search = true`.
+#   - reasoning is sent as {"reasoning": {"effort": "..."}} (Responses API
+#     format) rather than the top-level reasoning_effort of Chat Completions.
+
+# --- Inference backend (OpenAI Responses API) ----------------------------
+
+endpoint = "https://api.openai.com/v1"
+model = ""
+api_key = ""
+api_key_env = "OPENAI_API_KEY"
+request_timeout = 60.0
+remote_retries = 3
+remote_retry_delay_seconds = 1.0
+
+# Prompt cache retention. "24h" keeps the cached system-prompt prefix
+# alive for 24 hours (free — no additional charge). "" = OpenAI default
+# (~5–10 minute sliding window).
+prompt_cache_retention = "24h"
+
+# reasoning_effort: "low" | "medium" | "high" | "" (= don't send field).
+# Sent as {"reasoning": {"effort": "..."}} in the Responses API body.
+# For gpt-5.4-mini, "low" is the measured sweet spot.
+reasoning_effort = ""
+
+# Include the built-in web_search tool. When true, the model can search
+# the web when the request requires it. Adds per-query cost.
+responses_web_search = false
+
+# If non-empty, web_search is only added when the raw transcription matches
+# this regex (re.search). Keeps the tool schema out of the cached prefix for
+# plain cleanup calls. Empty = always include (when responses_web_search=true).
+responses_web_search_trigger = ""
+
+# Flat fee per web_search_call action (USD). 0.0 = don't log search cost.
+# Pricing (all models): $10.00 / 1k calls = $0.010/call.
+# Search content tokens are billed additionally at the model's input rate.
+# Not reported in the API usage field — we count web_search_call items.
+web_search_price_per_call = 0.0
+
+# --- Token pricing (USD per 1 million tokens) ----------------------------
+input_price_per_1m = 0.0
+output_price_per_1m = 0.0
+cached_input_price_per_1m = 0.0
+
+# --- Cleanup tuning -------------------------------------------------------
+max_tokens = 4096
+user_template = "{text}"
+paste_strip_regex = ""
+
+# --- System prompt --------------------------------------------------------
+system_prompt_file = "cleanup_openai.md"
+system_prompt = ""
+append_to_system_prompt = ""
+context = ""

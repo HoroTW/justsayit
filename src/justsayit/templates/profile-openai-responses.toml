@@ -1,0 +1,45 @@
+# justsayit postprocess profile (commented-defaults form).
+#
+# Profile: openai-responses (OpenAI Responses API backend).
+#
+# Uses /v1/responses instead of /v1/chat/completions. The static system
+# prompt goes in `instructions` (cached for 24h, free); dynamic context
+# and clipboard go in `input` (uncached each call). Optional built-in
+# web search via responses_web_search = true.
+
+base = "responses"
+endpoint = "https://api.openai.com/v1"
+model = "gpt-5.4-mini"
+reasoning_effort = "low"
+
+# --- Responses API options ------------------------------------------------
+
+# 24-hour prompt cache (free; cached tokens are 90% cheaper).
+# prompt_cache_retention = "24h"
+
+# Enable built-in web search (adds per-query cost: $0.010/call flat fee
+# + search content tokens at model input rate).
+# responses_web_search = false
+
+# Only add the web_search tool when the transcription matches this regex.
+# Keeps ~4k token tool-schema overhead out of plain cleanup calls.
+# responses_web_search_trigger = '\b[hH]?e[yi][,\.!?]?\s*[Cc]omput(er|a)\b'
+
+# Flat fee per web_search_call action (USD). $0.010 for all models.
+# web_search_price_per_call = 0.010
+
+# --- Pricing (USD / 1M tokens) — uncomment to log per-call cost ----------
+# gpt-5.4-mini pricing (2026-04):
+# input_price_per_1m = 0.75
+# output_price_per_1m = 4.50
+# cached_input_price_per_1m = 0.075
+
+# --- Common overrides -----------------------------------------------------
+# api_key = "sk-..."
+# api_key_env = "OPENAI_API_KEY"
+# request_timeout = 60.0
+# remote_retries = 3
+# remote_retry_delay_seconds = 1.0
+# max_tokens = 4096
+# system_prompt_file = "cleanup_openai.md"
+# append_to_system_prompt = ""

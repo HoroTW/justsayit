@@ -7,6 +7,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.35] - 2026-04-23
+
+### Changed
+
+- **Extracted `src/justsayit/_http.py`** with a single `urllib_retry(req, *, timeout, retries, delay, label) -> bytes` helper. Both `postprocess._processor._http_post` and `transcribe_openai.OpenAIWhisperTranscriber.transcribe` now delegate their retry loops to it, eliminating the duplication. No new dependency added.
+
+## [0.13.34] - 2026-04-22
+
+### Changed
+
+- **Removed 4 redundant `ensure_*` profile wrappers** (`ensure_default_profile`,
+  `ensure_fun_profile`, `ensure_openai_profile`, `ensure_ollama_gemma_profile`).
+  The private `_ensure_profile` helper is now the public `ensure_profile(content, path)`.
+  Callers pass content and path explicitly; `ensure_default_profiles()` is unchanged.
+- **Retry logic for OpenAI transcription backend.** `transcribe_openai.py` now
+  retries on transient HTTP errors (408, 409, 425, 429, 500–504) with the same
+  retry/delay semantics as the postprocess remote backend. Two new `ModelConfig`
+  fields control this: `openai_retries` (default 3) and `openai_retry_delay`
+  (default 1.0 s).
+- **Added Modularization over DRY rule to `CLAUDE.md`.** Independent modules
+  may contain similar code that only slightly differs; only consolidate into
+  shared helpers when truly identical infrastructure would otherwise diverge.
+
+## [0.13.33] - 2026-04-23
+
+### Fixed
+
+- **Unified system prompt ordering across all backends.** Dynamic content
+  (dynamic-context.sh output, clipboard) now always appears at the *end*
+  of the assembled prompt — after the static instructions and user
+  context — for both chat-completions and Responses API backends.
+  Previously the chat-completions path prepended dynamic context before
+  the static prompt with a `----` separator, which was inconsistent with
+  the Responses API split and unfriendly to sliding-window models (Gemma
+  4's dual context window). `_build_system_prompt` is now a three-line
+  delegation to `_build_system_prompt_parts`, eliminating the duplication
+  that caused the drift.
+
+## [0.13.32] - 2026-04-23
+
+### Changed
+
+- Updated `CLAUDE.md` to reflect current architecture: postprocess
+  backend split, config package, segment pipeline, boot/subcommand
+  modules, and monkeypatch guidance for tests.
+
+## [0.13.31] - 2026-04-23
+
+### Changed
+
+- **Postprocess backends split into separate files.** `_processor.py` is
+  now a base class (`PostprocessorBase`) + shared HTTP/logging utilities.
+  Each backend is its own file — `backend_local.py` (llama-cpp-python
+  GGUF), `backend_remote.py` (OpenAI-compatible `/chat/completions`),
+  `backend_responses.py` (OpenAI Responses API). `make_postprocessor()`
+  factory selects the right one; `LLMPostprocessor` remains as an alias.
+  Adding a new backend is now a single file + one factory line.
+- **Config split into a package.** `config.py` → `config/` with
+  `_schema.py` (dataclasses) and `_io.py` (paths, env, load/save). All
+  existing `from justsayit.config import …` imports still work.
+- **Segment pipeline extracted from `cli.py`.** `App._handle_segment`
+  logic moved to `SegmentPipeline` in `pipeline.py`; `App` keeps a thin
+  delegating wrapper so tests are unaffected.
+
+## [0.13.30] - 2026-04-22
+
+### Removed
+
+- **Anthropic native backend** (`base = "anthropic"`). Too expensive for
+  routine cleanup. Removed `_anthropic_process`, the three
+  `anthropic_*` profile fields, `anthropic-defaults.toml`, and
+  `profile-anthropic-cleanup.toml`. The `remote` and `responses`
+  (OpenAI Responses API) backends are unaffected.
+
+## [0.13.29] - 2026-04-22
+
+### Changed
+
+- **Refactored `postprocess.py` into a package.** Split the 1 400-line
+  flat module into `postprocess/_profile.py` (profile loading, TOML
+  helpers, context sidecars), `postprocess/_models.py` (known GGUF
+  models, HuggingFace download), and `postprocess/_processor.py`
+  (`LLMPostprocessor`, shared `_http_post` retry loop). Public API
+  unchanged; all existing imports still work.
+- **Extracted boot helpers and CLI subcommands from `cli.py`.** Pre-GTK
+  re-exec logic moved to `_boot.py`; `init`, `download-models`, and
+  `setup-llm` subcommand functions moved to `_subcommands.py`.
+  `cli.py` shrinks by ~650 lines.
+
 ## [0.13.28] - 2026-04-22
 
 ### Added

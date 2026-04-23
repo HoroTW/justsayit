@@ -17,12 +17,12 @@ import json
 import logging
 import secrets
 import threading
-import urllib.error
 import urllib.request
 import wave
 
 import numpy as np
 
+from justsayit._http import request_with_retry
 from justsayit.config import Config, resolve_secret
 from justsayit.transcribe import TranscriberBase
 
@@ -130,20 +130,13 @@ class OpenAIWhisperTranscriber(TranscriberBase):
             method="POST",
         )
         with self._lock:  # serialise so we don't fan out parallel requests
-            try:
-                with urllib.request.urlopen(
-                    req, timeout=self.cfg.model.openai_timeout
-                ) as resp:
-                    raw = resp.read()
-            except urllib.error.HTTPError as exc:
-                try:
-                    detail = exc.read().decode("utf-8", errors="replace")[:500]
-                except Exception:
-                    detail = ""
-                raise RuntimeError(
-                    f"transcription endpoint returned HTTP {exc.code}: "
-                    f"{exc.reason}\n  {detail}"
-                ) from exc
+            raw = request_with_retry(
+                req,
+                timeout=self.cfg.model.openai_timeout,
+                retries=self.cfg.model.openai_retries,
+                delay=self.cfg.model.openai_retry_delay,
+                label="transcription",
+            )
         try:
             data = json.loads(raw)
         except json.JSONDecodeError:

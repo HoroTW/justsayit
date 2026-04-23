@@ -21,19 +21,23 @@ from justsayit.postprocess import (
     _CLEANUP_PROFILE_TOML,
     _DYNAMIC_CONTEXT_SCRIPT,
     _FUN_PROFILE_TOML,
+    _OLLAMA_GEMMA_PROFILE_TOML,
+    _OPENAI_PROFILE_TOML,
     apply_profile_overrides,
     _load_prompt,
     context_file_path,
     dynamic_context_script_path,
     ensure_context_file,
-    ensure_default_profile,
+    ensure_default_profiles,
     ensure_dynamic_context_script,
-    ensure_fun_profile,
+    ensure_profile,
     find_hf_q4_filename,
     load_context_sidecar,
     load_profile,
     profiles_dir,
 )
+import justsayit._http as _http_mod
+import justsayit.postprocess._processor as _proc_mod
 
 # Convenience: read the shipped prompt files exactly the way the
 # postprocess module does. Tests assert on prompt content, so we want
@@ -48,7 +52,7 @@ _REMOTE_CLEANUP_SYSTEM_PROMPT = _load_prompt("cleanup_openai.md")
 
 
 def test_load_profile_by_name(tmp_path, monkeypatch):
-    monkeypatch.setattr("justsayit.postprocess.config_dir", lambda: tmp_path)
+    monkeypatch.setattr("justsayit.postprocess._profile.config_dir", lambda: tmp_path)
     profile_dir = tmp_path / "postprocess"
     profile_dir.mkdir()
     (profile_dir / "mymodel.toml").write_text(
@@ -87,7 +91,7 @@ def test_load_profile_unknown_keys_ignored(tmp_path):
 
 
 def test_load_profile_missing_file_raises(tmp_path, monkeypatch):
-    monkeypatch.setattr("justsayit.postprocess.config_dir", lambda: tmp_path)
+    monkeypatch.setattr("justsayit.postprocess._profile.config_dir", lambda: tmp_path)
     with pytest.raises(FileNotFoundError):
         load_profile("nonexistent")
 
@@ -103,8 +107,8 @@ def test_load_profile_defaults_are_applied(tmp_path):
 
 
 def test_ensure_default_profile_creates_file(tmp_path, monkeypatch):
-    monkeypatch.setattr("justsayit.postprocess.config_dir", lambda: tmp_path)
-    path = ensure_default_profile()
+    monkeypatch.setattr("justsayit.postprocess._profile.config_dir", lambda: tmp_path)
+    path = ensure_profile(_CLEANUP_PROFILE_TOML, profiles_dir() / "gemma4-cleanup.toml")
     assert path.exists()
     assert path.name == "gemma4-cleanup.toml"
     content = path.read_text(encoding="utf-8")
@@ -122,8 +126,7 @@ def test_ensure_default_profiles_writes_all_four(tmp_path, monkeypatch):
     compatible endpoint variant, and the Ollama-served-Gemma example.
     All four must exist after a single call so the tray menu has them
     to offer."""
-    monkeypatch.setattr("justsayit.postprocess.config_dir", lambda: tmp_path)
-    from justsayit.postprocess import ensure_default_profiles
+    monkeypatch.setattr("justsayit.postprocess._profile.config_dir", lambda: tmp_path)
 
     cleanup, fun, openai, ollama_gemma = ensure_default_profiles()
     assert cleanup.name == "gemma4-cleanup.toml"
@@ -150,10 +153,9 @@ def test_openai_profile_template_has_base_endpoint_and_model_uncommented(
     what they need. The system prompt comes from `cleanup_openai.md`
     via the `remote-defaults.toml` overlay — no auto-swap, no
     embedded copy."""
-    monkeypatch.setattr("justsayit.postprocess.config_dir", lambda: tmp_path)
-    from justsayit.postprocess import ensure_openai_profile, load_profile
+    monkeypatch.setattr("justsayit.postprocess._profile.config_dir", lambda: tmp_path)
 
-    p = ensure_openai_profile()
+    p = ensure_profile(_OPENAI_PROFILE_TOML, profiles_dir() / "openai-cleanup.toml")
     text = p.read_text(encoding="utf-8")
     # Defining keys live as bare assignments at the top of the file.
     assert '\nbase = "remote"' in text
@@ -184,10 +186,9 @@ def test_ollama_gemma_profile_demonstrates_orthogonal_backend_and_prompt(
     "cleanup_gemma.md"`) are independent. The ollama-gemma profile is
     the worked example: HTTP backend (Ollama), Gemma's <|think|>
     cleanup prompt, channel stripper re-enabled."""
-    monkeypatch.setattr("justsayit.postprocess.config_dir", lambda: tmp_path)
-    from justsayit.postprocess import ensure_ollama_gemma_profile, load_profile
+    monkeypatch.setattr("justsayit.postprocess._profile.config_dir", lambda: tmp_path)
 
-    p = ensure_ollama_gemma_profile()
+    p = ensure_profile(_OLLAMA_GEMMA_PROFILE_TOML, profiles_dir() / "ollama-gemma.toml")
     profile = load_profile("ollama-gemma")
     assert profile.base == "remote"
     # Default points at LM Studio (port 1234); override to 11434 for Ollama.
@@ -224,11 +225,12 @@ def test_legacy_prompt_name_is_redirected_with_warning(caplog):
     )
 
 
-def test_ensure_default_profile_idempotent(tmp_path, monkeypatch):
-    monkeypatch.setattr("justsayit.postprocess.config_dir", lambda: tmp_path)
-    p1 = ensure_default_profile()
+def test_ensure_profile_idempotent(tmp_path, monkeypatch):
+    monkeypatch.setattr("justsayit.postprocess._profile.config_dir", lambda: tmp_path)
+    dest = profiles_dir() / "gemma4-cleanup.toml"
+    p1 = ensure_profile(_CLEANUP_PROFILE_TOML, dest)
     original = p1.read_text(encoding="utf-8")
-    p2 = ensure_default_profile()
+    p2 = ensure_profile(_CLEANUP_PROFILE_TOML, dest)
     assert p1 == p2
     assert p2.read_text(encoding="utf-8") == original  # not overwritten
 
@@ -360,8 +362,9 @@ def test_warmup_loads_model(tmp_path):
     (tmp_path / "model.gguf").write_bytes(b"fake")
     pp = LLMPostprocessor(profile)
     mock_llm = MagicMock()
-    with patch("justsayit.postprocess.LLMPostprocessor._build", return_value=mock_llm):
-        pp.warmup()
+    with patch("justsayit.postprocess.backend_local.LocalBackend._build", return_value=mock_llm):
+        with patch.object(pp, "_install_chat_template_kwargs"):
+            pp.warmup()
     assert pp._llm is mock_llm
 
 
@@ -475,7 +478,7 @@ def test_context_empty_no_heading():
     assert "User context" not in system_msg["content"]
 
 
-def test_dynamic_context_prepended_before_system_prompt_and_user_context(monkeypatch):
+def test_dynamic_context_appended_after_system_prompt_and_user_context(monkeypatch):
     profile = PostprocessProfile(
         model_path="/fake/model.gguf",
         system_prompt="Base prompt.",
@@ -489,13 +492,12 @@ def test_dynamic_context_prepended_before_system_prompt_and_user_context(monkeyp
     prompt = pp._build_system_prompt()
 
     assert prompt == (
-        "# STATE (DYNAMIC CONTEXT):\n"
-        "Date: 2026-04-17\n"
-        "Timezone: Europe/Berlin\n\n"
-        "----\n\n"
         "Base prompt.\n\n"
         "# User context\n"
-        "Name: Alice"
+        "Name: Alice\n\n"
+        "# STATE (DYNAMIC CONTEXT):\n"
+        "Date: 2026-04-17\n"
+        "Timezone: Europe/Berlin"
     )
 
 
@@ -682,7 +684,6 @@ def test_sampling_params_forwarded_to_remote_body(monkeypatch):
     ``top_k`` / ``min_p`` / ``repeat_penalty`` are llama.cpp-specific
     and deliberately left out of the body so OpenAI doesn't 400."""
     import json
-    import justsayit.postprocess as pp_mod
 
     profile = PostprocessProfile(
         endpoint="https://example.test/v1",
@@ -710,7 +711,7 @@ def test_sampling_params_forwarded_to_remote_body(monkeypatch):
         resp.__exit__ = lambda self, *a: False
         return resp
 
-    monkeypatch.setattr(pp_mod.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(_proc_mod.urllib.request, "urlopen", fake_urlopen)
 
     pp.process("in")
 
@@ -738,9 +739,8 @@ def test_remote_default_chat_template_kwargs_is_empty(tmp_path, monkeypatch):
     fields with HTTP 400 ("Unrecognized request argument supplied:
     chat_template_kwargs"); the empty default is what keeps the
     out-of-the-box openai-cleanup profile working."""
-    import justsayit.postprocess as pp_mod
 
-    monkeypatch.setattr(pp_mod, "profiles_dir", lambda: tmp_path)
+    monkeypatch.setattr("justsayit.postprocess._profile.profiles_dir", lambda: tmp_path)
     p = tmp_path / "openai.toml"
     p.write_text(
         'base = "remote"\n'
@@ -755,7 +755,6 @@ def test_remote_default_chat_template_kwargs_is_empty(tmp_path, monkeypatch):
 
 
 def test_dynamic_context_script_empty_stdout_omitted(monkeypatch):
-    import justsayit.postprocess as pp_mod
 
     profile = PostprocessProfile(model_path="/fake/model.gguf")
     pp = LLMPostprocessor(profile, dynamic_context_script="~/dynamic-context.sh")
@@ -765,13 +764,12 @@ def test_dynamic_context_script_empty_stdout_omitted(monkeypatch):
         stdout = "\n"
         stderr = ""
 
-    monkeypatch.setattr(pp_mod.subprocess, "run", lambda *a, **k: _Proc())
+    monkeypatch.setattr(_proc_mod.subprocess, "run", lambda *a, **k: _Proc())
 
     assert pp._dynamic_context() == ""
 
 
 def test_dynamic_context_script_failure_logged_and_ignored(monkeypatch, caplog):
-    import justsayit.postprocess as pp_mod
 
     profile = PostprocessProfile(model_path="/fake/model.gguf")
     pp = LLMPostprocessor(profile, dynamic_context_script="~/dynamic-context.sh")
@@ -781,14 +779,14 @@ def test_dynamic_context_script_failure_logged_and_ignored(monkeypatch, caplog):
         stdout = ""
         stderr = "boom"
 
-    monkeypatch.setattr(pp_mod.subprocess, "run", lambda *a, **k: _Proc())
+    monkeypatch.setattr(_proc_mod.subprocess, "run", lambda *a, **k: _Proc())
 
     assert pp._dynamic_context() == ""
     assert "dynamic context script exited with 7" in caplog.text
 
 
 def test_dynamic_context_success_and_assembled_prompt_logged(monkeypatch, caplog):
-    caplog.set_level("INFO")
+    caplog.set_level("DEBUG")
     profile = PostprocessProfile(
         model_path="/fake/model.gguf", system_prompt="Base prompt."
     )
@@ -851,7 +849,7 @@ def test_load_config_postprocess_settings(tmp_path):
 
 
 def test_ensure_context_file_writes_template(tmp_path, monkeypatch):
-    monkeypatch.setattr("justsayit.postprocess.config_dir", lambda: tmp_path)
+    monkeypatch.setattr("justsayit.postprocess._profile.config_dir", lambda: tmp_path)
     p = ensure_context_file()
     assert p.exists()
     body = p.read_text(encoding="utf-8")
@@ -862,7 +860,7 @@ def test_ensure_context_file_writes_template(tmp_path, monkeypatch):
 
 
 def test_ensure_dynamic_context_script_writes_template(tmp_path, monkeypatch):
-    monkeypatch.setattr("justsayit.postprocess.config_dir", lambda: tmp_path)
+    monkeypatch.setattr("justsayit.postprocess._profile.config_dir", lambda: tmp_path)
     p = ensure_dynamic_context_script()
     assert p == dynamic_context_script_path()
     assert p.exists()
@@ -871,7 +869,7 @@ def test_ensure_dynamic_context_script_writes_template(tmp_path, monkeypatch):
 
 
 def test_ensure_dynamic_context_script_does_not_overwrite(tmp_path, monkeypatch):
-    monkeypatch.setattr("justsayit.postprocess.config_dir", lambda: tmp_path)
+    monkeypatch.setattr("justsayit.postprocess._profile.config_dir", lambda: tmp_path)
     target = dynamic_context_script_path()
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("#!/bin/sh\nprintf 'custom\\n'\n", encoding="utf-8")
@@ -882,7 +880,7 @@ def test_ensure_dynamic_context_script_does_not_overwrite(tmp_path, monkeypatch)
 
 
 def test_ensure_context_file_does_not_overwrite(tmp_path, monkeypatch):
-    monkeypatch.setattr("justsayit.postprocess.config_dir", lambda: tmp_path)
+    monkeypatch.setattr("justsayit.postprocess._profile.config_dir", lambda: tmp_path)
     target = context_file_path()
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text('context = "my notes"\n', encoding="utf-8")
@@ -891,7 +889,7 @@ def test_ensure_context_file_does_not_overwrite(tmp_path, monkeypatch):
 
 
 def test_load_context_sidecar_returns_value(tmp_path, monkeypatch):
-    monkeypatch.setattr("justsayit.postprocess.config_dir", lambda: tmp_path)
+    monkeypatch.setattr("justsayit.postprocess._profile.config_dir", lambda: tmp_path)
     target = context_file_path()
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text('context = "Name: Jane"\n', encoding="utf-8")
@@ -899,12 +897,12 @@ def test_load_context_sidecar_returns_value(tmp_path, monkeypatch):
 
 
 def test_load_context_sidecar_missing_returns_empty(tmp_path, monkeypatch):
-    monkeypatch.setattr("justsayit.postprocess.config_dir", lambda: tmp_path)
+    monkeypatch.setattr("justsayit.postprocess._profile.config_dir", lambda: tmp_path)
     assert load_context_sidecar() == ""
 
 
 def test_load_context_sidecar_malformed_returns_empty(tmp_path, monkeypatch):
-    monkeypatch.setattr("justsayit.postprocess.config_dir", lambda: tmp_path)
+    monkeypatch.setattr("justsayit.postprocess._profile.config_dir", lambda: tmp_path)
     target = context_file_path()
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("not = valid = toml = at all", encoding="utf-8")
@@ -913,7 +911,7 @@ def test_load_context_sidecar_malformed_returns_empty(tmp_path, monkeypatch):
 
 
 def test_load_profile_falls_back_to_sidecar(tmp_path, monkeypatch):
-    monkeypatch.setattr("justsayit.postprocess.config_dir", lambda: tmp_path)
+    monkeypatch.setattr("justsayit.postprocess._profile.config_dir", lambda: tmp_path)
     # Profile with no context field
     pdir = tmp_path / "postprocess"
     pdir.mkdir()
@@ -931,7 +929,7 @@ def test_load_profile_falls_back_to_sidecar(tmp_path, monkeypatch):
 def test_load_profile_context_field_overrides_sidecar(tmp_path, monkeypatch):
     """Per-profile `context = "..."` wins over the sidecar — backward
     compat for users who already have context inline in their profile."""
-    monkeypatch.setattr("justsayit.postprocess.config_dir", lambda: tmp_path)
+    monkeypatch.setattr("justsayit.postprocess._profile.config_dir", lambda: tmp_path)
     pdir = tmp_path / "postprocess"
     pdir.mkdir()
     (pdir / "demo.toml").write_text(
@@ -953,13 +951,13 @@ def test_ensure_default_profile_writes_commented_template_on_fresh_install(
     tmp_path: Path,
 ):
     p = tmp_path / "gemma4-cleanup.toml"
-    ensure_default_profile(p)
+    ensure_profile(_CLEANUP_PROFILE_TOML, p)
     assert p.read_text(encoding="utf-8") == _CLEANUP_PROFILE_TOML
 
 
 def test_ensure_fun_profile_writes_commented_template_on_fresh_install(tmp_path: Path):
     p = tmp_path / "gemma4-fun.toml"
-    ensure_fun_profile(p)
+    ensure_profile(_FUN_PROFILE_TOML, p)
     assert p.read_text(encoding="utf-8") == _FUN_PROFILE_TOML
 
 
@@ -970,7 +968,7 @@ def test_ensure_default_profile_migrates_legacy_fully_populated_file(tmp_path: P
     p = tmp_path / "gemma4-cleanup.toml"
     legacy = '# my custom profile\nmodel_path = "/tmp/x.gguf"\ntemperature = 0.5\n'
     p.write_text(legacy, encoding="utf-8")
-    ensure_default_profile(p)
+    ensure_profile(_CLEANUP_PROFILE_TOML, p)
     backup = p.with_name(p.name + ".bak-pre-commented-form")
     assert backup.exists()
     assert backup.read_text(encoding="utf-8") == legacy
@@ -979,15 +977,15 @@ def test_ensure_default_profile_migrates_legacy_fully_populated_file(tmp_path: P
 
 def test_ensure_default_profile_preserves_user_overrides_post_migration(tmp_path: Path):
     """After migration the file carries the commented-form marker. Even
-    if the user uncomments and edits a key, subsequent ensure_*() calls
-    must NOT back up + reset (that would discard their override) — the
-    marker tells us we're already in the new form."""
+    if the user uncomments and edits a key, subsequent ensure_profile()
+    calls must NOT back up + reset (that would discard their override) —
+    the marker tells us we're already in the new form."""
     p = tmp_path / "gemma4-cleanup.toml"
     user_edited = (
         _CLEANUP_PROFILE_TOML.rstrip() + "\n\n# user override\ntemperature = 0.42\n"
     )
     p.write_text(user_edited, encoding="utf-8")
-    ensure_default_profile(p)
+    ensure_profile(_CLEANUP_PROFILE_TOML, p)
     assert p.read_text(encoding="utf-8") == user_edited
     backup = p.with_name(p.name + ".bak-pre-commented-form")
     assert not backup.exists()
@@ -1020,7 +1018,7 @@ def test_ensure_default_profile_re_migrates_marker_carrying_corrupt_file(
         "<|think|> stray uncommented junk that breaks TOML parsing\n"
     )
     p.write_text(corrupt, encoding="utf-8")
-    ensure_default_profile(p)
+    ensure_profile(_CLEANUP_PROFILE_TOML, p)
     backup = p.with_name(p.name + ".bak-pre-commented-form")
     assert backup.exists()
     assert backup.read_text(encoding="utf-8") == corrupt
@@ -1186,7 +1184,6 @@ def test_remote_process_posts_chat_completions(monkeypatch):
     and Authorization header; returned content is stripped and surfaced."""
     import json
     from unittest.mock import MagicMock
-    import justsayit.postprocess as pp_mod
 
     profile = PostprocessProfile(
         endpoint="https://api.example.com/v1",
@@ -1214,7 +1211,7 @@ def test_remote_process_posts_chat_completions(monkeypatch):
         resp.__exit__ = lambda self, *a: False
         return resp
 
-    monkeypatch.setattr(pp_mod.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(_proc_mod.urllib.request, "urlopen", fake_urlopen)
 
     out = pp.process("raw text")
     assert out == "cleaned reply"
@@ -1235,8 +1232,7 @@ def test_remote_process_uses_env_key_when_literal_empty(monkeypatch, tmp_path):
     (which now also includes anything the .env loader merged in)."""
     from unittest.mock import MagicMock
     import json
-    import justsayit.postprocess as pp_mod
-    import justsayit.config as cfg_mod
+    import justsayit.config._io as cfg_mod
 
     monkeypatch.setattr(cfg_mod, "config_dir", lambda: tmp_path)
     cfg_mod._DOTENV_LOADED = False
@@ -1259,7 +1255,7 @@ def test_remote_process_uses_env_key_when_literal_empty(monkeypatch, tmp_path):
         resp.__exit__ = lambda self, *a: False
         return resp
 
-    monkeypatch.setattr(pp_mod.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(_proc_mod.urllib.request, "urlopen", fake_urlopen)
     pp.process("x")
     assert captured["headers"]["Authorization"] == "Bearer key-from-shell"
 
@@ -1267,7 +1263,7 @@ def test_remote_process_uses_env_key_when_literal_empty(monkeypatch, tmp_path):
 def test_remote_process_raises_when_no_key(monkeypatch, tmp_path):
     """Endpoint set but no key anywhere → clear error message that names
     the env var the user should set."""
-    import justsayit.config as cfg_mod
+    import justsayit.config._io as cfg_mod
 
     monkeypatch.setattr(cfg_mod, "config_dir", lambda: tmp_path)
     cfg_mod._DOTENV_LOADED = False
@@ -1296,7 +1292,6 @@ def test_remote_process_falls_back_to_input_on_empty_response(monkeypatch):
     """Same contract as the local path: empty content → return input."""
     from unittest.mock import MagicMock
     import json
-    import justsayit.postprocess as pp_mod
 
     profile = PostprocessProfile(
         endpoint="https://api.example.com/v1",
@@ -1313,13 +1308,12 @@ def test_remote_process_falls_back_to_input_on_empty_response(monkeypatch):
         resp.__exit__ = lambda self, *a: False
         return resp
 
-    monkeypatch.setattr(pp_mod.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(_proc_mod.urllib.request, "urlopen", fake_urlopen)
     assert pp.process("original") == "original"
 
 
 def test_remote_process_retries_transient_http_error_then_succeeds(monkeypatch):
     import json
-    import justsayit.postprocess as pp_mod
 
     profile = PostprocessProfile(
         endpoint="https://api.example.com/v1",
@@ -1339,7 +1333,7 @@ def test_remote_process_retries_transient_http_error_then_succeeds(monkeypatch):
     def fake_urlopen(req, timeout=None):
         calls["count"] += 1
         if calls["count"] < 3:
-            raise pp_mod.urllib.error.HTTPError(
+            raise _proc_mod.urllib.error.HTTPError(
                 req.full_url,
                 503,
                 "Service Unavailable",
@@ -1361,8 +1355,8 @@ def test_remote_process_retries_transient_http_error_then_succeeds(monkeypatch):
 
         return _Resp()
 
-    monkeypatch.setattr(pp_mod.urllib.request, "urlopen", fake_urlopen)
-    monkeypatch.setattr(pp_mod.time, "sleep", fake_sleep)
+    monkeypatch.setattr(_proc_mod.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(_http_mod.time, "sleep", fake_sleep)
 
     assert pp.process("original") == "done"
     assert calls["count"] == 3
@@ -1370,7 +1364,6 @@ def test_remote_process_retries_transient_http_error_then_succeeds(monkeypatch):
 
 
 def test_remote_process_exhausts_retries_on_transient_error(monkeypatch):
-    import justsayit.postprocess as pp_mod
 
     profile = PostprocessProfile(
         endpoint="https://api.example.com/v1",
@@ -1389,10 +1382,10 @@ def test_remote_process_exhausts_retries_on_transient_error(monkeypatch):
 
     def fake_urlopen(req, timeout=None):
         calls["count"] += 1
-        raise pp_mod.urllib.error.URLError("temporary dns failure")
+        raise _proc_mod.urllib.error.URLError("temporary dns failure")
 
-    monkeypatch.setattr(pp_mod.urllib.request, "urlopen", fake_urlopen)
-    monkeypatch.setattr(pp_mod.time, "sleep", fake_sleep)
+    monkeypatch.setattr(_proc_mod.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(_http_mod.time, "sleep", fake_sleep)
 
     with pytest.raises(RuntimeError, match="temporary dns failure"):
         pp.process("original")
@@ -1486,7 +1479,6 @@ def test_remote_process_forwards_chat_template_kwargs_when_set(monkeypatch):
     template toggles like Qwen 3.5's enable_thinking reach the server."""
     import json
     from unittest.mock import MagicMock
-    import justsayit.postprocess as pp_mod
 
     profile = PostprocessProfile(
         endpoint="https://api.example.com/v1",
@@ -1509,7 +1501,7 @@ def test_remote_process_forwards_chat_template_kwargs_when_set(monkeypatch):
         resp.__exit__ = lambda self, *a: False
         return resp
 
-    monkeypatch.setattr(pp_mod.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(_proc_mod.urllib.request, "urlopen", fake_urlopen)
 
     pp.process("in")
     assert captured["body"]["chat_template_kwargs"] == {"enable_thinking": True}
@@ -1521,7 +1513,6 @@ def test_remote_process_omits_chat_template_kwargs_when_empty(monkeypatch):
     stricter gateways)."""
     import json
     from unittest.mock import MagicMock
-    import justsayit.postprocess as pp_mod
 
     profile = PostprocessProfile(
         endpoint="https://api.example.com/v1",
@@ -1544,7 +1535,7 @@ def test_remote_process_omits_chat_template_kwargs_when_empty(monkeypatch):
         resp.__exit__ = lambda self, *a: False
         return resp
 
-    monkeypatch.setattr(pp_mod.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(_proc_mod.urllib.request, "urlopen", fake_urlopen)
 
     pp.process("in")
     assert "chat_template_kwargs" not in captured["body"]
@@ -1552,9 +1543,8 @@ def test_remote_process_omits_chat_template_kwargs_when_empty(monkeypatch):
 
 def test_load_profile_chat_template_kwargs_from_toml(tmp_path, monkeypatch):
     """User profiles can set chat_template_kwargs via inline TOML table."""
-    import justsayit.postprocess as pp_mod
 
-    monkeypatch.setattr(pp_mod, "profiles_dir", lambda: tmp_path)
+    monkeypatch.setattr("justsayit.postprocess._profile.profiles_dir", lambda: tmp_path)
     p = tmp_path / "qwen-thinking.toml"
     p.write_text(
         "model_path = '/m'\n"
@@ -1574,7 +1564,6 @@ def _fake_remote_response(monkeypatch, payload: dict):
     """Helper: monkeypatch urlopen to return *payload* once."""
     import json
     from unittest.mock import MagicMock
-    import justsayit.postprocess as pp_mod
 
     def fake_urlopen(req, timeout=None):
         body = json.dumps(payload).encode()
@@ -1584,7 +1573,7 @@ def _fake_remote_response(monkeypatch, payload: dict):
         resp.__exit__ = lambda self, *a: False
         return resp
 
-    monkeypatch.setattr(pp_mod.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(_proc_mod.urllib.request, "urlopen", fake_urlopen)
 
 
 def _remote_pp() -> LLMPostprocessor:
@@ -1802,7 +1791,7 @@ def test_log_usage_cached_tokens_subtracted(monkeypatch, caplog):
         ).process("hi")
     msgs = [r.message for r in caplog.records if "LLM usage" in r.message]
     assert len(msgs) == 1
-    # input $0.15 - cached $0.075 = total $0.075
+    # 0 non-cached × 0.15 + 1M cached × 0.075 = $0.075
     assert "cost $0.075000" in msgs[0]
     assert "cached $0.075000" in msgs[0]
 

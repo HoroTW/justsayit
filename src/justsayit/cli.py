@@ -4,195 +4,19 @@ from __future__ import annotations
 
 # --- gtk4-layer-shell preload ---------------------------------------------
 # Layer-shell must be loaded *before* libwayland-client is pulled in. Once
-# any `gi.require_version("Gtk", "4.0")` runs, it's too late — wayland is
-# already in the process. So before we touch gi, re-exec ourselves with
-# LD_PRELOAD set. This is the same fix the gtk4-layer-shell warning
-# documents; doing it here means launching from a terminal or the .desktop
-# file both just work.
-import os as _os
-import sys as _sys
-
-
-def _reexec_cmd() -> list[str]:
-    """Return the argv to re-execute the current process.
-
-    When running inside a Nix ``makeBinaryWrapper`` ELF wrapper, ``sys.argv[0]``
-    is the ELF binary path, not a Python script. Passing it to
-    ``[sys.executable, *sys.argv]`` would make Python try to execute a binary
-    as source code. Detect this case and exec the ELF directly instead —
-    the wrapper handles Python setup on its own.
-    """
-    argv0 = _sys.argv[0]
-    try:
-        with open(argv0, "rb") as f:
-            if f.read(4) == b"\x7fELF":
-                return [argv0] + _sys.argv[1:]
-    except OSError:
-        pass
-    return [_sys.executable, *_sys.argv]
-
-
-def _set_process_name(name: str) -> None:
-    """Set the kernel-visible ``comm`` field via ``prctl(PR_SET_NAME)`` so
-    ``killall`` / ``pgrep`` (without ``-f``) / ``htop`` / ``top`` show
-    *name* instead of ``python3``. Without this the entry-point shim
-    leaves us running as ``python3`` and ``killall justsayit`` finds
-    nothing. Linux-only (matches our overall deployment target);
-    quietly no-ops if libc.prctl can't be reached, in which case the
-    user can still fall back to ``pkill -f justsayit``."""
-    if _sys.platform != "linux":
-        return
-    try:
-        import ctypes
-
-        libc = ctypes.CDLL("libc.so.6", use_errno=True)
-        # PR_SET_NAME == 15. The kernel comm field is truncated to 15
-        # bytes + NUL, so trim defensively before passing.
-        libc.prctl(15, name.encode("ascii", "replace")[:15], 0, 0, 0)
-    except Exception:
-        pass
-
-
-def _app_id() -> str:
-    """Portal application id used for D-Bus / systemd scoping. Can be
-    overridden via ``JUSTSAYIT_APP_ID`` so a dev build can run in
-    parallel with an installed build without fighting over the same
-    shortcut binding."""
-    return _os.environ.get("JUSTSAYIT_APP_ID", "dev.horotw.justsayit")
-
-
-def _relaunch_via_desktop() -> bool:
-    """Spawn a fresh instance via the installed ``.desktop`` file so the
-    desktop env (KDE/GNOME) places it in a portal-recognized systemd
-    scope with a stable, well-formed app id. Returns ``True`` if a new
-    instance was launched (caller should exit), ``False`` otherwise.
-
-    Why this matters for the restart-from-tray flow: when launched from a
-    terminal we self-create ``app-<app_id>-<pid>.scope`` via systemd-run.
-    That scope name isn't always parsed back to our app id by the XDG
-    portal's app-id resolver, so on the second D-Bus connection (after
-    in-place execve) BindShortcuts can come back unassigned — the user
-    sees the bind dialog pop again. Going through gio-launch-desktop
-    (what ``Gio.DesktopAppInfo.launch`` does under the hood) makes the
-    desktop env own the scope naming, which the portal then recognizes
-    consistently across launches.
-    """
-    try:
-        from gi.repository import Gio  # local import: avoids loading gi
-        # before LD_PRELOAD reexec on cold start.
-
-        info = Gio.DesktopAppInfo.new(_app_id() + ".desktop")
-    except Exception:
-        return False
-    if info is None:
-        return False
-    try:
-        return bool(info.launch([], None))
-    except Exception:
-        return False
-
-
-def _reexec_under_systemd_scope() -> None:
-    """Re-exec ourselves inside an ``app-<app_id>-*.scope`` cgroup so the
-    XDG portal can identify us with a stable name no matter how we were
-    launched. Without this, launching from a terminal lands us in the
-    shell's scope (e.g. ``konsole.scope``) and the portal generates a
-    fresh synthetic id every run — which is why the hotkey bind dialog
-    pops on every terminal launch.
-
-    Skipped inside Flatpak/Snap (already scoped by the sandbox), if
-    ``systemd-run`` is missing, if we already re-execed once, or if the
-    current cgroup already contains ``app-<app_id>``.
-    """
-    if _os.environ.get("_JUSTSAYIT_SCOPED") == "1":
-        return
-    if _os.environ.get("FLATPAK_ID") or _os.environ.get("SNAP"):
-        return
-    # Check current cgroup — if we're already in our app scope, nothing to do.
-    app_id = _app_id()
-    scope_marker = f"app-{app_id}"
-    try:
-        with open("/proc/self/cgroup", "r") as f:
-            cg = f.read()
-        if scope_marker in cg:
-            return
-    except OSError:
-        # No cgroup info? Fall through and try to scope anyway.
-        pass
-    # systemd-run must exist on PATH.
-    import shutil
-
-    systemd_run = shutil.which("systemd-run")
-    if systemd_run is None:
-        return
-    env = _os.environ.copy()
-    env["_JUSTSAYIT_SCOPED"] = "1"
-    unit = f"app-{app_id}-{_os.getpid()}"
-    reexec = _reexec_cmd()
-    argv = [
-        systemd_run,
-        "--user",
-        "--scope",
-        f"--unit={unit}",
-        "--quiet",
-        "--collect",
-        *reexec,
-    ]
-    _os.execvpe(systemd_run, argv, env)
-
-
-def _find_layer_shell_lib() -> str | None:
-    candidates = [
-        "/usr/lib/libgtk4-layer-shell.so",
-        "/usr/lib64/libgtk4-layer-shell.so",
-        "/usr/local/lib/libgtk4-layer-shell.so",
-        "/usr/lib/x86_64-linux-gnu/libgtk4-layer-shell.so",
-    ]
-    for p in candidates:
-        if _os.path.exists(p):
-            return p
-    # Fall back to ldconfig for odd layouts.
-    try:
-        import subprocess
-
-        out = subprocess.check_output(["ldconfig", "-p"], text=True)
-        for line in out.splitlines():
-            if "libgtk4-layer-shell.so" in line and "=>" in line:
-                return line.split("=>", 1)[1].strip()
-    except Exception:
-        pass
-    return None
-
-
-def _preload_layer_shell() -> None:
-    if _os.environ.get("_JUSTSAYIT_PRELOADED") == "1":
-        return
-    lib = _find_layer_shell_lib()
-    if lib is None:
-        # Continue without preload; overlay will likely warn but the rest of
-        # the app still works.
-        return
-    env = _os.environ.copy()
-    existing = env.get("LD_PRELOAD", "")
-    env["LD_PRELOAD"] = f"{lib}:{existing}" if existing else lib
-    env["_JUSTSAYIT_PRELOADED"] = "1"
-    cmd = _reexec_cmd()
-    _os.execvpe(cmd[0], cmd, env)
-
-
-# Subcommands that only talk to the already-running primary over D-Bus
-# don't need layer-shell preload or systemd scoping — skip both re-execs
-# so keyboard-shortcut-bound invocations stay snappy.
-_REMOTE_SUBCOMMANDS = {"toggle"}
-
-
-def _is_remote_subcommand() -> bool:
-    for tok in _sys.argv[1:]:
-        if tok.startswith("-"):
-            continue
-        return tok in _REMOTE_SUBCOMMANDS
-    return False
-
+# any `gi.require_version("Gtk", "4.0")` runs, it's too late. Re-exec with
+# LD_PRELOAD set before we touch gi. Boot helpers live in _boot.py so this
+# module stays lean; importing _boot.py only uses os/sys, no GTK.
+from justsayit._boot import (
+    _app_id,
+    _find_layer_shell_lib,
+    _is_remote_subcommand,
+    _preload_layer_shell,
+    _reexec_cmd,
+    _reexec_under_systemd_scope,
+    _relaunch_via_desktop,
+    _set_process_name,
+)
 
 if not _is_remote_subcommand():
     _reexec_under_systemd_scope()
@@ -218,7 +42,7 @@ from justsayit import __version__
 from justsayit.audio import AudioEngine, Segment, State
 from justsayit.config import (
     Config,
-    cache_dir,
+    _default_filter_chain,
     config_dir,
     ensure_config_file,
     ensure_dirs,
@@ -227,7 +51,7 @@ from justsayit.config import (
     render_config_toml,
     save_config,
 )
-from justsayit.filters import apply_filters, load_filters
+from justsayit.filters import load_filters
 from justsayit.model import ensure_models, ensure_vad
 from justsayit.postprocess import (
     KNOWN_LLM_MODELS,
@@ -236,15 +60,8 @@ from justsayit.postprocess import (
     _CONTEXT_SIDECAR_TEMPLATE,
     _FUN_PROFILE_TOML,
     _OPENAI_PROFILE_TOML,
-    apply_profile_overrides,
-    download_llm_model,
-    ensure_default_profile,
-    ensure_default_profiles,
-    ensure_dynamic_context_script,
-    find_hf_q4_filename,
     load_profile,
     profiles_dir,
-    update_profile_model,
 )
 from justsayit.overlay import OverlayWindow
 from justsayit.paste import PasteError, Paster, read_clipboard
@@ -252,6 +69,7 @@ from justsayit.shortcuts import GlobalShortcutClient
 from justsayit.sound import SoundPlayer
 from justsayit.transcribe import TranscriberBase, make_transcriber
 from justsayit.tray import MenuItem, TrayIcon, open_with_xdg
+from justsayit.pipeline import SegmentPipeline
 
 ICON_ACTIVE = "audio-input-microphone"
 ICON_PAUSED = "microphone-sensitivity-muted-symbolic"
@@ -288,6 +106,7 @@ class App:
         self.paster: Paster | None = None
         self.sound_player: SoundPlayer | None = None
         self.postprocessor: LLMPostprocessor | None = None
+        self.pipeline: SegmentPipeline | None = None
         self.tray: TrayIcon | None = None
         self.gtk_app: Gtk.Application | None = None
         self.filters = []
@@ -352,6 +171,13 @@ class App:
         self.transcriber = make_transcriber(self.cfg, self.model_paths)
         log.info("warming up %s recognizer…", self.cfg.model.backend)
         self.transcriber.warmup()
+        self.pipeline = SegmentPipeline(
+            self.cfg,
+            self.transcriber,
+            self.filters,
+            self.paster,
+            no_paste=self.no_paste,
+        )
 
     def setup_postprocessor(self) -> None:
         if not self.cfg.postprocess.enabled:
@@ -360,6 +186,8 @@ class App:
             # keeps routing through it ("LLM: off" but text still cleaned).
             self.postprocessor = None
             log.info("LLM postprocessor disabled")
+            if self.pipeline is not None:
+                self.pipeline.postprocessor = None
             return
         try:
             profile = load_profile(self.cfg.postprocess.profile)
@@ -376,6 +204,8 @@ class App:
         except Exception:
             log.exception("LLM postprocessor failed to load; postprocessing disabled")
             self.postprocessor = None
+        if self.pipeline is not None:
+            self.pipeline.postprocessor = self.postprocessor
 
     def setup_sound(self) -> None:
         if not self.cfg.sound.enabled:
@@ -511,6 +341,8 @@ class App:
         except PasteError as e:
             log.error("paster failed to start: %s", e)
             self.paster = None
+        if self.pipeline is not None:
+            self.pipeline.paster = self.paster
 
     def toggle(self) -> None:
         """Toggle recording. Called by the global shortcut hotkey and the DBus action."""
@@ -554,32 +386,40 @@ class App:
             on_needs_rebinding=on_needs_rebinding,
         )
 
-    def _notify_shortcut_unbound(self, shortcut_id: str, reason: str) -> None:
-        """Surface a desktop notification when the portal can't open its
-        own rebind dialog (old v1 GlobalShortcuts). We only hit this
-        from the unbound-shortcut code path, so the user actually has
-        something actionable to do."""
+    def _send_notification(
+        self,
+        notification_id: str,
+        title: str,
+        body: str,
+        priority: Gio.NotificationPriority = Gio.NotificationPriority.NORMAL,
+    ) -> bool:
+        """Post a desktop notification. Returns True on success."""
         if self.gtk_app is None:
-            return
-        title = "justsayit: shortcut not assigned"
+            return False
+        try:
+            note = Gio.Notification.new(title)
+            note.set_body(body)
+            note.set_priority(priority)
+            self.gtk_app.send_notification(notification_id, note)
+            return True
+        except Exception:
+            log.exception("could not send notification %r", notification_id)
+            return False
+
+    def _notify_shortcut_unbound(self, shortcut_id: str, reason: str) -> None:
         body = (
-            f"The “{shortcut_id}” shortcut has no trigger. Open your "
+            f'The "{shortcut_id}" shortcut has no trigger. Open your '
             "desktop environment's shortcut settings to assign one "
             "(KDE: System Settings → Shortcuts; "
             "GNOME: Settings → Keyboard → View and Customize Shortcuts)."
         )
-        try:
-            note = Gio.Notification.new(title)
-            note.set_body(body)
-            note.set_priority(Gio.NotificationPriority.HIGH)
-            # Stable id so repeated calls update a single notification
-            # instead of spamming new ones.
-            self.gtk_app.send_notification(
-                f"justsayit-shortcut-unbound-{shortcut_id}", note
-            )
+        if self._send_notification(
+            f"justsayit-shortcut-unbound-{shortcut_id}",
+            "justsayit: shortcut not assigned",
+            body,
+            Gio.NotificationPriority.HIGH,
+        ):
             log.info("sent 'shortcut unbound' notification (reason=%s)", reason)
-        except Exception:
-            log.exception("could not send shortcut-unbound notification")
 
     def _kick_off_update_check(self) -> None:
         """Best-effort GitHub version check (3h cached). When a newer
@@ -611,8 +451,6 @@ class App:
         check_async(__version__, _on_result)
 
     def _notify_update_available(self, info, install_dir: Path | None) -> None:
-        if self.gtk_app is None:
-            return
         title = f"justsayit update available: v{info.latest}"
         if install_dir is not None:
             body = (
@@ -624,37 +462,23 @@ class App:
                 f"You're running v{info.current}. v{info.latest} is on GitHub.\n"
                 f"See {info.url}"
             )
-        try:
-            note = Gio.Notification.new(title)
-            note.set_body(body)
-            note.set_priority(Gio.NotificationPriority.LOW)
-            # Stable id so re-checks within the day update one notification
-            # rather than spawning a new one each launch.
-            self.gtk_app.send_notification("justsayit-update-available", note)
-        except Exception:
-            log.exception("could not send update-available notification")
+        self._send_notification(
+            "justsayit-update-available", title, body, Gio.NotificationPriority.LOW
+        )
 
     def _notify_space_config_conflict(self) -> None:
-        """Warn the user when both auto_space_timeout_ms and
-        append_trailing_space are enabled — only the trailing-space
-        behaviour will be active."""
-        if self.gtk_app is None:
-            return
-        title = "justsayit: conflicting space settings"
         body = (
             "Both paste.auto_space_timeout_ms and paste.append_trailing_space "
             "are enabled. These settings conflict: the trailing space already "
             "acts as a separator, so the auto-prefix space has been disabled. "
             "Set auto_space_timeout_ms = 0 to suppress this warning."
         )
-        try:
-            note = Gio.Notification.new(title)
-            note.set_body(body)
-            note.set_priority(Gio.NotificationPriority.NORMAL)
-            self.gtk_app.send_notification("justsayit-space-conflict", note)
-            log.warning("space config conflict: auto_space_timeout_ms ignored")
-        except Exception:
-            log.exception("could not send space-conflict notification")
+        self._send_notification(
+            "justsayit-space-conflict",
+            "justsayit: conflicting space settings",
+            body,
+        )
+        log.warning("space config conflict: auto_space_timeout_ms ignored")
 
     def setup_tray(self) -> None:
         def on_toggle_auto_listen() -> None:
@@ -945,177 +769,29 @@ class App:
         return clip
 
     def _handle_segment(self, seg: Segment) -> None:
+        """Process one audio segment. Delegates to SegmentPipeline when set up,
+        otherwise builds a transient pipeline from current App state (used in tests
+        that set app.transcriber directly without going through setup_transcriber).
+        """
+        if self.pipeline is not None:
+            self.pipeline._last_transcription_time = self._last_transcription_time
+            self.pipeline.handle(seg, consume_clipboard_fn=self._consume_clipboard_context)
+            self._last_transcription_time = self.pipeline._last_transcription_time
+            return
+        # Fallback: build a transient pipeline from App state (tests / no-setup path).
         assert self.transcriber is not None
-        duration = len(seg.samples) / seg.sample_rate
-        min_duration = self.cfg.audio.skip_segments_below_seconds
-        if min_duration > 0 and duration < min_duration:
-            log.info(
-                "skipping short segment: %.2fs < %.2fs (reason=%s)",
-                duration,
-                min_duration,
-                seg.reason,
-            )
-            if self.overlay is not None:
-                self.overlay.push_hide()
-            return
-        log.info("transcribing %.2fs (reason=%s)", duration, seg.reason)
-        t0 = time.monotonic()
-        raw = self.transcriber.transcribe(seg.samples, seg.sample_rate)
-        dt = time.monotonic() - t0
-        log.info("transcription done in %.2fs: raw=%r", dt, raw)
-        if not raw:
-            log.info("empty transcription; nothing to paste")
-            if self.overlay is not None:
-                self.overlay.push_hide()
-            return
-        final = apply_filters(raw, self.filters)
-        if final != raw:
-            log.info("filters changed output: %r -> %r", raw, final)
-
-        # Snapshot pp before the overlay update so we know whether to show the
-        # LLM field immediately (as "Wait for LLM processing…").
-        pp = self.postprocessor  # snapshot — avoids TOCTOU with tray thread
-
-        # Show the filtered text in the top field.  The bottom (LLM) field is
-        # shown as a waiting placeholder if the postprocessor is active.
-        if self.overlay is not None:
-            self.overlay.push_detected_text(final, llm_pending=(pp is not None))
-
-        if pp is not None:
-            llm_overlay_text = final
-            llm_overlay_thought = ""
-            paste_text = final
-            extra_context = self._consume_clipboard_context()
-            t_llm0 = time.monotonic()
-            try:
-                result = pp.process_with_reasoning(
-                    final, extra_context=extra_context
-                )
-                t_llm1 = time.monotonic()
-                log.info("LLM call took %.0fms", (t_llm1 - t_llm0) * 1000)
-                cleaned = result.text
-                if cleaned != final:
-                    log.info("LLM cleaned: %r -> %r", final, cleaned)
-                llm_overlay_text = cleaned
-                paste_text = cleaned
-            except Exception as exc:
-                log.exception("LLM postprocessor failed; using unprocessed text")
-                detail = str(exc).strip().splitlines()[0]
-                llm_overlay_text = f"LLM error: {detail or exc.__class__.__name__}"
-            else:
-                stripped = pp.strip_for_paste(paste_text)
-                # Surface the reasoning preamble (whatever paste_strip_regex
-                # matched) above the body so the user sees the full LLM reply
-                # but only the stripped body lands in the focused window.
-                if stripped != paste_text:
-                    matches = [
-                        m.strip()
-                        for m in pp.find_strip_matches(paste_text)
-                        if m.strip()
-                    ]
-                    llm_overlay_thought = "\n".join(matches)
-                    log.info(
-                        "paste_strip_regex applied: %d -> %d chars",
-                        len(paste_text),
-                        len(stripped),
-                    )
-                # Remote backends (DeepSeek, Qwen via vLLM, OpenRouter) can
-                # return structured reasoning in a separate field. When
-                # present, prefer that — it's cleaner than regex-matched
-                # inline blocks (and the local path can't populate it).
-                if result.reasoning:
-                    llm_overlay_thought = result.reasoning
-                    log.info(
-                        "remote returned reasoning field: %d chars",
-                        len(result.reasoning),
-                    )
-                llm_overlay_text = stripped
-                paste_text = stripped
-            # Always update the LLM field — clears "Wait…" even when text is unchanged.
-            if self.overlay is not None:
-                self.overlay.push_llm_text(
-                    llm_overlay_text, thought=llm_overlay_thought
-                )
-            final = paste_text
-
-        # Space prefix / suffix (applied to paste content only; not shown in overlay)
-        auto_space_ms = self.cfg.paste.auto_space_timeout_ms
-        trailing_space = self.cfg.paste.append_trailing_space
-        now = time.monotonic()
-
-        if auto_space_ms > 0 and not trailing_space:
-            if self._last_transcription_time is not None:
-                seg_duration = len(seg.samples) / seg.sample_rate
-                recording_started_at = now - seg_duration
-                elapsed_ms = (
-                    recording_started_at - self._last_transcription_time
-                ) * 1000.0
-                if elapsed_ms <= auto_space_ms:
-                    log.debug(
-                        "auto-space: elapsed=%.0fms ≤ timeout=%dms — prepending space",
-                        elapsed_ms,
-                        auto_space_ms,
-                    )
-                    final = " " + final
-
-        if trailing_space:
-            final = final + " "
-
-        self._last_transcription_time = now
-
-        print(final, flush=True)
-        if self.no_paste or not self.cfg.paste.enabled:
-            log.info("paste disabled — text only printed")
-            if self.overlay is not None:
-                self.overlay.push_linger_start()
-            return
-
-        # Give the user a moment to let go of the stop-hotkey modifiers
-        # before we synthesise ctrl+shift+v, otherwise the compositor may
-        # see e.g. "Super+Ctrl+Shift+V" and not paste.
-        if seg.stop_requested_at is not None:
-            delay_target = self.cfg.paste.release_delay_ms / 1000.0
-            elapsed = time.monotonic() - seg.stop_requested_at
-            wait = delay_target - elapsed
-            if wait > 0:
-                log.info(
-                    "waiting %.0fms for hotkey modifiers to release "
-                    "(elapsed since stop=%.0fms, target=%.0fms)",
-                    wait * 1000,
-                    elapsed * 1000,
-                    delay_target * 1000,
-                )
-                time.sleep(wait)
-            else:
-                log.info(
-                    "processing already took %.0fms ≥ release target %.0fms; "
-                    "pasting immediately",
-                    elapsed * 1000,
-                    delay_target * 1000,
-                )
-
-        if self.paster is None:
-            log.warning("paster not ready; skipping paste")
-            if self.overlay is not None:
-                self.overlay.push_linger_start()
-            return
-        try:
-            log.info(
-                "pasting %d chars via %s (backend=%s)",
-                len(final),
-                self.cfg.paste.paste_combo,
-                self.cfg.paste.backend,
-            )
-            t_paste0 = time.monotonic()
-            self.paster.paste(final)
-            log.info("paste call returned after %.0fms", (time.monotonic() - t_paste0) * 1000)
-        except PasteError as e:
-            log.error("paste failed: %s", e)
-        finally:
-            # Linger so the user can read the transcribed text regardless of
-            # whether paste succeeded or failed.
-            if self.overlay is not None:
-                self.overlay.push_linger_start()
+        _pl = SegmentPipeline(
+            self.cfg,
+            self.transcriber,
+            self.filters,
+            self.paster,
+            no_paste=self.no_paste,
+        )
+        _pl.postprocessor = self.postprocessor
+        _pl.overlay = self.overlay
+        _pl._last_transcription_time = self._last_transcription_time
+        _pl.handle(seg, consume_clipboard_fn=self._consume_clipboard_context)
+        self._last_transcription_time = _pl._last_transcription_time
 
     # --- GTK lifecycle -----------------------------------------------------
 
@@ -1192,6 +868,8 @@ class App:
                 self.setup_models()
                 self.setup_filters()
                 self.setup_transcriber()
+                if self.pipeline is not None:
+                    self.pipeline.overlay = self.overlay
                 self.setup_postprocessor()
                 self.setup_sound()
                 self.setup_audio()
@@ -1235,362 +913,16 @@ class App:
             self.tray.stop()
 
 
-# --- argparse --------------------------------------------------------------
+from justsayit._subcommands import (
+    _download_models_only,
+    _ensure_llama_cpp,
+    _parse_selection,
+    _run_setup_llm,
+    _send_toggle,
+    _setup_file_logging,
+    _write_default_config,
+)
 
-
-def _write_default_config(force: bool = False, backend: str | None = None) -> None:
-    ensure_dirs()
-    cfg_path = config_dir() / "config.toml"
-    filters_path = config_dir() / "filters.json"
-
-    cfg_pre_existed = cfg_path.exists()
-    if cfg_pre_existed and force:
-        cfg_path.unlink()
-        cfg_pre_existed = False
-    ensure_config_file(cfg_path)
-    if cfg_pre_existed:
-        print(f"config already exists: {cfg_path}", file=sys.stderr)
-    else:
-        if backend is not None and backend != Config().model.backend:
-            # Append an uncommented [model] override so the user's
-            # explicit --backend choice survives the commented-defaults
-            # form. TOML allows reopening a section.
-            with cfg_path.open("a", encoding="utf-8") as f:
-                f.write(f'\n[model]\nbackend = "{backend}"\n')
-        print(f"wrote {cfg_path}")
-
-    cleanup_path, fun_path, openai_path, ollama_gemma_path = ensure_default_profiles()
-    dynamic_context_path = ensure_dynamic_context_script()
-    print(f"postprocess profile: {cleanup_path}    (recommended)")
-    print(f"postprocess profile: {fun_path}        (emoji-heavy variant)")
-    print(f"postprocess profile: {openai_path}     (OpenAI-compatible endpoint)")
-    print(f"postprocess profile: {ollama_gemma_path}  (Ollama-served Gemma)")
-    print(f"dynamic-context script: {dynamic_context_path}")
-
-    filters_pre_existed = filters_path.exists()
-    if filters_pre_existed and force:
-        filters_path.unlink()
-        filters_pre_existed = False
-    ensure_filters_file(filters_path)
-    if filters_pre_existed:
-        print(f"filters already exist: {filters_path}", file=sys.stderr)
-    else:
-        print(f"wrote {filters_path}")
-
-
-def _download_models_only() -> int:
-    ensure_dirs()
-    cfg = load_config()
-    if cfg.model.backend == "openai":
-        vad = ensure_vad(cfg, force=False)
-        print(f"openai backend — VAD model ready: {vad}")
-        print(
-            f"  (transcription served by {cfg.model.openai_endpoint or '<unset endpoint>'})"
-        )
-    elif cfg.model.backend == "whisper":
-        vad = ensure_vad(cfg, force=False)
-        print(f"whisper backend — VAD model ready: {vad}")
-        print("  (Whisper model downloads automatically on first transcription)")
-    else:
-        p = ensure_models(cfg, force=False)
-        print(f"models ready:\n  encoder: {p.encoder}\n  vad:     {p.vad}")
-
-    if cfg.postprocess.enabled:
-        try:
-            profile = load_profile(cfg.postprocess.profile)
-            if profile.endpoint:
-                print(f"LLM endpoint: {profile.endpoint} (model={profile.model!r})")
-            elif profile.hf_repo and profile.hf_filename:
-                from justsayit.postprocess import LLMPostprocessor
-
-                pp = LLMPostprocessor(profile)
-                model_path = pp._resolved_model_path()
-                print(f"LLM model ready: {model_path}")
-        except Exception as exc:
-            print(f"postprocess download skipped: {exc}", file=sys.stderr)
-    return 0
-
-
-def _setup_file_logging(cfg: Config, console_level: int) -> None:
-    """Attach a rotating file handler to the root logger if the config
-    has ``log.file_enabled=True``. The console handler (installed by
-    ``logging.basicConfig``) is pinned to ``console_level`` so enabling a
-    verbose file log doesn't also flood the terminal."""
-    root = logging.getLogger()
-
-    # Pin whatever the basicConfig handler installed to the console level
-    # the user asked for, regardless of what we do with the root level.
-    for h in root.handlers:
-        if not isinstance(h, logging.handlers.RotatingFileHandler):
-            h.setLevel(console_level)
-
-    if not cfg.log.file_enabled:
-        return
-
-    path = cfg.log.file_path.strip() or str(cache_dir() / "justsayit.log")
-    resolved = Path(path).expanduser()
-    try:
-        resolved.parent.mkdir(parents=True, exist_ok=True)
-        handler = logging.handlers.RotatingFileHandler(
-            resolved,
-            maxBytes=cfg.log.file_max_bytes,
-            backupCount=cfg.log.file_backup_count,
-            encoding="utf-8",
-        )
-    except OSError as e:
-        log.error("could not open debug log file %s: %s", resolved, e)
-        return
-
-    try:
-        file_level = getattr(logging, cfg.log.file_level.upper())
-    except AttributeError:
-        log.warning(
-            "unknown log.file_level=%r — falling back to DEBUG",
-            cfg.log.file_level,
-        )
-        file_level = logging.DEBUG
-    handler.setLevel(file_level)
-    handler.setFormatter(
-        logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
-    )
-    root.addHandler(handler)
-    # Root must be at least as verbose as the most verbose handler.
-    root.setLevel(min(console_level, file_level))
-    log.info(
-        "debug log file enabled: %s (level=%s, max_bytes=%d, backups=%d)",
-        resolved,
-        logging.getLevelName(file_level),
-        cfg.log.file_max_bytes,
-        cfg.log.file_backup_count,
-    )
-
-
-def _ensure_llama_cpp(vulkan: bool = True) -> bool:
-    """Ensure llama-cpp-python is importable, compiling it if needed.
-
-    Returns True when llama_cpp is ready, False on unrecoverable error.
-    Prints human-readable progress and error messages.
-    """
-    import shutil
-    import subprocess
-
-    # Quick check: already importable in the current process?
-    # This covers Nix builds where the package is on sys.path via the wrapper
-    # script (not as an env var) and therefore invisible to a fresh subprocess.
-    try:
-        import llama_cpp  # noqa: F401
-
-        return True
-    except ImportError:
-        pass
-
-    # Fallback subprocess check for uv / pip managed installs where the
-    # package may be installed into a venv that sys.executable can reach.
-    if (
-        subprocess.run(
-            [sys.executable, "-c", "import llama_cpp"],
-            capture_output=True,
-        ).returncode
-        == 0
-    ):
-        return True
-
-    print("\nllama-cpp-python is not installed — installing now.")
-
-    if vulkan:
-        if shutil.which("cmake") is None:
-            print(
-                "error: cmake is required to compile llama-cpp-python.\n"
-                "  Install: pacman -S cmake  (or the equivalent for your distro)",
-                file=sys.stderr,
-            )
-            return False
-        vulkan_ok = (
-            subprocess.run(
-                ["pkg-config", "--exists", "vulkan"], capture_output=True
-            ).returncode
-            == 0
-        )
-        if not vulkan_ok:
-            print(
-                "warning: Vulkan headers not found — falling back to CPU-only build.\n"
-                "  For GPU acceleration later: pacman -S vulkan-headers vulkan-icd-loader\n",
-                file=sys.stderr,
-            )
-            vulkan = False
-
-    if vulkan:
-        print(
-            "Compiling with Vulkan GPU support"
-            " (CMAKE_ARGS=-DGGML_VULKAN=1) — this may take several minutes…\n"
-        )
-        env = {**_os.environ, "CMAKE_ARGS": "-DGGML_VULKAN=1"}
-    else:
-        print("Installing llama-cpp-python (CPU-only build)…\n")
-        env = {k: v for k, v in _os.environ.items() if k != "CMAKE_ARGS"}
-
-    result = subprocess.run(
-        [sys.executable, "-m", "pip", "install", "llama-cpp-python>=0.3"],
-        env=env,
-    )
-    if result.returncode != 0:
-        print("error: llama-cpp-python installation failed.", file=sys.stderr)
-        return False
-    print("\nllama-cpp-python installed successfully.")
-    return True
-
-
-def _parse_selection(raw: str, max_n: int) -> list[int] | None:
-    """Parse a selection string into sorted 1-based indices.
-
-    Accepts a single number ("2"), comma-separated ("1,3"), ranges ("1-3"),
-    mixed ("1,3-5"), or the keyword "all".  Returns None if invalid.
-    """
-    s = raw.strip().lower()
-    if s in ("all", "a"):
-        return list(range(1, max_n + 1))
-    indices: set[int] = set()
-    for part in s.split(","):
-        part = part.strip()
-        if not part:
-            continue
-        if "-" in part:
-            sides = part.split("-", 1)
-            try:
-                lo, hi = int(sides[0].strip()), int(sides[1].strip())
-            except ValueError:
-                return None
-            if not (1 <= lo <= hi <= max_n):
-                return None
-            indices.update(range(lo, hi + 1))
-        else:
-            try:
-                n = int(part)
-            except ValueError:
-                return None
-            if not (1 <= n <= max_n):
-                return None
-            indices.add(n)
-    return sorted(indices) if indices else None
-
-
-def _run_setup_llm(model_key: str | None = None, cpu: bool = False) -> int:
-    """Interactively select, download, and configure one or more GGUF LLM models."""
-    ensure_dirs()
-
-    if not _ensure_llama_cpp(vulkan=not cpu):
-        return 1
-
-    keys = list(KNOWN_LLM_MODELS.keys())
-
-    if model_key is not None:
-        selected_keys = [model_key]
-    else:
-        print("\nAvailable LLM models for transcription cleanup:\n")
-        for i, key in enumerate(keys, 1):
-            print(f"  {i}. {KNOWN_LLM_MODELS[key]['display']}")
-        print()
-        hint = f"1-{len(keys)}" if len(keys) > 2 else "1,2"
-        while True:
-            try:
-                raw = input(
-                    f"Select model(s) [number, range, or comma-separated, e.g. 1 or {hint}]"
-                    " (Ctrl-C to skip): "
-                ).strip()
-            except (KeyboardInterrupt, EOFError):
-                print("\nSkipped.")
-                return 0
-            indices = _parse_selection(raw, len(keys))
-            if indices is not None:
-                selected_keys = [keys[i - 1] for i in indices]
-                break
-            print(
-                f"  Enter a number (1-{len(keys)}), a range (1-{len(keys)}),"
-                " or comma-separated values."
-            )
-
-    downloaded_models: list[tuple[str, Path]] = []  # (key, model_path)
-    activate_options: list[str] = []  # profile names to suggest in the hint
-    failed: list[str] = []
-
-    for key in selected_keys:
-        info = KNOWN_LLM_MODELS[key]
-        hf_repo = info["hf_repo"]
-        print(f"\n{info['display']}")
-        print("  Querying HuggingFace for Q4_K_M filename…", end="", flush=True)
-        try:
-            hf_filename = find_hf_q4_filename(hf_repo)
-        except RuntimeError as exc:
-            print(f"\n  error: {exc}", file=sys.stderr)
-            failed.append(key)
-            continue
-        print(f" {hf_filename}")
-
-        try:
-            model_path = download_llm_model(hf_repo, hf_filename)
-        except Exception as exc:
-            print(f"  error: download failed: {exc}", file=sys.stderr)
-            failed.append(key)
-            continue
-
-        downloaded_models.append((key, model_path))
-        print(f"  Model:   {model_path}")
-
-        if key == "gemma4":
-            # gemma4 ships two profiles (-cleanup and -fun) that share the
-            # same model file. Reuse them instead of creating a third
-            # generic gemma4.toml that would only confuse users.
-            cleanup_path, fun_path, _openai_path, _ollama_path = (
-                ensure_default_profiles()
-            )
-            update_profile_model(cleanup_path, model_path, hf_repo, hf_filename)
-            update_profile_model(fun_path, model_path, hf_repo, hf_filename)
-            activate_options.extend(["gemma4-cleanup", "gemma4-fun"])
-            print(f"  Profile: {cleanup_path}")
-            print(f"  Profile: {fun_path}")
-        else:
-            profile_path = profiles_dir() / f"{key}.toml"
-            ensure_default_profile(profile_path)
-            update_profile_model(profile_path, model_path, hf_repo, hf_filename)
-            overrides = info.get("profile_overrides") or {}
-            if overrides:
-                apply_profile_overrides(profile_path, overrides)
-                print(
-                    "  Applied model-specific overrides: "
-                    + ", ".join(f"{k}={v}" for k, v in overrides.items())
-                )
-            activate_options.append(key)
-            print(f"  Profile: {profile_path}")
-
-    if not downloaded_models:
-        return 1 if failed else 0
-
-    print(f"\n{'─' * 54}")
-    if len(downloaded_models) == 1:
-        print("\n1 model ready. Available profile(s):")
-    else:
-        print(f"\n{len(downloaded_models)} model(s) ready. Available profile(s):")
-    for name in activate_options:
-        print(f"  - {name}")
-    print(
-        "\nPick one from the tray menu (LLM submenu) — that's a runtime"
-        " toggle and writes to ~/.config/justsayit/state.toml for you."
-    )
-    return 0
-
-
-def _send_toggle(*, profile: str | None, use_clipboard: bool) -> int:
-    """Fallback path used when someone reaches this entry directly
-    (e.g. ``python -m justsayit.cli toggle`` or a stale entry-point
-    link). Normal invocations go through :mod:`justsayit._entry` which
-    dispatches to :mod:`justsayit.toggle_client` and skips this module
-    entirely. Shares the same D-Bus helper so both paths behave the
-    same and neither triggers the ``Gtk.Application``-destruction
-    warning.
-    """
-    from justsayit.toggle_client import send_toggle as _send
-
-    return _send(profile=profile, use_clipboard=use_clipboard)
 
 
 def _build_parser() -> argparse.ArgumentParser:
