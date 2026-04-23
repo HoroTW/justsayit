@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.32] - 2026-04-23
+
+### Changed
+
+- Updated `CLAUDE.md` to reflect current architecture: postprocess
+  backend split, config package, segment pipeline, boot/subcommand
+  modules, and monkeypatch guidance for tests.
+
 ## [0.13.31] - 2026-04-23
 
 ### Changed

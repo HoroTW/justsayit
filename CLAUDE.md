@@ -35,15 +35,15 @@ entry; do this even for tiny patch fixes.
 
 ## Architecture
 
-**Threading model (cli.py / `App`):** GLib mainloop owns the UI thread.
-A `sounddevice` callback feeds raw audio into `audio.AudioEngine`, which
-runs its own worker thread to assemble `Segment` objects. Segments go on
-a bounded queue consumed by a transcribe thread, which calls the active
-`Transcriber` and then `_handle_segment` (filters → optional LLM →
-paste). All cross-thread UI updates go through `GLib.idle_add` (mainly
-via `OverlayWindow.push_*` helpers).
+**Threading model (`cli.py` / `App`):** GLib mainloop owns the UI
+thread. A `sounddevice` callback feeds raw audio into `audio.AudioEngine`,
+which runs its own worker thread to assemble `Segment` objects. Segments
+go on a bounded queue consumed by a transcribe thread, which calls the
+active `Transcriber` and then `SegmentPipeline.handle()` (filters →
+optional LLM → paste). All cross-thread UI updates go through
+`GLib.idle_add` (mainly via `OverlayWindow.push_*` helpers).
 
-**State machine (audio.py):** four states — `IDLE`, `VALIDATING`,
+**State machine (`audio.py`):** four states — `IDLE`, `VALIDATING`,
 `RECORDING`, `MANUAL`. Two activation modes coexist:
 - `vad.enabled = false`: hotkey-only. Mic is closed until
   `start_manual()` opens it; `stop_manual()` emits the segment.
@@ -54,10 +54,33 @@ The `on_state` callback drives the overlay, sound chimes, and any
 recording-edge work (e.g. clipboard-context disarm fires here on
 `IDLE → VALIDATING/MANUAL`).
 
-**LLM postprocessing (postprocess.py):** profiles live in TOML files
-under `~/.config/justsayit/postprocess/`. Each profile sets
-`base = "builtin" | "remote"` which pulls defaults from
-`src/justsayit/templates/{builtin,remote}-defaults.toml`; only
+**Segment pipeline (`pipeline.py`):** `SegmentPipeline.handle(seg)`
+owns the transcribe → filter → LLM → auto-space → paste flow.
+`App._handle_segment` is a thin wrapper that delegates to it.
+
+**Transcription backends (`transcribe_*.py`):** one file per backend.
+`TranscriberBase` (3 methods) in `transcribe.py`; `make_transcriber(cfg)`
+factory selects the right one. Adding a backend = one new file.
+
+**LLM postprocessing (`postprocess/`):**
+
+```
+postprocess/
+  _profile.py          profile dataclass + loader (TOML merge, context sidecars)
+  _models.py           KNOWN_LLM_MODELS catalogue + HuggingFace download
+  _processor.py        PostprocessorBase + _http_post/_log_usage utilities
+  backend_local.py     LocalBackend   — llama-cpp-python GGUF
+  backend_remote.py    RemoteBackend  — OpenAI /chat/completions
+  backend_responses.py ResponsesBackend — OpenAI Responses API /v1/responses
+```
+
+`make_postprocessor(profile)` factory in `__init__.py` selects the
+backend; `LLMPostprocessor` is an alias for backward compat. Adding a
+backend = one new `backend_*.py` + one `if` in the factory.
+
+Profiles live in TOML files under `~/.config/justsayit/postprocess/`.
+Each profile sets `base = "builtin" | "remote" | "responses"` which
+pulls defaults from `src/justsayit/templates/*-defaults.toml`; only
 explicit overrides go in the user file. The system prompt is composed
 at call time:
 ```
@@ -65,14 +88,33 @@ at call time:
 {system_prompt or system_prompt_file}
 {append_to_system_prompt}
 [# User context]              # from context.toml
-[# Clipboard as additional context]   # from one-shot 📋 button
+[# Clipboard as additional context]   # from one-shot clipboard button
 ```
-System prompts are markdown files in `src/justsayit/prompts/`
-(`cleanup_gemma.md`, `cleanup_openai.md`, `cleanup_qwen_simple.md`,
-`fun.md`); the profile's `system_prompt_file` field references one by
-bare name (resolved against that directory).
+System prompts are markdown files in `src/justsayit/prompts/`; the
+profile's `system_prompt_file` field references one by bare name.
 
-**Re-exec dance (cli.py):** at startup the process re-execs itself
+**Config (`config/`):**
+
+```
+config/
+  _schema.py   all dataclasses (AudioConfig, ModelConfig, Config, …)
+  _io.py       path helpers, dotenv, load_config/save_config/render
+```
+
+All external code imports from `justsayit.config` (the package
+`__init__.py` re-exports everything). When monkeypatching in tests,
+patch the internal module where the function is defined:
+- `config_dir` used inside `_io.py` → patch `justsayit.config._io.config_dir`
+- `config_dir` used inside `postprocess/_profile.py` → patch `justsayit.postprocess._profile.config_dir`
+
+**Boot / CLI split:**
+- `_boot.py` — pre-GTK re-exec helpers (systemd scope, layer-shell
+  preload, process name). Imported before any `gi` code touches the
+  process.
+- `_subcommands.py` — `init`, `download-models`, `setup-llm` logic.
+  No dependency on `App` or GTK.
+
+**Re-exec dance (`_boot.py`):** at startup the process re-execs itself
 twice — once with `LD_PRELOAD=libgtk4-layer-shell.so` (so layer-shell
 is initialised before GTK), once under a systemd user scope (so the
 XDG GlobalShortcuts portal can resolve the app-id from the cgroup
