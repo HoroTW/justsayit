@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.16.3] - 2026-04-24
+
+### Fixed
+- Remote backend: clipboard image is now stored in session history so continue-mode turn 2 re-sends it and turn 3+ benefits from prompt caching (same prefix → image tokens are cached rather than billed again).
+
 ## [0.16.2] - 2026-04-24
 
 ### Fixed

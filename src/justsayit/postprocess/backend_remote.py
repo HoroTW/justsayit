@@ -27,6 +27,11 @@ class RemoteBackend(PostprocessorBase):
         is_reasoning = bool(
             re.match(r"^(o[1-9]|gpt-[5-9])", self.profile.model or "")
         )
+        has_image = bool(extra_image and extra_image_mime and self.profile.image_detail != "off")
+        # "original" is Responses-API-only; fall back to "auto" for chat/completions.
+        img_detail = (self.profile.image_detail if self.profile.image_detail in ("auto", "low", "high") else "auto") if has_image else ""
+        img_b64 = base64.b64encode(extra_image).decode("ascii") if has_image else ""  # type: ignore[arg-type]
+
         if same_backend and prev_msgs:
             messages = self._build_messages_continued(text, extra_context, prev_msgs)
         elif prev_msgs:
@@ -35,18 +40,14 @@ class RemoteBackend(PostprocessorBase):
         else:
             messages = self._build_messages(text, extra_context)
 
-        has_image = bool(extra_image and extra_image_mime and self.profile.image_detail != "off")
         if has_image:
-            # chat/completions vision: convert last user message to a content list.
-            # "original" is Responses-API-only; fall back to "auto" here.
-            detail = self.profile.image_detail if self.profile.image_detail in ("auto", "low", "high") else "auto"
-            b64 = base64.b64encode(extra_image).decode("ascii")  # type: ignore[arg-type]
+            # Convert last user message from a plain string to a content list.
             last = messages[-1]
             last["content"] = [
                 {"type": "text", "text": last["content"]},
-                {"type": "image_url", "image_url": {"url": f"data:{extra_image_mime};base64,{b64}", "detail": detail}},
+                {"type": "image_url", "image_url": {"url": f"data:{extra_image_mime};base64,{img_b64}", "detail": img_detail}},
             ]
-            log.debug("attaching image to chat/completions (%s, %d bytes, detail=%s)", extra_image_mime, len(extra_image), detail)
+            log.debug("attaching image to chat/completions (%s, %d bytes, detail=%s)", extra_image_mime, len(extra_image), img_detail)
 
         body: dict[str, Any] = {
             "model": self.profile.model,
@@ -90,7 +91,15 @@ class RemoteBackend(PostprocessorBase):
         else:
             reasoning = reasoning.strip()
         _log_usage(self.profile, data.get("usage") or {})
-        user_msg = {"role": "user", "content": self.profile.user_template.format(text=text)}
+        # Store image in session history so turn 2 sends it too. Turn 3+
+        # benefits from prompt caching (same prefix → image tokens are cached).
+        user_content: Any = self.profile.user_template.format(text=text)
+        if has_image:
+            user_content = [
+                {"type": "text", "text": user_content},
+                {"type": "image_url", "image_url": {"url": f"data:{extra_image_mime};base64,{img_b64}", "detail": img_detail}},
+            ]
+        user_msg = {"role": "user", "content": user_content}
         new_prev_messages = prev_msgs + [user_msg, {"role": "assistant", "content": content}]
         session_data = {
             "backend": "remote",
