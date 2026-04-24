@@ -224,25 +224,25 @@ class PostprocessorBase:
             )
         return prompt, "\n\n".join(dynamic_parts)
 
-    def _build_system_prompt(self, extra_context: str = "", history_text: str = "") -> str:
-        static, dynamic = self._build_system_prompt_parts(extra_context, history_text=history_text)
+    def _build_system_prompt(self, extra_context: str = "", history_text: str = "", extra_image_provided: bool = False) -> str:
+        static, dynamic = self._build_system_prompt_parts(extra_context, extra_image_provided=extra_image_provided, history_text=history_text)
         return "\n\n".join(filter(None, [static, dynamic]))
 
     def _build_messages(
-        self, text: str, extra_context: str = "", history_text: str = ""
+        self, text: str, extra_context: str = "", history_text: str = "", extra_image_provided: bool = False
     ) -> list[dict[str, str]]:
         messages = [
-            {"role": "system", "content": self._build_system_prompt(extra_context, history_text=history_text)},
+            {"role": "system", "content": self._build_system_prompt(extra_context, history_text=history_text, extra_image_provided=extra_image_provided)},
             {"role": "user", "content": self.profile.user_template.format(text=text)},
         ]
         log.debug("assembled LLM system prompt:\n%s", messages[0]["content"])
         return messages
 
     def _build_messages_continued(
-        self, text: str, extra_context: str, prev_messages: list[dict]
+        self, text: str, extra_context: str, prev_messages: list[dict], extra_image_provided: bool = False
     ) -> list[dict]:
         messages = [
-            {"role": "system", "content": self._build_system_prompt(extra_context)},
+            {"role": "system", "content": self._build_system_prompt(extra_context, extra_image_provided=extra_image_provided)},
             *prev_messages,
             {"role": "user", "content": self.profile.user_template.format(text=text)},
         ]

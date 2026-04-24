@@ -33,12 +33,12 @@ class RemoteBackend(PostprocessorBase):
         img_b64 = base64.b64encode(extra_image).decode("ascii") if has_image else ""  # type: ignore[arg-type]
 
         if same_backend and prev_msgs:
-            messages = self._build_messages_continued(text, extra_context, prev_msgs)
+            messages = self._build_messages_continued(text, extra_context, prev_msgs, extra_image_provided=has_image)
         elif prev_msgs:
             history_text = self._format_history_text(prev_msgs)
-            messages = self._build_messages(text, extra_context, history_text=history_text)
+            messages = self._build_messages(text, extra_context, history_text=history_text, extra_image_provided=has_image)
         else:
-            messages = self._build_messages(text, extra_context)
+            messages = self._build_messages(text, extra_context, extra_image_provided=has_image)
 
         if has_image:
             # Convert last user message from a plain string to a content list.

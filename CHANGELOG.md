@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.16.4] - 2026-04-24
+
+### Fixed
+- Remote backend: clipboard image now activates assistant mode in the system prompt (`extra_image_provided` was not threaded through `_build_messages` / `_build_messages_continued`).
+
 ## [0.16.3] - 2026-04-24
 
 ### Fixed
