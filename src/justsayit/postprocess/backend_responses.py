@@ -31,6 +31,12 @@ class ResponsesBackend(PostprocessorBase):
         history_text = "" if same_backend else (self._format_history_text(prev_msgs) if prev_msgs else "")
 
         has_image = bool(extra_image and extra_image_mime and self.profile.image_detail != "off")
+        # Compute b64 once; reused for both the API payload and session history.
+        img_b64 = base64.b64encode(extra_image).decode("ascii") if has_image else ""  # type: ignore[arg-type]
+        # "original" is a Responses-API input option; for session storage we use
+        # chat-completions format so the history is readable by all backends.
+        img_hist_detail = (self.profile.image_detail if self.profile.image_detail in ("auto", "low", "high") else "auto") if has_image else ""
+
         static_prompt, dynamic_prompt = self._build_system_prompt_parts(
             extra_context, extra_image_provided=has_image, history_text=history_text
         )
@@ -41,10 +47,9 @@ class ResponsesBackend(PostprocessorBase):
         user_text = self.profile.user_template.format(text=text)
         user_content: list[dict] = [{"type": "input_text", "text": user_text}]
         if has_image:
-            b64 = base64.b64encode(extra_image).decode("ascii")  # type: ignore[arg-type]
             user_content.append({
                 "type": "input_image",
-                "image_url": f"data:{extra_image_mime};base64,{b64}",
+                "image_url": f"data:{extra_image_mime};base64,{img_b64}",
                 "detail": self.profile.image_detail,
             })
             log.debug(
@@ -150,7 +155,15 @@ class ResponsesBackend(PostprocessorBase):
                 "cached_tokens": int(cache_details.get("cached_tokens") or 0)
             },
         })
-        user_msg = {"role": "user", "content": self.profile.user_template.format(text=text)}
+        # Session history uses the canonical chat-completions content format so
+        # all backends (and cross-backend fallback) can read it uniformly.
+        user_hist_content: Any = self.profile.user_template.format(text=text)
+        if has_image:
+            user_hist_content = [
+                {"type": "text", "text": user_hist_content},
+                {"type": "image_url", "image_url": {"url": f"data:{extra_image_mime};base64,{img_b64}", "detail": img_hist_detail}},
+            ]
+        user_msg = {"role": "user", "content": user_hist_content}
         new_prev_messages = prev_msgs + [user_msg, {"role": "assistant", "content": content}]
         session_data = {
             "backend": "responses",

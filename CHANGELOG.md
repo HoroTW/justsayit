@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.16.5] - 2026-04-24
+
+### Fixed
+- Responses API backend now stores images in session history using canonical chat-completions format (`image_url` object) so all backends share the same `prev_messages` layout and cross-backend continuation works correctly.
+- `_format_history_text` (cross-backend text fallback) now extracts text from list-content blocks instead of printing the raw Python list repr.
+
 ## [0.16.4] - 2026-04-24
 
 ### Fixed

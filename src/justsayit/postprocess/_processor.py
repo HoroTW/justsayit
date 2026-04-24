@@ -255,6 +255,15 @@ class PostprocessorBase:
         for msg in prev_messages:
             role = msg.get("role", "")
             content = msg.get("content", "")
+            if isinstance(content, list):
+                # Content blocks (image + text): extract text parts only.
+                # Images are not representable as plain text in the history string.
+                text_parts = [
+                    b.get("text", "")
+                    for b in content
+                    if b.get("type") in ("text", "input_text") and b.get("text")
+                ]
+                content = " ".join(text_parts)
             if role == "user":
                 lines.append(f"User: {content}")
             elif role == "assistant":

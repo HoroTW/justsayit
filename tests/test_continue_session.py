@@ -244,6 +244,22 @@ def test_build_messages_continued_order():
     assert "second" in msgs[3]["content"]
 
 
+def test_format_history_text_handles_list_content():
+    """List content (image + text blocks) should extract text only, no Python repr."""
+    proc = _ConcreteProcessor(_make_profile())
+    msgs = [
+        {"role": "user", "content": [
+            {"type": "text", "text": "describe this image"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc", "detail": "auto"}},
+        ]},
+        {"role": "assistant", "content": "It's a cat."},
+    ]
+    result = proc._format_history_text(msgs)
+    assert "describe this image" in result
+    assert "It's a cat." in result
+    assert "image_url" not in result  # no raw dict repr
+
+
 def test_build_messages_with_history_text_goes_into_system_prompt():
     proc = _ConcreteProcessor(_make_profile())
     prev = [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}]
