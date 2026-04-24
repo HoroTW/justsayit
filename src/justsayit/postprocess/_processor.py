@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import re
@@ -224,25 +225,25 @@ class PostprocessorBase:
             )
         return prompt, "\n\n".join(dynamic_parts)
 
-    def _build_system_prompt(self, extra_context: str = "", history_text: str = "") -> str:
-        static, dynamic = self._build_system_prompt_parts(extra_context, history_text=history_text)
+    def _build_system_prompt(self, extra_context: str = "", history_text: str = "", extra_image_provided: bool = False) -> str:
+        static, dynamic = self._build_system_prompt_parts(extra_context, extra_image_provided=extra_image_provided, history_text=history_text)
         return "\n\n".join(filter(None, [static, dynamic]))
 
     def _build_messages(
-        self, text: str, extra_context: str = "", history_text: str = ""
+        self, text: str, extra_context: str = "", history_text: str = "", extra_image_provided: bool = False
     ) -> list[dict[str, str]]:
         messages = [
-            {"role": "system", "content": self._build_system_prompt(extra_context, history_text=history_text)},
+            {"role": "system", "content": self._build_system_prompt(extra_context, history_text=history_text, extra_image_provided=extra_image_provided)},
             {"role": "user", "content": self.profile.user_template.format(text=text)},
         ]
         log.debug("assembled LLM system prompt:\n%s", messages[0]["content"])
         return messages
 
     def _build_messages_continued(
-        self, text: str, extra_context: str, prev_messages: list[dict]
+        self, text: str, extra_context: str, prev_messages: list[dict], extra_image_provided: bool = False
     ) -> list[dict]:
         messages = [
-            {"role": "system", "content": self._build_system_prompt(extra_context)},
+            {"role": "system", "content": self._build_system_prompt(extra_context, extra_image_provided=extra_image_provided)},
             *prev_messages,
             {"role": "user", "content": self.profile.user_template.format(text=text)},
         ]
@@ -255,11 +256,50 @@ class PostprocessorBase:
         for msg in prev_messages:
             role = msg.get("role", "")
             content = msg.get("content", "")
+            if isinstance(content, list):
+                # Content blocks (image + text): extract text parts only.
+                # Images are not representable as plain text in the history string.
+                text_parts = [
+                    b.get("text", "")
+                    for b in content
+                    if b.get("type") in ("text", "input_text") and b.get("text")
+                ]
+                content = " ".join(text_parts)
             if role == "user":
                 lines.append(f"User: {content}")
             elif role == "assistant":
                 lines.append(f"Assistant: {content}")
         return "\n".join(lines)
+
+    def _build_user_history_entry(
+        self,
+        user_text: str,
+        extra_context: str = "",
+        extra_image: bytes | None = None,
+        extra_image_mime: str = "",
+    ) -> dict:
+        """Build the canonical user message dict for prev_messages storage.
+
+        Includes clipboard text and image regardless of whether the current
+        backend supports them, so cross-backend continuation preserves all input.
+        Plain string content is kept when neither is present.
+        """
+        has_image = bool(extra_image and extra_image_mime)
+        if not extra_context and not has_image:
+            return {"role": "user", "content": user_text}
+        content: list[dict] = [{"type": "text", "text": user_text}]
+        if extra_context:
+            content.append({"type": "text", "text": f"[Clipboard context]\n{extra_context.strip()}"})
+        if has_image:
+            img_detail = getattr(self.profile, "image_detail", "auto")
+            if img_detail not in ("auto", "low", "high"):
+                img_detail = "auto"
+            img_b64 = base64.b64encode(extra_image).decode("ascii")  # type: ignore[arg-type]
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:{extra_image_mime};base64,{img_b64}", "detail": img_detail},
+            })
+        return {"role": "user", "content": content}
 
     def warmup(self) -> None:
         """No-op for remote backends. LocalBackend overrides this."""

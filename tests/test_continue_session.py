@@ -18,6 +18,7 @@ from justsayit.pipeline import (
     _session_path,
 )
 from justsayit.postprocess._processor import PostprocessorBase
+from justsayit.postprocess.backend_responses import ResponsesBackend
 from justsayit.postprocess._profile import PostprocessProfile, ProcessResult
 
 
@@ -244,6 +245,22 @@ def test_build_messages_continued_order():
     assert "second" in msgs[3]["content"]
 
 
+def test_format_history_text_handles_list_content():
+    """List content (image + text blocks) should extract text only, no Python repr."""
+    proc = _ConcreteProcessor(_make_profile())
+    msgs = [
+        {"role": "user", "content": [
+            {"type": "text", "text": "describe this image"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc", "detail": "auto"}},
+        ]},
+        {"role": "assistant", "content": "It's a cat."},
+    ]
+    result = proc._format_history_text(msgs)
+    assert "describe this image" in result
+    assert "It's a cat." in result
+    assert "image_url" not in result  # no raw dict repr
+
+
 def test_build_messages_with_history_text_goes_into_system_prompt():
     proc = _ConcreteProcessor(_make_profile())
     prev = [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}]
@@ -253,3 +270,219 @@ def test_build_messages_with_history_text_goes_into_system_prompt():
     assert "## PREVIOUS SESSION HISTORY" in system_content
     assert "User: q" in system_content
     assert "Assistant: a" in system_content
+
+
+# ---------------------------------------------------------------------------
+# ResponsesBackend: _canonical_to_responses_input
+# ---------------------------------------------------------------------------
+
+
+def test_canonical_to_responses_input_text_only():
+    prev = [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "hi there"},
+    ]
+    out = ResponsesBackend._canonical_to_responses_input(prev)
+    assert out[0] == {"role": "user", "content": [{"type": "input_text", "text": "hello"}]}
+    assert out[1] == {"role": "assistant", "content": [{"type": "output_text", "text": "hi there"}]}
+
+
+def test_canonical_to_responses_input_with_image():
+    prev = [
+        {"role": "user", "content": [
+            {"type": "text", "text": "describe this"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc", "detail": "auto"}},
+        ]},
+        {"role": "assistant", "content": "It's a cat."},
+    ]
+    out = ResponsesBackend._canonical_to_responses_input(prev)
+    assert out[0]["role"] == "user"
+    user_content = out[0]["content"]
+    assert {"type": "input_text", "text": "describe this"} in user_content
+    assert {"type": "input_image", "image_url": "data:image/png;base64,abc", "detail": "auto"} in user_content
+    assert out[1] == {"role": "assistant", "content": [{"type": "output_text", "text": "It's a cat."}]}
+
+
+# ---------------------------------------------------------------------------
+# RemoteBackend: cross-backend uses _build_messages_continued directly
+# ---------------------------------------------------------------------------
+
+
+def test_remote_cross_backend_uses_build_messages_continued():
+    """RemoteBackend must use _build_messages_continued even for cross-backend sessions,
+    since prev_messages is always in canonical chat-completions format."""
+    from justsayit.postprocess.backend_remote import RemoteBackend
+    from justsayit.postprocess._profile import PostprocessProfile
+    import unittest.mock as mock
+
+    profile = PostprocessProfile(
+        system_prompt="sys",
+        system_prompt_file="",
+        model="gpt-4o-mini",
+        endpoint="http://fake/v1",
+        api_key="sk-test",
+    )
+    backend = RemoteBackend(profile)
+
+    prev_session = {
+        "backend": "responses",  # different backend!
+        "prev_messages": [
+            {"role": "user", "content": "question"},
+            {"role": "assistant", "content": "answer"},
+        ],
+        "ts": 1.0,
+    }
+
+    captured_messages = []
+
+    def fake_http_post(url, body, headers, **kw):
+        captured_messages.extend(body["messages"])
+        return {"choices": [{"message": {"content": "ok", "role": "assistant"}}], "usage": {}}
+
+    with mock.patch("justsayit.postprocess.backend_remote._http_post", side_effect=fake_http_post):
+        backend._run("follow up", previous_session=prev_session)
+
+    # Should have: system, user(question), assistant(answer), user(follow up)
+    assert captured_messages[0]["role"] == "system"
+    assert captured_messages[1] == {"role": "user", "content": "question"}
+    assert captured_messages[2] == {"role": "assistant", "content": "answer"}
+    assert captured_messages[3]["role"] == "user"
+
+
+# ---------------------------------------------------------------------------
+# Session storage: clipboard text + images in prev_messages
+# ---------------------------------------------------------------------------
+
+
+def _fake_remote_profile() -> PostprocessProfile:
+    return PostprocessProfile(
+        system_prompt="sys",
+        system_prompt_file="",
+        model="gpt-4o-mini",
+        endpoint="http://fake/v1",
+        api_key="sk-test",
+    )
+
+
+def _fake_responses_response() -> dict:
+    return {
+        "id": "resp_123",
+        "output": [{"type": "message", "content": [{"type": "output_text", "text": "ok"}]}],
+        "usage": {"input_tokens": 10, "output_tokens": 5},
+    }
+
+
+def test_extra_context_stored_in_remote_prev_messages():
+    """Clipboard text (extra_context) must appear in prev_messages so future
+    continue turns know what context the user provided in that turn."""
+    import unittest.mock as mock
+    from justsayit.postprocess.backend_remote import RemoteBackend
+
+    backend = RemoteBackend(_fake_remote_profile())
+    clipboard = "def foo():\n    pass"
+
+    with mock.patch(
+        "justsayit.postprocess.backend_remote._http_post",
+        return_value={"choices": [{"message": {"content": "ok", "role": "assistant"}}], "usage": {}},
+    ):
+        result = backend._run("please refactor this", extra_context=clipboard)
+
+    user_content = result.session_data["prev_messages"][0]["content"]
+    assert isinstance(user_content, list), "expected list content when extra_context provided"
+    all_text = " ".join(b.get("text", "") for b in user_content if b.get("type") == "text")
+    assert "def foo" in all_text, f"clipboard text missing from prev_messages: {user_content!r}"
+
+
+def test_extra_context_stored_in_responses_prev_messages():
+    """Same as above but for the Responses API backend."""
+    import unittest.mock as mock
+
+    profile = PostprocessProfile(
+        system_prompt="sys",
+        system_prompt_file="",
+        model="gpt-5.4-mini",
+        endpoint="http://fake/v1",
+        api_key="sk-test",
+    )
+    backend = ResponsesBackend(profile)
+    clipboard = "some clipboard content"
+
+    with mock.patch(
+        "justsayit.postprocess.backend_responses._http_post",
+        return_value=_fake_responses_response(),
+    ):
+        result = backend._run("help me with this", extra_context=clipboard)
+
+    user_content = result.session_data["prev_messages"][0]["content"]
+    assert isinstance(user_content, list), "expected list content when extra_context provided"
+    all_text = " ".join(b.get("text", "") for b in user_content if b.get("type") == "text")
+    assert "clipboard content" in all_text, f"clipboard text missing from responses prev_messages: {user_content!r}"
+
+
+def test_local_backend_stores_image_in_prev_messages():
+    """LocalBackend stores extra_image in prev_messages (canonical image_url format)
+    even though the local model cannot see it — so switching to a vision backend
+    later preserves the image."""
+    import unittest.mock as mock
+    from justsayit.postprocess.backend_local import LocalBackend
+
+    backend = LocalBackend(PostprocessProfile(system_prompt="sys", system_prompt_file=""))
+    backend._llm = mock.MagicMock()
+    backend._llm.create_chat_completion.return_value = {
+        "choices": [{"message": {"content": "ok"}}]
+    }
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+
+    result = backend._run("describe this", extra_image=png, extra_image_mime="image/png")
+
+    user_content = result.session_data["prev_messages"][0]["content"]
+    assert isinstance(user_content, list), "expected list content (text + image) in local session"
+    assert any(b.get("type") == "image_url" for b in user_content), (
+        f"image_url block missing from local backend prev_messages: {user_content!r}"
+    )
+
+
+def test_local_to_remote_cross_backend_image_visible():
+    """After local → remote backend switch, the remote backend must include
+    the image from the local session in the messages sent to the API."""
+    import unittest.mock as mock
+    from justsayit.postprocess.backend_local import LocalBackend
+    from justsayit.postprocess.backend_remote import RemoteBackend
+
+    profile = _fake_remote_profile()
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+
+    # Turn 1: local backend with image
+    local = LocalBackend(profile)
+    local._llm = mock.MagicMock()
+    local._llm.create_chat_completion.return_value = {"choices": [{"message": {"content": "ack"}}]}
+    turn1 = local._run("see this image", extra_image=png, extra_image_mime="image/png")
+
+    # Sanity: local session has the image
+    assert any(
+        b.get("type") == "image_url"
+        for b in turn1.session_data["prev_messages"][0]["content"]
+    )
+
+    # Turn 2: remote backend, cross-backend continue
+    remote = RemoteBackend(profile)
+    captured: list[dict] = []
+
+    with mock.patch(
+        "justsayit.postprocess.backend_remote._http_post",
+        side_effect=lambda url, body, headers, **kw: (
+            captured.extend(body["messages"]) or
+            {"choices": [{"message": {"content": "it's a png", "role": "assistant"}}], "usage": {}}
+        ),
+    ):
+        remote._run("now describe it", previous_session=turn1.session_data)
+
+    # Image must be visible in the messages forwarded to the remote API
+    all_blocks = [
+        b
+        for msg in captured
+        for b in (msg["content"] if isinstance(msg["content"], list) else [])
+    ]
+    assert any(b.get("type") == "image_url" for b in all_blocks), (
+        "image_url missing from remote API messages after local→remote switch"
+    )

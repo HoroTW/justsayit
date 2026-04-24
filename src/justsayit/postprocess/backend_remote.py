@@ -1,6 +1,7 @@
 """OpenAI-compatible /chat/completions backend."""
 from __future__ import annotations
 
+import base64
 import re
 import time
 from typing import Any
@@ -18,7 +19,6 @@ class RemoteBackend(PostprocessorBase):
                 "LLM endpoint is set but profile.model is empty — "
                 "set 'model' in the profile (e.g. \"gpt-4o-mini\")."
             )
-        same_backend = previous_session is not None and previous_session.get("backend") == "remote"
         prev_msgs: list[dict] = (previous_session.get("prev_messages") or []) if previous_session else []
         url = self.profile.endpoint.rstrip("/") + "/chat/completions"
         # OpenAI reasoning models (o1/o3/o4/gpt-5.x …) reject most classic
@@ -26,13 +26,27 @@ class RemoteBackend(PostprocessorBase):
         is_reasoning = bool(
             re.match(r"^(o[1-9]|gpt-[5-9])", self.profile.model or "")
         )
-        if same_backend and prev_msgs:
-            messages = self._build_messages_continued(text, extra_context, prev_msgs)
-        elif prev_msgs:
-            history_text = self._format_history_text(prev_msgs)
-            messages = self._build_messages(text, extra_context, history_text=history_text)
+        has_image = bool(extra_image and extra_image_mime and self.profile.image_detail != "off")
+        # "original" is Responses-API-only; fall back to "auto" for chat/completions.
+        img_detail = (self.profile.image_detail if self.profile.image_detail in ("auto", "low", "high") else "auto") if has_image else ""
+        img_b64 = base64.b64encode(extra_image).decode("ascii") if has_image else ""  # type: ignore[arg-type]
+
+        # prev_messages is always in canonical chat-completions format regardless
+        # of which backend stored it, so _build_messages_continued works directly.
+        if prev_msgs:
+            messages = self._build_messages_continued(text, extra_context, prev_msgs, extra_image_provided=has_image)
         else:
-            messages = self._build_messages(text, extra_context)
+            messages = self._build_messages(text, extra_context, extra_image_provided=has_image)
+
+        if has_image:
+            # Convert last user message from a plain string to a content list.
+            last = messages[-1]
+            last["content"] = [
+                {"type": "text", "text": last["content"]},
+                {"type": "image_url", "image_url": {"url": f"data:{extra_image_mime};base64,{img_b64}", "detail": img_detail}},
+            ]
+            log.debug("attaching image to chat/completions (%s, %d bytes, detail=%s)", extra_image_mime, len(extra_image), img_detail)
+
         body: dict[str, Any] = {
             "model": self.profile.model,
             "messages": messages,
@@ -75,7 +89,9 @@ class RemoteBackend(PostprocessorBase):
         else:
             reasoning = reasoning.strip()
         _log_usage(self.profile, data.get("usage") or {})
-        user_msg = {"role": "user", "content": self.profile.user_template.format(text=text)}
+        user_msg = self._build_user_history_entry(
+            self.profile.user_template.format(text=text), extra_context, extra_image, extra_image_mime
+        )
         new_prev_messages = prev_msgs + [user_msg, {"role": "assistant", "content": content}]
         session_data = {
             "backend": "remote",

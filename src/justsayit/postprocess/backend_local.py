@@ -99,11 +99,10 @@ class LocalBackend(PostprocessorBase):
 
     def _run(self, text: str, extra_context: str = "", extra_image: bytes | None = None, extra_image_mime: str = "", previous_session: dict | None = None) -> ProcessResult:
         import time
-        same_backend = previous_session is not None and previous_session.get("backend") == "local"
         prev_msgs: list[dict] = (previous_session.get("prev_messages") or []) if previous_session else []
-        if same_backend and prev_msgs:
-            messages = self._build_messages_continued(text, extra_context, prev_msgs)
-        elif prev_msgs:
+        # Local models are text-only for inference; always use formatted history text.
+        # Images in prev_msgs are preserved in session storage for cross-backend switches.
+        if prev_msgs:
             history_text = self._format_history_text(prev_msgs)
             messages = self._build_messages(text, extra_context, history_text=history_text)
         else:
@@ -127,7 +126,9 @@ class LocalBackend(PostprocessorBase):
         # llama-cpp-python keeps thinking inline in ``content``; the
         # display/paste split is done downstream via ``paste_strip_regex``.
         content = resp["choices"][0]["message"]["content"].strip()
-        user_msg = {"role": "user", "content": self.profile.user_template.format(text=text)}
+        user_msg = self._build_user_history_entry(
+            self.profile.user_template.format(text=text), extra_context, extra_image, extra_image_mime
+        )
         new_prev_messages = prev_msgs + [user_msg, {"role": "assistant", "content": content}]
         session_data = {
             "backend": "local",
