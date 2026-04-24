@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.16.7] - 2026-04-24
+
+### Tests
+- Add burn tests for cross-backend image continuation (`test_burn_cross_backend_image.py`): Responses→Chat Completions and Chat Completions→Responses, each asserting the model can describe an image seen only in the previous backend's turn.
+
 ## [0.16.6] - 2026-04-24
 
 ### Fixed
