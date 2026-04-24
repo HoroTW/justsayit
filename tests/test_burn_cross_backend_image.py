@@ -184,3 +184,79 @@ def test_burn_remote_to_responses_cross_backend_image(tmp_path):
     assert _mentions_image_content(turn2.text), (
         f"turn 2 (responses, cross-backend) should describe the image but got: {turn2.text!r}"
     )
+
+
+def test_burn_three_turn_responses_remote_responses(tmp_path):
+    """Three turns alternating backends, each turn 1+2 adds an image:
+    Turn 1 (Responses): image1, don't describe
+    Turn 2 (Remote, cross-backend): image2, don't describe
+    Turn 3 (Responses, cross-backend): describe both images from turns 1+2."""
+    _require_openai_key()
+    png1 = _make_test_png(width=200, height=50)
+    png2 = _make_test_png(width=100, height=100)
+
+    # Turn 1: Responses
+    turn1 = make_postprocessor(_responses_profile(tmp_path)).process_with_reasoning(
+        "I am sending you image A. Do NOT describe it — just say 'acknowledged A'.",
+        extra_image=png1, extra_image_mime="image/png",
+    )
+    assert turn1.session_data, "turn 1 no session_data"
+
+    # Turn 2: Remote (cross-backend), also sends an image
+    turn2 = make_postprocessor(_remote_profile(tmp_path)).process_with_reasoning(
+        "I am sending you image B. Do NOT describe it — just say 'acknowledged B'.",
+        extra_image=png2, extra_image_mime="image/png",
+        previous_session=turn1.session_data,
+    )
+    assert turn2.session_data, "turn 2 no session_data"
+    assert len(turn2.session_data["prev_messages"]) == 4, (
+        f"expected 4 prev_messages after turn 2, got {len(turn2.session_data['prev_messages'])}"
+    )
+
+    # Turn 3: Responses (cross-backend), asks about both images
+    turn3 = make_postprocessor(_responses_profile(tmp_path)).process_with_reasoning(
+        "Now describe image A and image B from the previous messages.",
+        previous_session=turn2.session_data,
+    )
+    assert turn3.text.strip(), "turn 3 returned empty"
+    assert _mentions_image_content(turn3.text), (
+        f"turn 3 (responses, 3-turn) should describe images but got: {turn3.text!r}"
+    )
+
+
+def test_burn_three_turn_remote_responses_remote(tmp_path):
+    """Three turns alternating backends, each turn 1+2 adds an image:
+    Turn 1 (Remote): image1, don't describe
+    Turn 2 (Responses, cross-backend): image2, don't describe
+    Turn 3 (Remote, cross-backend): describe both images from turns 1+2."""
+    _require_openai_key()
+    png1 = _make_test_png(width=200, height=50)
+    png2 = _make_test_png(width=100, height=100)
+
+    # Turn 1: Remote
+    turn1 = make_postprocessor(_remote_profile(tmp_path)).process_with_reasoning(
+        "I am sending you image A. Do NOT describe it — just say 'acknowledged A'.",
+        extra_image=png1, extra_image_mime="image/png",
+    )
+    assert turn1.session_data, "turn 1 no session_data"
+
+    # Turn 2: Responses (cross-backend), also sends an image
+    turn2 = make_postprocessor(_responses_profile(tmp_path)).process_with_reasoning(
+        "I am sending you image B. Do NOT describe it — just say 'acknowledged B'.",
+        extra_image=png2, extra_image_mime="image/png",
+        previous_session=turn1.session_data,
+    )
+    assert turn2.session_data, "turn 2 no session_data"
+    assert len(turn2.session_data["prev_messages"]) == 4, (
+        f"expected 4 prev_messages after turn 2, got {len(turn2.session_data['prev_messages'])}"
+    )
+
+    # Turn 3: Remote (cross-backend), asks about both images
+    turn3 = make_postprocessor(_remote_profile(tmp_path)).process_with_reasoning(
+        "Now describe image A and image B from the previous messages.",
+        previous_session=turn2.session_data,
+    )
+    assert turn3.text.strip(), "turn 3 returned empty"
+    assert _mentions_image_content(turn3.text), (
+        f"turn 3 (remote, 3-turn) should describe images but got: {turn3.text!r}"
+    )
