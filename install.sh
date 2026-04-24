@@ -324,6 +324,10 @@ maybe_update_user_file() {
 
 if [ "$UPDATE" -eq 1 ]; then
     _CFG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}/$CONFIG_DIR_NAME
+    # Create any config files added since the last install (idempotent —
+    # justsayit init only writes files that don't already exist).
+    echo "==> ensuring new config files exist"
+    "$BIN" init || true
     # config.toml + postprocess profile TOMLs ship in commented-defaults
     # form (every key is a commented default; uncommented lines are the
     # user's overrides). New shipped defaults change only the comments,

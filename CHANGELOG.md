@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.16.5] - 2026-04-24
+
+### Fixed
+- `install.sh --update` now calls `justsayit init` at the start of the update block so any config files added in a new release (e.g. `after_LLM_filters.json`, `openai-responses.toml`) are created automatically on update.
+
 ## [0.16.4] - 2026-04-24
 
 ### Added
