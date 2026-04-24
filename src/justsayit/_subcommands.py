@@ -19,6 +19,7 @@ from justsayit.config import (
     ensure_config_file,
     ensure_dirs,
     ensure_filters_file,
+    ensure_after_llm_filters_file,
     load_config,
 )
 from justsayit.postprocess import (
@@ -43,6 +44,7 @@ def _write_default_config(force: bool = False, backend: str | None = None) -> No
     ensure_dirs()
     cfg_path = config_dir() / "config.toml"
     filters_path = config_dir() / "filters.json"
+    after_llm_filters_path = config_dir() / "after_LLM_filters.json"
 
     cfg_pre_existed = cfg_path.exists()
     if cfg_pre_existed and force:
@@ -75,6 +77,16 @@ def _write_default_config(force: bool = False, backend: str | None = None) -> No
         print(f"filters already exist: {filters_path}", file=sys.stderr)
     else:
         print(f"wrote {filters_path}")
+
+    after_llm_pre_existed = after_llm_filters_path.exists()
+    if after_llm_pre_existed and force:
+        after_llm_filters_path.unlink()
+        after_llm_pre_existed = False
+    ensure_after_llm_filters_file(after_llm_filters_path)
+    if after_llm_pre_existed:
+        print(f"after-LLM filters already exist: {after_llm_filters_path}", file=sys.stderr)
+    else:
+        print(f"wrote {after_llm_filters_path}")
 
 
 def _download_models_only() -> int:

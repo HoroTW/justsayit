@@ -56,12 +56,14 @@ class SegmentPipeline:
         paster: "Paster | None",
         *,
         no_paste: bool = False,
+        after_llm_filters: list | None = None,
     ) -> None:
         self.cfg = cfg
         self.transcriber = transcriber
         self.filters = filters
         self.paster = paster
         self.no_paste = no_paste
+        self.after_llm_filters: list = after_llm_filters or []
         self.postprocessor: "PostprocessorBase | None" = None  # set externally
         self.overlay: "OverlayWindow | None" = None             # set externally
         self._last_transcription_time: float | None = None
@@ -171,6 +173,15 @@ class SegmentPipeline:
                     )
                 llm_overlay_text = stripped
                 paste_text = stripped
+                if self.after_llm_filters:
+                    normalized = apply_filters(stripped, self.after_llm_filters)
+                    if normalized != stripped:
+                        log.info(
+                            "after-LLM filters applied: %r -> %r",
+                            stripped[:60], normalized[:60],
+                        )
+                    paste_text = normalized
+                    llm_overlay_text = normalized
                 if result.session_data:
                     prev_msgs = result.session_data.get("prev_messages") or []
                     log.info(

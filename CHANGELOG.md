@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.16.4] - 2026-04-24
+
+### Added
+- **`after_LLM_filters.json`** — new JSON filter file applied after the LLM response, before paste. Same format as `filters.json`. Default rules: em dash → ` - `, en dash → `-`, curly/German quotes → straight quotes, curly single quotes → straight (all enabled); ellipsis → `...` (disabled). `justsayit init` writes the file alongside `filters.json`.
+
 ## [0.16.3] - 2026-04-24
 
 ### Fixed

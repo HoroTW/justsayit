@@ -268,8 +268,10 @@ class Config:
     sound: SoundConfig = field(default_factory=SoundConfig)
     log: LogConfig = field(default_factory=LogConfig)
     postprocess: PostprocessConfig = field(default_factory=PostprocessConfig)
-    # File path for user regex filters.
+    # File path for user regex filters (applied after transcription, before LLM).
     filters_path: Path = field(default_factory=lambda: _lazy_config_dir() / "filters.json")
+    # File path for post-LLM normalization filters (applied after LLM, before paste).
+    after_llm_filters_path: Path = field(default_factory=lambda: _lazy_config_dir() / "after_LLM_filters.json")
 
 
 def _lazy_config_dir() -> Path:

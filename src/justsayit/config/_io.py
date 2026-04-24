@@ -535,3 +535,63 @@ def _default_filter_chain() -> list[dict]:
         }
     )
     return chain
+
+
+def ensure_after_llm_filters_file(path: Path | None = None) -> Path:
+    """Write the default ``after_LLM_filters.json`` if it doesn't exist.
+
+    These filters run after the LLM response, before paste — useful for
+    normalizing typographic characters that models tend to emit (em dashes,
+    curly quotes, …) to their plain-ASCII equivalents.
+    Disable any rule by setting ``"enabled": false`` on it.
+    """
+    if path is None:
+        path = config_dir() / "after_LLM_filters.json"
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(_default_after_llm_filter_chain(), indent=2) + "\n",
+            encoding="utf-8",
+        )
+    return path
+
+
+def _default_after_llm_filter_chain() -> list[dict]:
+    return [
+        {
+            "name": "em dash to hyphen",
+            "pattern": "—",
+            "replacement": " - ",
+            "enabled": True,
+        },
+        {
+            "name": "en dash to hyphen",
+            "pattern": "–",
+            "replacement": "-",
+            "enabled": True,
+        },
+        {
+            "name": "left double quote to straight",
+            "pattern": "[“„]",
+            "replacement": '"',
+            "enabled": True,
+        },
+        {
+            "name": "right double quote to straight",
+            "pattern": "”",
+            "replacement": '"',
+            "enabled": True,
+        },
+        {
+            "name": "curly single quotes to straight",
+            "pattern": "[‘’]",
+            "replacement": "'",
+            "enabled": True,
+        },
+        {
+            "name": "ellipsis to three dots",
+            "pattern": "…",
+            "replacement": "...",
+            "enabled": False,
+        },
+    ]

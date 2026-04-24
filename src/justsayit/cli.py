@@ -110,6 +110,7 @@ class App:
         self.tray: TrayIcon | None = None
         self.gtk_app: Gtk.Application | None = None
         self.filters = []
+        self.after_llm_filters = []
 
         # Bounded queue so we can't run unbounded transcription work if the
         # user is trigger-happy with the hotkey.
@@ -173,6 +174,13 @@ class App:
             len(self.filters),
             self.cfg.filters_path,
         )
+        self.after_llm_filters = load_filters(self.cfg.after_llm_filters_path)
+        if self.after_llm_filters:
+            log.info(
+                "loaded %d after-LLM filter(s) from %s",
+                len(self.after_llm_filters),
+                self.cfg.after_llm_filters_path,
+            )
 
     def setup_transcriber(self) -> None:
         self.transcriber = make_transcriber(self.cfg, self.model_paths)
@@ -184,6 +192,7 @@ class App:
             self.filters,
             self.paster,
             no_paste=self.no_paste,
+            after_llm_filters=self.after_llm_filters,
         )
 
     def setup_postprocessor(self) -> None:
@@ -843,6 +852,7 @@ class App:
             self.filters,
             self.paster,
             no_paste=self.no_paste,
+            after_llm_filters=self.after_llm_filters,
         )
         _pl.postprocessor = self.postprocessor
         _pl.overlay = self.overlay
