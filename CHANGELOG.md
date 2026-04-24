@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.16.3] - 2026-04-24
+
+### Fixed
+- **Clipboard image restore corruption** — after pasting, `Paster` now snapshots image clipboards as raw bytes + MIME type and restores them via `wl-copy --type image/png`. Previously the snapshot decoded PNG binary as UTF-8 and restored it as `text/plain`, causing the next clipboard-context arm to feed raw PNG bytes into the LLM as text context instead of as an image.
+
+### Added
+- `openai-responses.toml` deployed by `justsayit init` as the recommended cloud profile (OpenAI Responses API backend, `gpt-5.4-mini`, `reasoning_effort = "low"`).
+
 ## [0.16.2] - 2026-04-24
 
 ### Added

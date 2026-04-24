@@ -254,6 +254,24 @@ def restore_clipboard(text: str, *, timeout: float = 2.0, sensitive: bool = Fals
     _run_wl_copy(cmd, text, timeout)
 
 
+def _restore_clipboard_image(data: bytes, mime_type: str, *, timeout: float = 2.0) -> None:
+    """Restore a binary image to the regular clipboard via wl-copy."""
+    wl_copy = _require("wl-copy")
+    try:
+        proc = subprocess.run(
+            [wl_copy, "--type", mime_type],
+            input=data,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as e:
+        raise PasteError(f"wl-copy timed out after {timeout}s") from e
+    if proc.returncode != 0:
+        raise PasteError(f"wl-copy exited {proc.returncode}")
+
+
 def _dotool_input(combo: str) -> bytes:
     # dotool reads commands from stdin; `key` accepts XKB-style
     # modifier+key joined by '+'.
@@ -403,9 +421,13 @@ class Paster:
             # Snapshot the current clipboard before overwriting it. wl-paste
             # blocks until the source app responds — usually fast but worth
             # surfacing in the timing line so we can spot stalls.
+            # Try image first so we can restore it as binary (not as mangled text).
             old_clip: str | None = None
+            old_clip_img: tuple[bytes, str] | None = None
             if self._restore_clipboard:
-                old_clip = read_clipboard(timeout=self.timeout)
+                old_clip_img = read_clipboard_image(timeout=self.timeout)
+                if old_clip_img is None:
+                    old_clip = read_clipboard(timeout=self.timeout)
             t_snap = time.monotonic()
 
             copy_to_clipboard(text, timeout=self.timeout, sensitive=self._sensitive)
@@ -426,11 +448,14 @@ class Paster:
 
             # Restore the previous clipboard after a brief pause so the target
             # app has time to read it before we overwrite it.
-            if old_clip is not None:
+            if old_clip_img is not None or old_clip is not None:
                 if self.restore_delay_ms > 0:
                     time.sleep(self.restore_delay_ms / 1000)
                 try:
-                    restore_clipboard(old_clip, timeout=self.timeout, sensitive=self._sensitive)
+                    if old_clip_img is not None:
+                        _restore_clipboard_image(old_clip_img[0], old_clip_img[1], timeout=self.timeout)
+                    else:
+                        restore_clipboard(old_clip, timeout=self.timeout, sensitive=self._sensitive)  # type: ignore[arg-type]
                 except PasteError as e:
                     log.warning("clipboard restore failed: %s", e)
 

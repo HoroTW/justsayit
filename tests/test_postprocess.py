@@ -120,21 +120,21 @@ def test_ensure_default_profile_creates_file(tmp_path, monkeypatch):
     assert "cleanup_gemma.md" in content
 
 
-def test_ensure_default_profiles_writes_all_four(tmp_path, monkeypatch):
-    """`init` ships four profiles side-by-side: the recommended local
-    Gemma cleanup profile, the playful emoji sibling, the OpenAI-
-    compatible endpoint variant, and the Ollama-served-Gemma example.
-    All four must exist after a single call so the tray menu has them
-    to offer."""
+def test_ensure_default_profiles_writes_all_five(tmp_path, monkeypatch):
+    """`init` ships five profiles: Gemma4 cleanup (local), Gemma4 fun,
+    OpenAI chat/completions, OpenAI Responses API (recommended for cloud
+    use), and Ollama-served Gemma. All must exist after a single call."""
     monkeypatch.setattr("justsayit.postprocess._profile.config_dir", lambda: tmp_path)
 
-    cleanup, fun, openai, ollama_gemma = ensure_default_profiles()
+    cleanup, fun, openai, responses, ollama_gemma = ensure_default_profiles()
     assert cleanup.name == "gemma4-cleanup.toml"
     assert fun.name == "gemma4-fun.toml"
     assert openai.name == "openai-cleanup.toml"
+    assert responses.name == "openai-responses.toml"
     assert ollama_gemma.name == "ollama-gemma.toml"
     assert (
-        cleanup.exists() and fun.exists() and openai.exists() and ollama_gemma.exists()
+        cleanup.exists() and fun.exists() and openai.exists()
+        and responses.exists() and ollama_gemma.exists()
     )
     fun_text = fun.read_text(encoding="utf-8")
     # Fun profile points users back at cleanup and disables the strip

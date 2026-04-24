@@ -57,11 +57,12 @@ def _write_default_config(force: bool = False, backend: str | None = None) -> No
                 f.write(f'\n[model]\nbackend = "{backend}"\n')
         print(f"wrote {cfg_path}")
 
-    cleanup_path, fun_path, openai_path, ollama_gemma_path = ensure_default_profiles()
+    cleanup_path, fun_path, openai_path, responses_path, ollama_gemma_path = ensure_default_profiles()
     dynamic_context_path = ensure_dynamic_context_script()
-    print(f"postprocess profile: {cleanup_path}    (recommended)")
-    print(f"postprocess profile: {fun_path}        (emoji-heavy variant)")
-    print(f"postprocess profile: {openai_path}     (OpenAI-compatible endpoint)")
+    print(f"postprocess profile: {responses_path}  (OpenAI Responses API — RECOMMENDED)")
+    print(f"postprocess profile: {openai_path}     (OpenAI chat/completions)")
+    print(f"postprocess profile: {cleanup_path}    (local Gemma4 — no API key needed)")
+    print(f"postprocess profile: {fun_path}        (local Gemma4, emoji-heavy variant)")
     print(f"postprocess profile: {ollama_gemma_path}  (Ollama-served Gemma)")
     print(f"dynamic-context script: {dynamic_context_path}")
 

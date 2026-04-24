@@ -486,3 +486,157 @@ def test_local_to_remote_cross_backend_image_visible():
     assert any(b.get("type") == "image_url" for b in all_blocks), (
         "image_url missing from remote API messages after local→remote switch"
     )
+
+
+# ---------------------------------------------------------------------------
+# Two-turn image continuations: no raw bytes leaking into text fields
+# ---------------------------------------------------------------------------
+
+# Minimal distinct fake PNGs (different fill byte so base64 differs)
+_PNG1 = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+_PNG2 = b"\x89PNG\r\n\x1a\n" + b"\xff" * 32
+
+
+def _is_data_url(s: str) -> bool:
+    return isinstance(s, str) and s.startswith("data:image/") and ";base64," in s
+
+
+def _has_no_binary(s: str) -> bool:
+    """Check that a string contains no raw binary bytes (only printable ASCII)."""
+    return all(0x20 <= ord(c) <= 0x7E for c in s[:200])
+
+
+def _url_from_session(content_or_msg) -> str:
+    """Extract first image_url data URL from a prev_messages user entry."""
+    content = content_or_msg if isinstance(content_or_msg, list) else content_or_msg.get("content", [])
+    return next(b["image_url"]["url"] for b in content if b.get("type") == "image_url")
+
+
+def test_remote_continue_second_image_preserves_both_as_data_urls():
+    """Turn 1 (remote): image1 stored in session.
+    Turn 2 (remote, continue): image2 sent while loading turn 1 session.
+    Both images must be proper base64 data URLs in the session and in the
+    API messages — no raw bytes in any text field."""
+    import base64
+    import json
+    import unittest.mock as mock
+    from justsayit.postprocess.backend_remote import RemoteBackend
+
+    backend = RemoteBackend(_fake_remote_profile())
+
+    # Turn 1
+    with mock.patch(
+        "justsayit.postprocess.backend_remote._http_post",
+        return_value={"choices": [{"message": {"content": "ack", "role": "assistant"}}], "usage": {}},
+    ):
+        turn1 = backend._run("image one", extra_image=_PNG1, extra_image_mime="image/png")
+
+    user1_content = turn1.session_data["prev_messages"][0]["content"]
+    assert isinstance(user1_content, list)
+    img_url_1 = next(b["image_url"]["url"] for b in user1_content if b.get("type") == "image_url")
+    assert _is_data_url(img_url_1), f"turn 1 image not a data URL: {img_url_1[:80]!r}"
+    assert _has_no_binary(img_url_1), "binary chars in turn 1 image URL"
+
+    # JSON round-trip (same as pipeline save → load)
+    session = json.loads(json.dumps(turn1.session_data))
+
+    # Turn 2 — capture messages sent to API
+    captured: list[dict] = []
+
+    def fake_post(url, body, headers, **kw):
+        captured.extend(body["messages"])
+        return {"choices": [{"message": {"content": "both seen", "role": "assistant"}}], "usage": {}}
+
+    with mock.patch("justsayit.postprocess.backend_remote._http_post", side_effect=fake_post):
+        turn2 = backend._run("image two", extra_image=_PNG2, extra_image_mime="image/png",
+                             previous_session=session)
+
+    # Session after turn 2 must have 4 entries: u1 a1 u2 a2
+    prev = turn2.session_data["prev_messages"]
+    assert len(prev) == 4, f"expected 4 prev_messages, got {len(prev)}"
+
+    # Both user messages must have their images as data URLs
+    for idx in (0, 2):
+        content = prev[idx]["content"]
+        assert isinstance(content, list), f"prev_messages[{idx}] content should be a list"
+        img_blocks = [b for b in content if b.get("type") == "image_url"]
+        assert img_blocks, f"no image_url block in prev_messages[{idx}]"
+        url = img_blocks[0]["image_url"]["url"]
+        assert _is_data_url(url), f"prev_messages[{idx}] image not a data URL: {url[:80]!r}"
+        assert _has_no_binary(url), f"binary chars in prev_messages[{idx}] image URL"
+
+    # The two stored images must encode different bytes
+    assert _url_from_session(prev[0]) != _url_from_session(prev[2]), \
+        "turn 1 and turn 2 images must differ"
+
+    b64_png1 = base64.b64encode(_PNG1).decode()
+    b64_png2 = base64.b64encode(_PNG2).decode()
+    assert b64_png1 in _url_from_session(prev[0]), "turn 1 image data doesn't match PNG1"
+    assert b64_png2 in _url_from_session(prev[2]), "turn 2 image data doesn't match PNG2"
+
+    # API messages must contain image_url blocks (not raw bytes squeezed into text)
+    api_image_blocks = [
+        b
+        for msg in captured
+        for b in (msg["content"] if isinstance(msg["content"], list) else [])
+        if b.get("type") == "image_url"
+    ]
+    assert len(api_image_blocks) == 2, \
+        f"expected 2 image_url blocks in API call, got {len(api_image_blocks)}"
+    for block in api_image_blocks:
+        assert _is_data_url(block["image_url"]["url"])
+
+    # No text block may contain raw PNG magic bytes
+    for msg in captured:
+        content = msg["content"]
+        if isinstance(content, str):
+            assert "\x89PNG" not in content, f"raw PNG bytes in text message: {content[:60]!r}"
+        elif isinstance(content, list):
+            for b in content:
+                if b.get("type") == "text":
+                    assert "\x89PNG" not in b.get("text", ""), \
+                        f"raw PNG bytes in text block: {b['text'][:60]!r}"
+
+
+def test_responses_continue_second_image_both_stored_as_data_urls():
+    """Turn 1 (responses, same-backend chain): image1 → session.
+    Turn 2 (responses, same-backend chain): image2 added.
+    Both images must be proper data URLs in the session — no raw bytes."""
+    import base64
+    import unittest.mock as mock
+
+    profile = PostprocessProfile(
+        system_prompt="sys", system_prompt_file="",
+        model="gpt-5.4-mini", endpoint="http://fake/v1", api_key="sk-test",
+    )
+    backend = ResponsesBackend(profile)
+
+    def fake_post(url, body, headers, **kw):
+        return _fake_responses_response()
+
+    # Turn 1
+    with mock.patch("justsayit.postprocess.backend_responses._http_post", side_effect=fake_post):
+        turn1 = backend._run("image one", extra_image=_PNG1, extra_image_mime="image/png")
+
+    img_url_1 = _url_from_session(turn1.session_data["prev_messages"][0])
+    assert _is_data_url(img_url_1)
+    assert _has_no_binary(img_url_1)
+
+    # Turn 2 — same backend (uses response_id chain)
+    with mock.patch("justsayit.postprocess.backend_responses._http_post", side_effect=fake_post):
+        turn2 = backend._run("image two", extra_image=_PNG2, extra_image_mime="image/png",
+                             previous_session=turn1.session_data)
+
+    prev = turn2.session_data["prev_messages"]
+    assert len(prev) == 4, f"expected 4 prev_messages, got {len(prev)}"
+
+    b64_png1 = base64.b64encode(_PNG1).decode()
+    b64_png2 = base64.b64encode(_PNG2).decode()
+
+    img1_url = _url_from_session(prev[0])
+    img2_url = _url_from_session(prev[2])
+    assert _is_data_url(img1_url) and _has_no_binary(img1_url)
+    assert _is_data_url(img2_url) and _has_no_binary(img2_url)
+    assert b64_png1 in img1_url, "turn 1 image doesn't match PNG1"
+    assert b64_png2 in img2_url, "turn 2 image doesn't match PNG2"
+    assert img1_url != img2_url, "turn 1 and turn 2 images must differ"

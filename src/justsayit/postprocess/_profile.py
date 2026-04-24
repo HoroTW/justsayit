@@ -54,6 +54,7 @@ def _load_profile_template(name: str) -> str:
 _CLEANUP_PROFILE_TOML = _load_profile_template("profile-gemma4-cleanup.toml")
 _FUN_PROFILE_TOML = _load_profile_template("profile-gemma4-fun.toml")
 _OPENAI_PROFILE_TOML = _load_profile_template("profile-openai-cleanup.toml")
+_RESPONSES_PROFILE_TOML = _load_profile_template("profile-openai-responses.toml")
 _OLLAMA_GEMMA_PROFILE_TOML = _load_profile_template("profile-ollama-gemma.toml")
 
 
@@ -263,8 +264,8 @@ def ensure_profile(content: str, path: Path) -> Path:
     return path
 
 
-def ensure_default_profiles() -> tuple[Path, Path, Path, Path]:
-    """Write the cleanup, fun, openai, and ollama-gemma default profiles."""
+def ensure_default_profiles() -> tuple[Path, Path, Path, Path, Path]:
+    """Write the cleanup, fun, openai, responses, and ollama-gemma default profiles."""
     ensure_context_file()
     ensure_dynamic_context_script()
     pd = profiles_dir()
@@ -272,6 +273,7 @@ def ensure_default_profiles() -> tuple[Path, Path, Path, Path]:
         ensure_profile(_CLEANUP_PROFILE_TOML, pd / "gemma4-cleanup.toml"),
         ensure_profile(_FUN_PROFILE_TOML, pd / "gemma4-fun.toml"),
         ensure_profile(_OPENAI_PROFILE_TOML, pd / "openai-cleanup.toml"),
+        ensure_profile(_RESPONSES_PROFILE_TOML, pd / "openai-responses.toml"),
         ensure_profile(_OLLAMA_GEMMA_PROFILE_TOML, pd / "ollama-gemma.toml"),
     )
 

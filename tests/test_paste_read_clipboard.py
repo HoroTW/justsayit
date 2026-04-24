@@ -93,3 +93,59 @@ def test_read_clipboard_list_types_timeout_returns_none(monkeypatch):
 
     monkeypatch.setattr(paste.subprocess, "run", _run)
     assert paste.read_clipboard(text_only=True) is None
+
+
+# ---------------------------------------------------------------------------
+# Paster.paste(): image clipboard snapshot and restore
+# ---------------------------------------------------------------------------
+
+
+def test_paster_image_clipboard_restored_as_image(monkeypatch):
+    """When the clipboard holds an image, Paster.paste() must snapshot it as
+    binary bytes and restore it with the original MIME type — NOT decode
+    as UTF-8 and restore via text/plain, which corrupts the image and causes
+    the next clipboard-context arm to feed raw PNG bytes into the LLM as text."""
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 8
+
+    restore_image_calls: list = []
+    restore_text_calls: list = []
+
+    monkeypatch.setattr(paste, "read_clipboard_image", lambda **_: (png, "image/png"))
+    monkeypatch.setattr(paste, "read_clipboard", lambda **_: (_ for _ in ()).throw(
+        AssertionError("read_clipboard must not be called when image is present")
+    ))
+    monkeypatch.setattr(paste, "copy_to_clipboard", lambda text, **_: None)
+    monkeypatch.setattr(paste, "_restore_clipboard_image",
+                        lambda data, mime, **_: restore_image_calls.append((data, mime)))
+    monkeypatch.setattr(paste, "restore_clipboard",
+                        lambda text, **_: restore_text_calls.append(text))
+    monkeypatch.setattr(paste.Paster, "_send_key", lambda self, combo: None)
+
+    p = paste.Paster(combo="ctrl+v", backend="dotool", restore_clipboard=True, restore_delay_ms=0)
+    p.paste("transcribed text")
+
+    assert restore_image_calls == [(png, "image/png")], \
+        f"expected image restore with correct bytes+MIME, got: {restore_image_calls!r}"
+    assert restore_text_calls == [], \
+        "restore_clipboard (text/plain) must NOT be called when clipboard held an image"
+
+
+def test_paster_text_clipboard_restored_as_text(monkeypatch):
+    """When the clipboard holds text, Paster.paste() restores it as text (unchanged)."""
+    restore_text_calls: list = []
+
+    monkeypatch.setattr(paste, "read_clipboard_image", lambda **_: None)
+    monkeypatch.setattr(paste, "read_clipboard", lambda **_: "original text")
+    monkeypatch.setattr(paste, "copy_to_clipboard", lambda text, **_: None)
+    monkeypatch.setattr(paste, "_restore_clipboard_image",
+                        lambda *a, **kw: (_ for _ in ()).throw(
+                            AssertionError("_restore_clipboard_image must not be called for text clipboard")
+                        ))
+    monkeypatch.setattr(paste, "restore_clipboard",
+                        lambda text, **_: restore_text_calls.append(text))
+    monkeypatch.setattr(paste.Paster, "_send_key", lambda self, combo: None)
+
+    p = paste.Paster(combo="ctrl+v", backend="dotool", restore_clipboard=True, restore_delay_ms=0)
+    p.paste("transcribed text")
+
+    assert restore_text_calls == ["original text"]
