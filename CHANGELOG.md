@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.16.8] - 2026-04-24
+
+### Fixed
+- Clipboard text (`extra_context`) and clipboard images are now stored in `prev_messages` via a shared base-class `_build_user_history_entry()` method, so continuation turns see the full context of previous turns.
+- Local backend now stores images in `prev_messages` in canonical format (even though it cannot use them for inference), enabling clean cross-backend switches to vision-capable backends.
+- Simplified local backend: always uses `_format_history_text()` for inference (safe for text-only models, avoids injecting image blocks into llama-cpp messages).
+
 ## [0.16.7] - 2026-04-24
 
 ### Tests

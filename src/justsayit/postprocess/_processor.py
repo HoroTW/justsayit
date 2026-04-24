@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import re
@@ -269,6 +270,36 @@ class PostprocessorBase:
             elif role == "assistant":
                 lines.append(f"Assistant: {content}")
         return "\n".join(lines)
+
+    def _build_user_history_entry(
+        self,
+        user_text: str,
+        extra_context: str = "",
+        extra_image: bytes | None = None,
+        extra_image_mime: str = "",
+    ) -> dict:
+        """Build the canonical user message dict for prev_messages storage.
+
+        Includes clipboard text and image regardless of whether the current
+        backend supports them, so cross-backend continuation preserves all input.
+        Plain string content is kept when neither is present.
+        """
+        has_image = bool(extra_image and extra_image_mime)
+        if not extra_context and not has_image:
+            return {"role": "user", "content": user_text}
+        content: list[dict] = [{"type": "text", "text": user_text}]
+        if extra_context:
+            content.append({"type": "text", "text": f"[Clipboard context]\n{extra_context.strip()}"})
+        if has_image:
+            img_detail = getattr(self.profile, "image_detail", "auto")
+            if img_detail not in ("auto", "low", "high"):
+                img_detail = "auto"
+            img_b64 = base64.b64encode(extra_image).decode("ascii")  # type: ignore[arg-type]
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:{extra_image_mime};base64,{img_b64}", "detail": img_detail},
+            })
+        return {"role": "user", "content": content}
 
     def warmup(self) -> None:
         """No-op for remote backends. LocalBackend overrides this."""

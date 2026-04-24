@@ -89,15 +89,9 @@ class RemoteBackend(PostprocessorBase):
         else:
             reasoning = reasoning.strip()
         _log_usage(self.profile, data.get("usage") or {})
-        # Store image in session history so turn 2 sends it too. Turn 3+
-        # benefits from prompt caching (same prefix → image tokens are cached).
-        user_content: Any = self.profile.user_template.format(text=text)
-        if has_image:
-            user_content = [
-                {"type": "text", "text": user_content},
-                {"type": "image_url", "image_url": {"url": f"data:{extra_image_mime};base64,{img_b64}", "detail": img_detail}},
-            ]
-        user_msg = {"role": "user", "content": user_content}
+        user_msg = self._build_user_history_entry(
+            self.profile.user_template.format(text=text), extra_context, extra_image, extra_image_mime
+        )
         new_prev_messages = prev_msgs + [user_msg, {"role": "assistant", "content": content}]
         session_data = {
             "backend": "remote",
