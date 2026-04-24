@@ -4,43 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-## [0.16.8] - 2026-04-24
-
-### Fixed
-- Clipboard text (`extra_context`) and clipboard images are now stored in `prev_messages` via a shared base-class `_build_user_history_entry()` method, so continuation turns see the full context of previous turns.
-- Local backend now stores images in `prev_messages` in canonical format (even though it cannot use them for inference), enabling clean cross-backend switches to vision-capable backends.
-- Simplified local backend: always uses `_format_history_text()` for inference (safe for text-only models, avoids injecting image blocks into llama-cpp messages).
-
-## [0.16.7] - 2026-04-24
-
-### Tests
-- Add burn tests for cross-backend image continuation (`test_burn_cross_backend_image.py`): Responses→Chat Completions and Chat Completions→Responses, each asserting the model can describe an image seen only in the previous backend's turn.
-
-## [0.16.6] - 2026-04-24
-
-### Fixed
-- Cross-backend continuation no longer strips images to text: remote backend uses `_build_messages_continued()` directly (canonical format is already chat-completions compatible); Responses backend converts canonical `prev_messages` to Responses API input format via `_canonical_to_responses_input()` and injects them as real message turns with images.
-
-## [0.16.5] - 2026-04-24
-
-### Fixed
-- Responses API backend now stores images in session history using canonical chat-completions format (`image_url` object) so all backends share the same `prev_messages` layout and cross-backend continuation works correctly.
-- `_format_history_text` (cross-backend text fallback) now extracts text from list-content blocks instead of printing the raw Python list repr.
-
-## [0.16.4] - 2026-04-24
-
-### Fixed
-- Remote backend: clipboard image now activates assistant mode in the system prompt (`extra_image_provided` was not threaded through `_build_messages` / `_build_messages_continued`).
-
-## [0.16.3] - 2026-04-24
-
-### Fixed
-- Remote backend: clipboard image is now stored in session history so continue-mode turn 2 re-sends it and turn 3+ benefits from prompt caching (same prefix → image tokens are cached rather than billed again).
-
 ## [0.16.2] - 2026-04-24
 
+### Added
+- **Clipboard images in remote backend** — `/chat/completions` backend now forwards clipboard images to vision-capable models (gpt-4o-mini, gpt-4o, …); `image_detail` profile field works the same as for the Responses backend (`"original"` falls back to `"auto"`).
+
 ### Fixed
-- Remote (`/chat/completions`) backend now sends clipboard images to vision-capable models (gpt-4o-mini, gpt-4o, …). The `image_detail` profile field works the same way; `"original"` falls back to `"auto"` since that tier is Responses-API-only.
+- **Cross-backend session continuation** — switching backends mid-conversation now preserves the full image history. All backends write `prev_messages` in canonical chat-completions `image_url` format. Remote backend passes history directly to `_build_messages_continued()`; Responses backend converts via `_canonical_to_responses_input()` (maps `image_url`→`input_image`/`output_text`). 2-turn and 3-turn alternating-backend scenarios verified with burn tests.
+- **Canonical session storage** — `PostprocessorBase._build_user_history_entry()` is the single source of truth for `prev_messages` entries: includes spoken text, clipboard text, and image for all backends (including local, which stores images for future cross-backend switches even though it can't use them for inference).
+- Assistant mode system-prompt note now fires correctly when a clipboard image is sent via the remote backend (`extra_image_provided` was not threaded through `_build_messages`/`_build_messages_continued`).
+- Images stored in session history so turn 3+ benefits from prompt caching (same prefix → image tokens cached rather than billed again).
 
 ## [0.16.1] - 2026-04-23
 
