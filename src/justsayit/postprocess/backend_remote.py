@@ -19,7 +19,6 @@ class RemoteBackend(PostprocessorBase):
                 "LLM endpoint is set but profile.model is empty — "
                 "set 'model' in the profile (e.g. \"gpt-4o-mini\")."
             )
-        same_backend = previous_session is not None and previous_session.get("backend") == "remote"
         prev_msgs: list[dict] = (previous_session.get("prev_messages") or []) if previous_session else []
         url = self.profile.endpoint.rstrip("/") + "/chat/completions"
         # OpenAI reasoning models (o1/o3/o4/gpt-5.x …) reject most classic
@@ -32,11 +31,10 @@ class RemoteBackend(PostprocessorBase):
         img_detail = (self.profile.image_detail if self.profile.image_detail in ("auto", "low", "high") else "auto") if has_image else ""
         img_b64 = base64.b64encode(extra_image).decode("ascii") if has_image else ""  # type: ignore[arg-type]
 
-        if same_backend and prev_msgs:
+        # prev_messages is always in canonical chat-completions format regardless
+        # of which backend stored it, so _build_messages_continued works directly.
+        if prev_msgs:
             messages = self._build_messages_continued(text, extra_context, prev_msgs, extra_image_provided=has_image)
-        elif prev_msgs:
-            history_text = self._format_history_text(prev_msgs)
-            messages = self._build_messages(text, extra_context, history_text=history_text, extra_image_provided=has_image)
         else:
             messages = self._build_messages(text, extra_context, extra_image_provided=has_image)
 

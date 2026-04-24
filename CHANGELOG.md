@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.16.6] - 2026-04-24
+
+### Fixed
+- Cross-backend continuation no longer strips images to text: remote backend uses `_build_messages_continued()` directly (canonical format is already chat-completions compatible); Responses backend converts canonical `prev_messages` to Responses API input format via `_canonical_to_responses_input()` and injects them as real message turns with images.
+
 ## [0.16.5] - 2026-04-24
 
 ### Fixed

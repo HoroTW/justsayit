@@ -11,6 +11,45 @@ from ._profile import ProcessResult
 
 
 class ResponsesBackend(PostprocessorBase):
+    @staticmethod
+    def _canonical_to_responses_input(prev_msgs: list[dict]) -> list[dict]:
+        """Convert canonical chat-completions prev_messages to Responses API input format.
+
+        Used for cross-backend continuation so images in session history are
+        sent as actual input_image blocks rather than being stripped to text.
+        """
+        result = []
+        for msg in prev_msgs:
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+            if role == "user":
+                if isinstance(content, str):
+                    items: list[dict] = [{"type": "input_text", "text": content}]
+                else:
+                    items = []
+                    for block in content:
+                        if block.get("type") == "text":
+                            items.append({"type": "input_text", "text": block.get("text", "")})
+                        elif block.get("type") == "image_url":
+                            img = block.get("image_url", {})
+                            items.append({
+                                "type": "input_image",
+                                "image_url": img.get("url", ""),
+                                "detail": img.get("detail", "auto"),
+                            })
+                result.append({"role": "user", "content": items})
+            elif role == "assistant":
+                if isinstance(content, str):
+                    items = [{"type": "output_text", "text": content}]
+                else:
+                    items = [
+                        {"type": "output_text", "text": b.get("text", "")}
+                        for b in content
+                        if b.get("type") in ("text", "output_text")
+                    ]
+                result.append({"role": "assistant", "content": items})
+        return result
+
     def _run(self, text: str, extra_context: str = "", extra_image: bytes | None = None, extra_image_mime: str = "", previous_session: dict | None = None) -> ProcessResult:
         """OpenAI Responses API POST (/v1/responses).
 
@@ -28,7 +67,8 @@ class ResponsesBackend(PostprocessorBase):
         same_backend = previous_session is not None and previous_session.get("backend") == "responses"
         prev_msgs: list[dict] = (previous_session.get("prev_messages") or []) if previous_session else []
         prev_response_id: str = (previous_session.get("response_id") or "") if same_backend else ""
-        history_text = "" if same_backend else (self._format_history_text(prev_msgs) if prev_msgs else "")
+        # Cross-backend: prev_msgs present but no native response_id chain available.
+        cross_backend_hist = not same_backend and bool(prev_msgs)
 
         has_image = bool(extra_image and extra_image_mime and self.profile.image_detail != "off")
         # Compute b64 once; reused for both the API payload and session history.
@@ -38,7 +78,7 @@ class ResponsesBackend(PostprocessorBase):
         img_hist_detail = (self.profile.image_detail if self.profile.image_detail in ("auto", "low", "high") else "auto") if has_image else ""
 
         static_prompt, dynamic_prompt = self._build_system_prompt_parts(
-            extra_context, extra_image_provided=has_image, history_text=history_text
+            extra_context, extra_image_provided=has_image
         )
         log.debug("assembled Responses API instructions (static/cached):\n%s", static_prompt)
         if dynamic_prompt:
@@ -57,13 +97,15 @@ class ResponsesBackend(PostprocessorBase):
                 extra_image_mime, len(extra_image), self.profile.image_detail,
             )
 
-        if dynamic_prompt or len(user_content) > 1:
+        if dynamic_prompt or len(user_content) > 1 or cross_backend_hist:
             input_payload: Any = []
             if dynamic_prompt:
                 input_payload.append({
                     "role": "developer",
                     "content": [{"type": "input_text", "text": dynamic_prompt}],
                 })
+            if cross_backend_hist:
+                input_payload.extend(self._canonical_to_responses_input(prev_msgs))
             input_payload.append({
                 "role": "user",
                 "content": user_content,

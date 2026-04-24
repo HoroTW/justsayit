@@ -18,6 +18,7 @@ from justsayit.pipeline import (
     _session_path,
 )
 from justsayit.postprocess._processor import PostprocessorBase
+from justsayit.postprocess.backend_responses import ResponsesBackend
 from justsayit.postprocess._profile import PostprocessProfile, ProcessResult
 
 
@@ -269,3 +270,80 @@ def test_build_messages_with_history_text_goes_into_system_prompt():
     assert "## PREVIOUS SESSION HISTORY" in system_content
     assert "User: q" in system_content
     assert "Assistant: a" in system_content
+
+
+# ---------------------------------------------------------------------------
+# ResponsesBackend: _canonical_to_responses_input
+# ---------------------------------------------------------------------------
+
+
+def test_canonical_to_responses_input_text_only():
+    prev = [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "hi there"},
+    ]
+    out = ResponsesBackend._canonical_to_responses_input(prev)
+    assert out[0] == {"role": "user", "content": [{"type": "input_text", "text": "hello"}]}
+    assert out[1] == {"role": "assistant", "content": [{"type": "output_text", "text": "hi there"}]}
+
+
+def test_canonical_to_responses_input_with_image():
+    prev = [
+        {"role": "user", "content": [
+            {"type": "text", "text": "describe this"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc", "detail": "auto"}},
+        ]},
+        {"role": "assistant", "content": "It's a cat."},
+    ]
+    out = ResponsesBackend._canonical_to_responses_input(prev)
+    assert out[0]["role"] == "user"
+    user_content = out[0]["content"]
+    assert {"type": "input_text", "text": "describe this"} in user_content
+    assert {"type": "input_image", "image_url": "data:image/png;base64,abc", "detail": "auto"} in user_content
+    assert out[1] == {"role": "assistant", "content": [{"type": "output_text", "text": "It's a cat."}]}
+
+
+# ---------------------------------------------------------------------------
+# RemoteBackend: cross-backend uses _build_messages_continued directly
+# ---------------------------------------------------------------------------
+
+
+def test_remote_cross_backend_uses_build_messages_continued():
+    """RemoteBackend must use _build_messages_continued even for cross-backend sessions,
+    since prev_messages is always in canonical chat-completions format."""
+    from justsayit.postprocess.backend_remote import RemoteBackend
+    from justsayit.postprocess._profile import PostprocessProfile
+    import unittest.mock as mock
+
+    profile = PostprocessProfile(
+        system_prompt="sys",
+        system_prompt_file="",
+        model="gpt-4o-mini",
+        endpoint="http://fake/v1",
+        api_key="sk-test",
+    )
+    backend = RemoteBackend(profile)
+
+    prev_session = {
+        "backend": "responses",  # different backend!
+        "prev_messages": [
+            {"role": "user", "content": "question"},
+            {"role": "assistant", "content": "answer"},
+        ],
+        "ts": 1.0,
+    }
+
+    captured_messages = []
+
+    def fake_http_post(url, body, headers, **kw):
+        captured_messages.extend(body["messages"])
+        return {"choices": [{"message": {"content": "ok", "role": "assistant"}}], "usage": {}}
+
+    with mock.patch("justsayit.postprocess.backend_remote._http_post", side_effect=fake_http_post):
+        backend._run("follow up", previous_session=prev_session)
+
+    # Should have: system, user(question), assistant(answer), user(follow up)
+    assert captured_messages[0]["role"] == "system"
+    assert captured_messages[1] == {"role": "user", "content": "question"}
+    assert captured_messages[2] == {"role": "assistant", "content": "answer"}
+    assert captured_messages[3]["role"] == "user"
