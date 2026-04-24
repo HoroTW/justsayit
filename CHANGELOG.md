@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.16.2] - 2026-04-24
+
+### Fixed
+- Remote (`/chat/completions`) backend now sends clipboard images to vision-capable models (gpt-4o-mini, gpt-4o, …). The `image_detail` profile field works the same way; `"original"` falls back to `"auto"` since that tier is Responses-API-only.
+
 ## [0.16.1] - 2026-04-23
 
 ### Fixed

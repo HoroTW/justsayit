@@ -1,6 +1,7 @@
 """OpenAI-compatible /chat/completions backend."""
 from __future__ import annotations
 
+import base64
 import re
 import time
 from typing import Any
@@ -33,6 +34,20 @@ class RemoteBackend(PostprocessorBase):
             messages = self._build_messages(text, extra_context, history_text=history_text)
         else:
             messages = self._build_messages(text, extra_context)
+
+        has_image = bool(extra_image and extra_image_mime and self.profile.image_detail != "off")
+        if has_image:
+            # chat/completions vision: convert last user message to a content list.
+            # "original" is Responses-API-only; fall back to "auto" here.
+            detail = self.profile.image_detail if self.profile.image_detail in ("auto", "low", "high") else "auto"
+            b64 = base64.b64encode(extra_image).decode("ascii")  # type: ignore[arg-type]
+            last = messages[-1]
+            last["content"] = [
+                {"type": "text", "text": last["content"]},
+                {"type": "image_url", "image_url": {"url": f"data:{extra_image_mime};base64,{b64}", "detail": detail}},
+            ]
+            log.debug("attaching image to chat/completions (%s, %d bytes, detail=%s)", extra_image_mime, len(extra_image), detail)
+
         body: dict[str, Any] = {
             "model": self.profile.model,
             "messages": messages,
