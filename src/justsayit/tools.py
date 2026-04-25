@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shlex
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -68,7 +69,7 @@ def execute_tool(tool: ToolDefinition, params: dict) -> str:
         return f"Tool '{tool.name}' has no exec command configured."
     cmd = tool.exec
     for key, value in params.items():
-        cmd = cmd.replace("{" + key + "}", str(value))
+        cmd = cmd.replace("{" + key + "}", shlex.quote(str(value)))
     log.info("executing tool %r: %s", tool.name, cmd)
     try:
         proc = subprocess.run(
