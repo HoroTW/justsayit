@@ -1,11 +1,14 @@
 """Local GGUF inference backend (llama-cpp-python)."""
 from __future__ import annotations
 
+import json
 import threading
 from typing import Any
 
 from ._processor import PostprocessorBase, log
 from ._profile import ProcessResult
+
+_MAX_TOOL_ROUNDS = 10
 
 
 class LocalBackend(PostprocessorBase):
@@ -97,7 +100,7 @@ class LocalBackend(PostprocessorBase):
 
         self._llm.chat_handler = _handler
 
-    def _run(self, text: str, extra_context: str = "", extra_image: bytes | None = None, extra_image_mime: str = "", previous_session: dict | None = None) -> ProcessResult:
+    def _run(self, text: str, extra_context: str = "", extra_image: bytes | None = None, extra_image_mime: str = "", previous_session: dict | None = None, tools: list | None = None, tool_caller=None) -> ProcessResult:
         import time
         prev_msgs: list[dict] = (previous_session.get("prev_messages") or []) if previous_session else []
         # Local models are text-only for inference; always use formatted history text.
@@ -107,6 +110,9 @@ class LocalBackend(PostprocessorBase):
             messages = self._build_messages(text, extra_context, history_text=history_text)
         else:
             messages = self._build_messages(text, extra_context)
+
+        use_tools = bool(tools and tool_caller and self.profile.use_tools)
+
         with self._lock:
             if self._llm is None:
                 self._llm = self._build()
@@ -122,14 +128,53 @@ class LocalBackend(PostprocessorBase):
                 "presence_penalty": self.profile.presence_penalty,
                 "frequency_penalty": self.profile.frequency_penalty,
             }
+            if use_tools:
+                kwargs["tools"] = tools
+                kwargs["tool_choice"] = "auto"
+
             resp = self._llm.create_chat_completion(**kwargs)
+
+            # --- tool call loop -------------------------------------------
+            if use_tools:
+                for _ in range(_MAX_TOOL_ROUNDS):
+                    choice = (resp.get("choices") or [{}])[0]
+                    if choice.get("finish_reason") != "tool_calls":
+                        break
+                    message = choice.get("message") or {}
+                    tool_calls = message.get("tool_calls") or []
+                    if not tool_calls:
+                        break
+                    messages.append({
+                        "role": "assistant",
+                        "content": message.get("content"),
+                        "tool_calls": tool_calls,
+                    })
+                    for tc in tool_calls:
+                        fn = tc.get("function") or {}
+                        fn_name = fn.get("name", "")
+                        try:
+                            fn_args = json.loads(fn.get("arguments", "{}"))
+                        except json.JSONDecodeError:
+                            fn_args = {}
+                        result_str = tool_caller(fn_name, fn_args)
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc.get("id", ""),
+                            "content": result_str,
+                        })
+                    kwargs["messages"] = messages
+                    resp = self._llm.create_chat_completion(**kwargs)
+
         # llama-cpp-python keeps thinking inline in ``content``; the
         # display/paste split is done downstream via ``paste_strip_regex``.
         content = resp["choices"][0]["message"]["content"].strip()
         user_msg = self._build_user_history_entry(
             self.profile.user_template.format(text=text), extra_context, extra_image, extra_image_mime
         )
-        new_prev_messages = prev_msgs + [user_msg, {"role": "assistant", "content": content}]
+        if use_tools:
+            new_prev_messages = messages[1:] + [{"role": "assistant", "content": content}]
+        else:
+            new_prev_messages = prev_msgs + [user_msg, {"role": "assistant", "content": content}]
         session_data = {
             "backend": "local",
             "prev_messages": new_prev_messages,

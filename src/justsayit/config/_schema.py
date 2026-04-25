@@ -272,6 +272,9 @@ class Config:
     filters_path: Path = field(default_factory=lambda: _lazy_config_dir() / "filters.json")
     # File path for post-LLM normalization filters (applied after LLM, before paste).
     after_llm_filters_path: Path = field(default_factory=lambda: _lazy_config_dir() / "after_LLM_filters.json")
+    # File path for custom tool definitions (JSON array). Used by LLM backends
+    # that support function calling. An empty array or missing file disables tools.
+    tools_path: Path = field(default_factory=lambda: _lazy_config_dir() / "tools.json")
 
 
 def _lazy_config_dir() -> Path:

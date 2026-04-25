@@ -595,3 +595,36 @@ def _default_after_llm_filter_chain() -> list[dict]:
             "enabled": False,
         },
     ]
+
+
+def ensure_tools_file(path: Path | None = None) -> Path:
+    """Write an example ``tools.json`` if it doesn't exist. Returns the path.
+
+    The file starts as an empty array so no tools are active by default.
+    Users add tool objects to enable function calling from the LLM.
+    """
+    if path is None:
+        path = config_dir() / "tools.json"
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        example = [
+            {
+                "_comment": "Remove this entry and add your own tools. Each tool needs name, description, parameters (JSON Schema), and exec (shell command with {param} placeholders).",
+                "name": "open_url",
+                "description": "Open a URL in the default web browser",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "url": {
+                            "type": "string",
+                            "description": "The URL to open",
+                        }
+                    },
+                    "required": ["url"],
+                },
+                "exec": "xdg-open {url}",
+                "enabled": False,
+            }
+        ]
+        path.write_text(json.dumps(example, indent=2) + "\n", encoding="utf-8")
+    return path

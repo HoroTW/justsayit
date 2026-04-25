@@ -50,7 +50,7 @@ class ResponsesBackend(PostprocessorBase):
                 result.append({"role": "assistant", "content": items})
         return result
 
-    def _run(self, text: str, extra_context: str = "", extra_image: bytes | None = None, extra_image_mime: str = "", previous_session: dict | None = None) -> ProcessResult:
+    def _run(self, text: str, extra_context: str = "", extra_image: bytes | None = None, extra_image_mime: str = "", previous_session: dict | None = None, tools: list | None = None, tool_caller=None) -> ProcessResult:
         """OpenAI Responses API POST (/v1/responses).
 
         The static system prompt goes in ``instructions`` (cached prefix);

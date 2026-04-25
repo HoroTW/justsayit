@@ -312,6 +312,8 @@ class PostprocessorBase:
         extra_image: bytes | None = None,
         extra_image_mime: str = "",
         previous_session: dict | None = None,
+        tools: list | None = None,
+        tool_caller=None,
     ) -> ProcessResult:
         raise NotImplementedError
 
@@ -323,6 +325,8 @@ class PostprocessorBase:
         extra_image: bytes | None = None,
         extra_image_mime: str = "",
         previous_session: dict | None = None,
+        tools: list | None = None,
+        tool_caller=None,
     ) -> ProcessResult:
         """Run the LLM on *text* and return the result including any reasoning.
 
@@ -336,8 +340,11 @@ class PostprocessorBase:
         ``previous_session`` carries the session.json payload when continue
         mode is active; backends use it to prepend history or chain via
         ``previous_response_id``.
+        ``tools`` is a list of OpenAI-format tool dicts; ``tool_caller`` is
+        a callable(name, params) → str that executes tools and returns results.
+        Both are optional — backends that don't support function calling ignore them.
         """
-        result = self._run(text, extra_context, extra_image, extra_image_mime, previous_session)
+        result = self._run(text, extra_context, extra_image, extra_image_mime, previous_session, tools, tool_caller)
         if not result.text:
             result = ProcessResult(text=text, reasoning=result.reasoning, session_data=result.session_data)
         return result
