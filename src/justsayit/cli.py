@@ -141,6 +141,9 @@ class App:
         self._continue_window_active: bool = False
         self._continue_this_recording: bool = False
         self._continue_timer_id: int | None = None
+        # Assistant mode: overlay stays open after results; every recording
+        # continues the previous LLM session (is_continue always True).
+        self._assistant_mode: bool = False
         # Tray LLM radio items — stored here (not captured in a closure)
         # so _apply_llm_profile can refresh their checked state from
         # outside the tray setup (e.g. from the toggle-ex D-Bus action).
@@ -270,7 +273,7 @@ class App:
             prev = prev_state[0]
             prev_state[0] = state
             if prev is State.IDLE and state in (State.VALIDATING, State.MANUAL):
-                self._continue_this_recording = self._continue_window_active
+                self._continue_this_recording = self._continue_window_active or self._assistant_mode
                 if self._clipboard_context_arm_next:
                     # CLI asked to arm *this* recording. Promote the
                     # pending flag to _armed here, where we're
@@ -723,6 +726,12 @@ class App:
         else:
             self._activate_continue_window()
 
+    def _toggle_assistant_mode(self) -> None:
+        self._assistant_mode = not self._assistant_mode
+        log.info("assistant mode → %s", "on" if self._assistant_mode else "off")
+        if self.overlay is not None:
+            self.overlay.push_assistant_mode(self._assistant_mode)
+
     def _reset_continue_timer(self) -> None:
         if self._continue_timer_id is not None:
             GLib.source_remove(self._continue_timer_id)
@@ -937,6 +946,7 @@ class App:
                 on_abort=_on_overlay_abort,
                 on_toggle_clipboard_context=self._toggle_clipboard_context,
                 on_toggle_continue_window=self._toggle_continue_window,
+                on_toggle_assistant_mode=self._toggle_assistant_mode,
             )
             # Explicitly hidden until the engine reports a non-idle state.
             self.overlay.set_visible(False)
