@@ -157,6 +157,12 @@ class PostprocessProfile:
     # "low" | "high" = force detail tier. "original" = full resolution (5.4+).
     image_detail: str = "auto"
 
+    # --- Tools (function calling) -------------------------------------------
+    # When True (default) and tools are defined in tools.json, the LLM is
+    # given the tool definitions and may call them. Set to false in a profile
+    # to suppress tool use even when tools are loaded.
+    use_tools: bool = True
+
     def __post_init__(self) -> None:
         # Auto-infer remote backend when endpoint is set and base wasn't
         # explicitly bumped off the default.

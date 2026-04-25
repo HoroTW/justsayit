@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from justsayit.postprocess import PostprocessorBase
     from justsayit.overlay import OverlayWindow
     from justsayit.paste import Paster
+    from justsayit.tools import ToolDefinition
 
 log = logging.getLogger(__name__)
 
@@ -66,6 +67,7 @@ class SegmentPipeline:
         self.after_llm_filters: list = after_llm_filters or []
         self.postprocessor: "PostprocessorBase | None" = None  # set externally
         self.overlay: "OverlayWindow | None" = None             # set externally
+        self.tool_definitions: "list[ToolDefinition]" = []     # set externally
         self._last_transcription_time: float | None = None
 
     def handle(self, seg: "Segment", *, consume_clipboard_fn=None, is_continue: bool = False) -> None:
@@ -127,12 +129,30 @@ class SegmentPipeline:
                     )
                 else:
                     log.info("continue: no previous session found — starting fresh")
+            tools = None
+            tool_caller = None
+            if self.tool_definitions and getattr(pp.profile, "use_tools", True):
+                from justsayit.tools import execute_tool
+                tools = [td.to_openai_format() for td in self.tool_definitions]
+                _overlay = self.overlay
+                _tools_by_name = {td.name: td for td in self.tool_definitions}
+                def _call_tool(name: str, params: dict) -> str:
+                    if _overlay is not None:
+                        _overlay.push_tool_call(name, params)
+                    td = _tools_by_name.get(name)
+                    if td is None:
+                        log.warning("tool %r called but not defined", name)
+                        return f"Error: tool '{name}' is not defined."
+                    return execute_tool(td, params)
+                tool_caller = _call_tool
             t_llm0 = time.monotonic()
             try:
                 result = pp.process_with_reasoning(
                     final, extra_context=extra_context,
                     extra_image=extra_image, extra_image_mime=extra_image_mime,
                     previous_session=previous_session,
+                    tools=tools,
+                    tool_caller=tool_caller,
                 )
                 t_llm1 = time.monotonic()
                 log.info("LLM call took %.0fms", (t_llm1 - t_llm0) * 1000)

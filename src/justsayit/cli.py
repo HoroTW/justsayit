@@ -52,6 +52,7 @@ from justsayit.config import (
     save_config,
 )
 from justsayit.filters import load_filters
+from justsayit.tools import load_tools
 from justsayit.model import ensure_models, ensure_vad
 from justsayit.postprocess import (
     KNOWN_LLM_MODELS,
@@ -181,6 +182,11 @@ class App:
                 len(self.after_llm_filters),
                 self.cfg.after_llm_filters_path,
             )
+
+    def setup_tools(self) -> None:
+        tool_defs = load_tools(self.cfg.tools_path)
+        if self.pipeline is not None:
+            self.pipeline.tool_definitions = tool_defs
 
     def setup_transcriber(self) -> None:
         self.transcriber = make_transcriber(self.cfg, self.model_paths)
@@ -944,6 +950,7 @@ class App:
                 self.setup_transcriber()
                 if self.pipeline is not None:
                     self.pipeline.overlay = self.overlay
+                self.setup_tools()
                 self.setup_postprocessor()
                 self.setup_sound()
                 self.setup_audio()

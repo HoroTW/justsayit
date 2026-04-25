@@ -63,6 +63,8 @@ class _RecordingPostprocessor:
         extra_image=None,
         extra_image_mime: str = "",
         previous_session=None,
+        tools=None,
+        tool_caller=None,
     ) -> ProcessResult:
         self.calls.append({"text": text, "previous_session": previous_session})
         return ProcessResult(text=self._text, session_data=self._session_data)
@@ -177,7 +179,7 @@ def test_pipeline_does_not_save_on_llm_exception():
     cfg = Config()
 
     class _RaisingPP:
-        def process_with_reasoning(self, text, *, extra_context="", extra_image=None, extra_image_mime="", previous_session=None):
+        def process_with_reasoning(self, text, *, extra_context="", extra_image=None, extra_image_mime="", previous_session=None, tools=None, tool_caller=None):
             raise RuntimeError("boom")
 
         def strip_for_paste(self, text):

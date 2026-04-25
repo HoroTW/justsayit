@@ -391,6 +391,15 @@ class OverlayWindow(Gtk.ApplicationWindow):
             priority=GLib.PRIORITY_DEFAULT,
         )
 
+    def push_tool_call(self, name: str, params: dict) -> None:
+        """Show a tool-call annotation in the LLM text area. Called from the
+        transcription thread during the tool-call loop before the final answer
+        is ready. Thread-safe via GLib.idle_add."""
+        GLib.idle_add(
+            self._apply_tool_call, name, params,
+            priority=GLib.PRIORITY_DEFAULT,
+        )
+
     def push_linger_start(self) -> None:
         GLib.idle_add(self._start_linger, priority=GLib.PRIORITY_DEFAULT)
 
@@ -531,6 +540,22 @@ class OverlayWindow(Gtk.ApplicationWindow):
         if not self.get_visible():
             self.set_visible(True)
         self.present()
+        return False
+
+    def _apply_tool_call(self, name: str, params: dict) -> bool:
+        param_str = ", ".join(f"{k}={v!r}" for k, v in params.items())
+        annotation = f"⚙ {name}({param_str})"
+        # Show in the LLM field as an intermediate status update.
+        # If the field is already showing a previous annotation, append.
+        existing = self._llm_label.get_text() if not self._llm_label.get_use_markup() else ""
+        if existing and existing not in (_LLM_WAITING,):
+            text = existing + "\n" + annotation
+        else:
+            text = annotation
+        self._llm_label.set_label(text)
+        if not self._llm_label.get_visible():
+            self._sep2.set_visible(True)
+            self._llm_label.set_visible(True)
         return False
 
     def _apply_llm_text(self, text: str, thought: str = "") -> bool:

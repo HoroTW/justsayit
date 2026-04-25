@@ -20,6 +20,7 @@ from justsayit.config import (
     ensure_dirs,
     ensure_filters_file,
     ensure_after_llm_filters_file,
+    ensure_tools_file,
     load_config,
 )
 from justsayit.postprocess import (
@@ -87,6 +88,17 @@ def _write_default_config(force: bool = False, backend: str | None = None) -> No
         print(f"after-LLM filters already exist: {after_llm_filters_path}", file=sys.stderr)
     else:
         print(f"wrote {after_llm_filters_path}")
+
+    tools_path = config_dir() / "tools.json"
+    tools_pre_existed = tools_path.exists()
+    if tools_pre_existed and force:
+        tools_path.unlink()
+        tools_pre_existed = False
+    ensure_tools_file(tools_path)
+    if tools_pre_existed:
+        print(f"tools already exist: {tools_path}", file=sys.stderr)
+    else:
+        print(f"wrote {tools_path}")
 
 
 def _download_models_only() -> int:

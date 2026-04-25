@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import re
 import time
 from typing import Any
@@ -9,9 +10,11 @@ from typing import Any
 from ._processor import PostprocessorBase, _http_post, _log_usage, log
 from ._profile import ProcessResult
 
+_MAX_TOOL_ROUNDS = 10
+
 
 class RemoteBackend(PostprocessorBase):
-    def _run(self, text: str, extra_context: str = "", extra_image: bytes | None = None, extra_image_mime: str = "", previous_session: dict | None = None) -> ProcessResult:
+    def _run(self, text: str, extra_context: str = "", extra_image: bytes | None = None, extra_image_mime: str = "", previous_session: dict | None = None, tools: list | None = None, tool_caller=None) -> ProcessResult:
         """OpenAI-compatible /chat/completions POST."""
         api_key = self._require_api_key()
         if not self.profile.model:
@@ -66,6 +69,11 @@ class RemoteBackend(PostprocessorBase):
         if self.profile.chat_template_kwargs:
             body["chat_template_kwargs"] = dict(self.profile.chat_template_kwargs)
 
+        use_tools = bool(tools and tool_caller and self.profile.use_tools)
+        if use_tools:
+            body["tools"] = tools
+            body["tool_choice"] = "auto"
+
         data = _http_post(
             url,
             body,
@@ -75,6 +83,48 @@ class RemoteBackend(PostprocessorBase):
             request_timeout=self.profile.request_timeout,
             label="remote LLM",
         )
+
+        # --- tool call loop ------------------------------------------------
+        if use_tools:
+            for _ in range(_MAX_TOOL_ROUNDS):
+                choices = data.get("choices") or []
+                if not choices:
+                    break
+                message = choices[0].get("message") or {}
+                tool_calls = message.get("tool_calls") or []
+                if not tool_calls:
+                    break
+                # Append the assistant message (with tool_calls) to history.
+                messages.append({
+                    "role": "assistant",
+                    "content": message.get("content"),
+                    "tool_calls": tool_calls,
+                })
+                # Execute each tool and feed results back.
+                for tc in tool_calls:
+                    fn = tc.get("function") or {}
+                    fn_name = fn.get("name", "")
+                    try:
+                        fn_args = json.loads(fn.get("arguments", "{}"))
+                    except json.JSONDecodeError:
+                        fn_args = {}
+                    result_str = tool_caller(fn_name, fn_args)
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.get("id", ""),
+                        "content": result_str,
+                    })
+                body["messages"] = messages
+                data = _http_post(
+                    url,
+                    body,
+                    {"Authorization": f"Bearer {api_key}"},
+                    remote_retries=self.profile.remote_retries,
+                    remote_retry_delay_seconds=self.profile.remote_retry_delay_seconds,
+                    request_timeout=self.profile.request_timeout,
+                    label="remote LLM (tool follow-up)",
+                )
+
         choices = data.get("choices") or []
         if not choices:
             raise RuntimeError(f"LLM endpoint returned no choices: {str(data)[:300]}")
@@ -92,7 +142,13 @@ class RemoteBackend(PostprocessorBase):
         user_msg = self._build_user_history_entry(
             self.profile.user_template.format(text=text), extra_context, extra_image, extra_image_mime
         )
-        new_prev_messages = prev_msgs + [user_msg, {"role": "assistant", "content": content}]
+        new_prev_messages = messages[1:] if use_tools else prev_msgs  # preserve full tool history
+        if use_tools:
+            # messages already has the full history (system stripped at index 0);
+            # append the final assistant reply.
+            new_prev_messages = messages[1:] + [{"role": "assistant", "content": content}]
+        else:
+            new_prev_messages = prev_msgs + [user_msg, {"role": "assistant", "content": content}]
         session_data = {
             "backend": "remote",
             "prev_messages": new_prev_messages,
