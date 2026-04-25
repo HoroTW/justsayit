@@ -415,6 +415,12 @@ class OverlayWindow(Gtk.ApplicationWindow):
         bottom_row.append(self._meter)
 
         root.append(bottom_row)
+
+        # Click anywhere on the pill during result-display → pause auto-close.
+        _click_ctrl = Gtk.GestureClick.new()
+        _click_ctrl.connect("pressed", self._on_result_clicked)
+        root.add_controller(_click_ctrl)
+
         self.set_child(root)
         _install_css_once()
 
@@ -537,6 +543,16 @@ class OverlayWindow(Gtk.ApplicationWindow):
                 self._on_toggle_clipboard_context()
             except Exception:
                 log.exception("on_toggle_clipboard_context callback raised")
+
+    def _on_result_clicked(self, _gesture, _n_press, _x, _y) -> None:
+        """Clicking the pill during result display activates assistant mode."""
+        if self._detected_label.get_visible() and not self._assistant_mode:
+            log.debug("result clicked — activating assistant mode")
+            if self._on_toggle_assistant_mode is not None:
+                try:
+                    self._on_toggle_assistant_mode()
+                except Exception:
+                    log.exception("on_toggle_assistant_mode callback raised")
 
     def _on_abort_clicked(self, _button: Gtk.Button) -> None:
         """× button: abort an active recording (discard, no paste). If
@@ -666,7 +682,7 @@ class OverlayWindow(Gtk.ApplicationWindow):
         if not self._llm_label.get_visible():
             self._sep2.set_visible(True)
             self._llm_label.set_visible(True)
-        if self._assistant_mode and text:
+        if text:
             self._copy_result_button.set_visible(True)
         return False
 
@@ -713,7 +729,6 @@ class OverlayWindow(Gtk.ApplicationWindow):
             self._assistant_button.set_tooltip_text(
                 "Toggle assistant mode — overlay stays open for interactive chat"
             )
-            self._copy_result_button.set_visible(False)
         return False
 
     def _start_linger(self) -> bool:
