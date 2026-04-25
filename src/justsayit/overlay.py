@@ -128,6 +128,44 @@ window.justsayit-overlay {
 .justsayit-cont-button.armed:hover {
     color: rgba(255, 120, 120, 0.95);
 }
+.justsayit-assistant-button {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    padding: 0 4px;
+    margin: 0;
+    min-height: 16px;
+    min-width: 16px;
+    color: rgba(255, 255, 255, 0.55);
+    font-family: "Inter", "Cantarell", "Noto Sans", sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+}
+.justsayit-assistant-button:hover {
+    color: rgba(200, 180, 255, 0.95);
+}
+.justsayit-assistant-button.armed {
+    color: rgba(180, 140, 255, 1.0);
+}
+.justsayit-assistant-button.armed:hover {
+    color: rgba(255, 120, 120, 0.95);
+}
+.justsayit-copy-result-button {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    padding: 0 4px;
+    margin: 0;
+    min-height: 16px;
+    min-width: 16px;
+    color: rgba(180, 255, 200, 0.75);
+    font-family: "Inter", "Cantarell", "Noto Sans", sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+}
+.justsayit-copy-result-button:hover {
+    color: rgba(180, 255, 200, 1.0);
+}
 .justsayit-update-badge {
     color: rgba(255, 215, 90, 0.95);
     font-family: "Inter", "Cantarell", "Noto Sans", sans-serif;
@@ -187,6 +225,7 @@ class OverlayWindow(Gtk.ApplicationWindow):
         on_abort: Callable[[], None] | None = None,
         on_toggle_clipboard_context: Callable[[], None] | None = None,
         on_toggle_continue_window: Callable[[], None] | None = None,
+        on_toggle_assistant_mode: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(application=application)
         self._cfg = cfg
@@ -194,10 +233,13 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._on_abort = on_abort
         self._on_toggle_clipboard_context = on_toggle_clipboard_context
         self._on_toggle_continue_window = on_toggle_continue_window
+        self._on_toggle_assistant_mode = on_toggle_assistant_mode
 
         self._level = 0.0
         self._level_smoothed = 0.0
         self._pulse = 0.0
+        self._assistant_mode = False
+        self._last_llm_text = ""
 
         self._dot_color_override: _DotColor | None = None
         self._linger_source: int | None = None
@@ -286,6 +328,26 @@ class OverlayWindow(Gtk.ApplicationWindow):
         # ``_apply_state`` when entering / leaving ``State.MANUAL``.
         self._clip_button.set_visible(False)
         end_box.append(self._clip_button)
+
+        # Copy-result button: copies the last LLM response to clipboard.
+        # Visible only in assistant mode after a result is shown.
+        self._copy_result_button = Gtk.Button(label="📄")
+        self._copy_result_button.add_css_class("justsayit-copy-result-button")
+        self._copy_result_button.set_tooltip_text("Copy response to clipboard")
+        self._copy_result_button.connect("clicked", self._on_copy_result_clicked)
+        self._copy_result_button.set_visible(False)
+        end_box.append(self._copy_result_button)
+
+        # Assistant-mode toggle: keeps the overlay open after each result
+        # so it can be used as an interactive chat. Arms continue-session
+        # automatically for every recording while active.
+        self._assistant_button = Gtk.Button(label="💬")
+        self._assistant_button.add_css_class("justsayit-assistant-button")
+        self._assistant_button.set_tooltip_text(
+            "Toggle assistant mode — overlay stays open for interactive chat"
+        )
+        self._assistant_button.connect("clicked", self._on_assistant_clicked)
+        end_box.append(self._assistant_button)
 
         self._abort_button = Gtk.Button(label="×")
         self._abort_button.add_css_class("justsayit-abort-button")
@@ -421,6 +483,14 @@ class OverlayWindow(Gtk.ApplicationWindow):
             priority=GLib.PRIORITY_DEFAULT,
         )
 
+    def push_assistant_mode(self, active: bool) -> None:
+        """Enable or disable assistant mode. When active the overlay will not
+        auto-dismiss after showing a result; the copy-result button appears."""
+        GLib.idle_add(
+            self._apply_assistant_mode, active,
+            priority=GLib.PRIORITY_DEFAULT,
+        )
+
     # ── User actions ─────────────────────────────────────────────────────────
 
     def _on_cont_clicked(self, _button: Gtk.Button) -> None:
@@ -429,6 +499,28 @@ class OverlayWindow(Gtk.ApplicationWindow):
                 self._on_toggle_continue_window()
             except Exception:
                 log.exception("on_toggle_continue_window callback raised")
+
+    def _on_assistant_clicked(self, _button: Gtk.Button) -> None:
+        if self._on_toggle_assistant_mode is not None:
+            try:
+                self._on_toggle_assistant_mode()
+            except Exception:
+                log.exception("on_toggle_assistant_mode callback raised")
+
+    def _on_copy_result_clicked(self, _button: Gtk.Button) -> None:
+        if not self._last_llm_text:
+            return
+        import subprocess
+        try:
+            subprocess.run(
+                ["wl-copy"],
+                input=self._last_llm_text.encode("utf-8"),
+                timeout=3.0,
+                check=True,
+            )
+            log.info("copied LLM result to clipboard (%d chars)", len(self._last_llm_text))
+        except Exception:
+            log.exception("failed to copy result to clipboard")
 
     def _on_clip_clicked(self, _button: Gtk.Button) -> None:
         if self._on_toggle_clipboard_context is not None:
@@ -534,6 +626,7 @@ class OverlayWindow(Gtk.ApplicationWindow):
         return False
 
     def _apply_llm_text(self, text: str, thought: str = "") -> bool:
+        self._last_llm_text = text
         if thought:
             from html import escape
             # Blue-green / teal italic for the thought, then a newline and
@@ -548,6 +641,8 @@ class OverlayWindow(Gtk.ApplicationWindow):
         if not self._llm_label.get_visible():
             self._sep2.set_visible(True)
             self._llm_label.set_visible(True)
+        if self._assistant_mode and text:
+            self._copy_result_button.set_visible(True)
         return False
 
     def _apply_update_available(self, latest_version: str) -> bool:
@@ -581,7 +676,24 @@ class OverlayWindow(Gtk.ApplicationWindow):
             self._cont_button.set_tooltip_text("Continue previous LLM session (starts 5 min window)")
         return False
 
+    def _apply_assistant_mode(self, active: bool) -> bool:
+        self._assistant_mode = active
+        if active:
+            self._assistant_button.add_css_class("armed")
+            self._assistant_button.set_tooltip_text(
+                "Assistant mode active — click to deactivate"
+            )
+        else:
+            self._assistant_button.remove_css_class("armed")
+            self._assistant_button.set_tooltip_text(
+                "Toggle assistant mode — overlay stays open for interactive chat"
+            )
+            self._copy_result_button.set_visible(False)
+        return False
+
     def _start_linger(self) -> bool:
+        if self._assistant_mode:
+            return False  # stay open until manually dismissed
         self._cancel_linger()
         ms = self._cfg.overlay.result_linger_ms
         if ms > 0:
@@ -602,6 +714,7 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._hide_text_areas()
         self._collapse_window()
         self.set_visible(False)
+        self._last_llm_text = ""
         # An audio-thread IDLE callback may still be queued behind us
         # (× abort during RECORDING/MANUAL, or skip-short / empty
         # transcription firing push_hide before the engine state event
@@ -618,6 +731,7 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._sep2.set_visible(False)
         self._llm_label.set_visible(False)
         self._sep_bottom.set_visible(False)
+        self._copy_result_button.set_visible(False)
         self._state_label.set_visible(True)
 
     def _collapse_window(self) -> None:
