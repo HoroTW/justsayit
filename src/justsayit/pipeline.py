@@ -68,6 +68,7 @@ class SegmentPipeline:
         self.postprocessor: "PostprocessorBase | None" = None  # set externally
         self.overlay: "OverlayWindow | None" = None             # set externally
         self.tool_definitions: "list[ToolDefinition]" = []     # set externally
+        self.assistant_mode: bool = False                       # set externally
         self._last_transcription_time: float | None = None
 
     def handle(self, seg: "Segment", *, consume_clipboard_fn=None, is_continue: bool = False) -> None:
@@ -153,6 +154,7 @@ class SegmentPipeline:
                     previous_session=previous_session,
                     tools=tools,
                     tool_caller=tool_caller,
+                    assistant_mode=self.assistant_mode,
                 )
                 t_llm1 = time.monotonic()
                 log.info("LLM call took %.0fms", (t_llm1 - t_llm0) * 1000)
@@ -243,7 +245,7 @@ class SegmentPipeline:
         self._last_transcription_time = now
 
         print(final, flush=True)
-        if self.no_paste or not self.cfg.paste.enabled:
+        if self.no_paste or not self.cfg.paste.enabled or self.assistant_mode:
             log.info("paste disabled — text only printed")
             if self.overlay is not None:
                 self.overlay.push_linger_start()

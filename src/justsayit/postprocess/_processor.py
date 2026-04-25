@@ -182,6 +182,7 @@ class PostprocessorBase:
         extra_context: str = "",
         extra_image_provided: bool = False,
         history_text: str = "",
+        assistant_mode: bool = False,
     ) -> tuple[str, str]:
         """Return ``(static, dynamic)`` parts of the system prompt.
 
@@ -201,6 +202,13 @@ class PostprocessorBase:
             prompt = f"{prompt}\n\n# User context\n{ctx}"
 
         dynamic_parts: list[str] = []
+        if assistant_mode:
+            dynamic_parts.append(
+                "# ASSISTANT MODE\n"
+                "You are in interactive assistant mode. The user is speaking to you directly via voice. "
+                "Respond as a helpful assistant — answer questions, take actions using available tools. "
+                "Do not treat the input as transcription text to clean up; respond to the intent directly."
+            )
         if history_text:
             dynamic_parts.append(history_text)
         dynamic = self._dynamic_context()
@@ -225,25 +233,25 @@ class PostprocessorBase:
             )
         return prompt, "\n\n".join(dynamic_parts)
 
-    def _build_system_prompt(self, extra_context: str = "", history_text: str = "", extra_image_provided: bool = False) -> str:
-        static, dynamic = self._build_system_prompt_parts(extra_context, extra_image_provided=extra_image_provided, history_text=history_text)
+    def _build_system_prompt(self, extra_context: str = "", history_text: str = "", extra_image_provided: bool = False, assistant_mode: bool = False) -> str:
+        static, dynamic = self._build_system_prompt_parts(extra_context, extra_image_provided=extra_image_provided, history_text=history_text, assistant_mode=assistant_mode)
         return "\n\n".join(filter(None, [static, dynamic]))
 
     def _build_messages(
-        self, text: str, extra_context: str = "", history_text: str = "", extra_image_provided: bool = False
+        self, text: str, extra_context: str = "", history_text: str = "", extra_image_provided: bool = False, assistant_mode: bool = False
     ) -> list[dict[str, str]]:
         messages = [
-            {"role": "system", "content": self._build_system_prompt(extra_context, history_text=history_text, extra_image_provided=extra_image_provided)},
+            {"role": "system", "content": self._build_system_prompt(extra_context, history_text=history_text, extra_image_provided=extra_image_provided, assistant_mode=assistant_mode)},
             {"role": "user", "content": self.profile.user_template.format(text=text)},
         ]
         log.debug("assembled LLM system prompt:\n%s", messages[0]["content"])
         return messages
 
     def _build_messages_continued(
-        self, text: str, extra_context: str, prev_messages: list[dict], extra_image_provided: bool = False
+        self, text: str, extra_context: str, prev_messages: list[dict], extra_image_provided: bool = False, assistant_mode: bool = False
     ) -> list[dict]:
         messages = [
-            {"role": "system", "content": self._build_system_prompt(extra_context, extra_image_provided=extra_image_provided)},
+            {"role": "system", "content": self._build_system_prompt(extra_context, extra_image_provided=extra_image_provided, assistant_mode=assistant_mode)},
             *prev_messages,
             {"role": "user", "content": self.profile.user_template.format(text=text)},
         ]
@@ -314,6 +322,7 @@ class PostprocessorBase:
         previous_session: dict | None = None,
         tools: list | None = None,
         tool_caller=None,
+        assistant_mode: bool = False,
     ) -> ProcessResult:
         raise NotImplementedError
 
@@ -327,6 +336,7 @@ class PostprocessorBase:
         previous_session: dict | None = None,
         tools: list | None = None,
         tool_caller=None,
+        assistant_mode: bool = False,
     ) -> ProcessResult:
         """Run the LLM on *text* and return the result including any reasoning.
 
@@ -343,8 +353,10 @@ class PostprocessorBase:
         ``tools`` is a list of OpenAI-format tool dicts; ``tool_caller`` is
         a callable(name, params) → str that executes tools and returns results.
         Both are optional — backends that don't support function calling ignore them.
+        ``assistant_mode`` tells the model it is in interactive assistant mode
+        rather than transcription-cleanup mode.
         """
-        result = self._run(text, extra_context, extra_image, extra_image_mime, previous_session, tools, tool_caller)
+        result = self._run(text, extra_context, extra_image, extra_image_mime, previous_session, tools, tool_caller, assistant_mode)
         if not result.text:
             result = ProcessResult(text=text, reasoning=result.reasoning, session_data=result.session_data)
         return result

@@ -729,6 +729,8 @@ class App:
     def _toggle_assistant_mode(self) -> None:
         self._assistant_mode = not self._assistant_mode
         log.info("assistant mode → %s", "on" if self._assistant_mode else "off")
+        if self.pipeline is not None:
+            self.pipeline.assistant_mode = self._assistant_mode
         if self.overlay is not None:
             self.overlay.push_assistant_mode(self._assistant_mode)
 

@@ -14,7 +14,7 @@ _MAX_TOOL_ROUNDS = 10
 
 
 class RemoteBackend(PostprocessorBase):
-    def _run(self, text: str, extra_context: str = "", extra_image: bytes | None = None, extra_image_mime: str = "", previous_session: dict | None = None, tools: list | None = None, tool_caller=None) -> ProcessResult:
+    def _run(self, text: str, extra_context: str = "", extra_image: bytes | None = None, extra_image_mime: str = "", previous_session: dict | None = None, tools: list | None = None, tool_caller=None, assistant_mode: bool = False) -> ProcessResult:
         """OpenAI-compatible /chat/completions POST."""
         api_key = self._require_api_key()
         if not self.profile.model:
@@ -37,9 +37,9 @@ class RemoteBackend(PostprocessorBase):
         # prev_messages is always in canonical chat-completions format regardless
         # of which backend stored it, so _build_messages_continued works directly.
         if prev_msgs:
-            messages = self._build_messages_continued(text, extra_context, prev_msgs, extra_image_provided=has_image)
+            messages = self._build_messages_continued(text, extra_context, prev_msgs, extra_image_provided=has_image, assistant_mode=assistant_mode)
         else:
-            messages = self._build_messages(text, extra_context, extra_image_provided=has_image)
+            messages = self._build_messages(text, extra_context, extra_image_provided=has_image, assistant_mode=assistant_mode)
 
         if has_image:
             # Convert last user message from a plain string to a content list.

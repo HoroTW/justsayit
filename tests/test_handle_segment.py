@@ -74,7 +74,7 @@ class _RaisingPostprocessor:
         self.strip_calls = 0
 
     def process_with_reasoning(
-        self, text: str, *, extra_context: str = "", extra_image=None, extra_image_mime: str = "", previous_session=None, tools=None, tool_caller=None
+        self, text: str, *, extra_context: str = "", extra_image=None, extra_image_mime: str = "", previous_session=None, tools=None, tool_caller=None, assistant_mode: bool = False
     ) -> ProcessResult:
         raise RuntimeError(self.message)
 
@@ -96,7 +96,7 @@ class _StubPostprocessor:
         self.extra_contexts: list[str] = []
 
     def process_with_reasoning(
-        self, text: str, *, extra_context: str = "", extra_image=None, extra_image_mime: str = "", previous_session=None, tools=None, tool_caller=None
+        self, text: str, *, extra_context: str = "", extra_image=None, extra_image_mime: str = "", previous_session=None, tools=None, tool_caller=None, assistant_mode: bool = False
     ) -> ProcessResult:
         self.calls += 1
         self.extra_contexts.append(extra_context)
