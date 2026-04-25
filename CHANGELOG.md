@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-04-25
+
+### Added
+- **Assistant mode** (`💬` button in the overlay) — toggle to keep the overlay open after each result instead of auto-dismissing; the response is displayed but **not pasted** into the focused window; session continuation is automatically armed so every recording builds on the previous reply; clicking the result pill activates assistant mode on the fly. A 📄 copy-to-clipboard button appears alongside the result.
+- **Custom function tools** (`~/.config/justsayit/tools.json`) — define shell-backed tools in OpenAI function-calling format; the LLM can invoke them during a request (max 10 rounds). The exec string supports `{param}` substitution (shell-quoted). The overlay shows `⚙ tool_name(params)` during execution. Supported by all three backends. Profile field `use_tools = true` (default); set to `false` to opt out per profile.
+- `justsayit init` creates a commented example `tools.json`.
+
+### Fixed
+- Assistant mode injects a `# ASSISTANT MODE` section into the dynamic system prompt so the model responds conversationally rather than treating input as transcription to clean up.
+- Responses API tool follow-up used wrong item type (`function_call_result` → `function_call_output`); caused HTTP 400 on every tool call.
+
 ## [0.16.5] - 2026-04-24
 
 ### Fixed

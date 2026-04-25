@@ -38,6 +38,8 @@ Local Parakeet v3 voice dictation for Wayland.
   clean this up`. Ask for a translation, a quick rewrite, a calculation,
   a snippet of code, … without leaving the keyboard. See
   [docs/postprocessing.md#hey-computer--inline-assistant-mode](docs/postprocessing.md#hey-computer--inline-assistant-mode).
+- **Assistant mode** (`💬` button in the overlay) — switch the overlay into a persistent chat interface: results stay on screen (no auto-dismiss), nothing is pasted into the focused window, and every recording automatically continues the previous LLM session. Click the result pill to activate on the fly. A 📄 button copies the response to the clipboard.
+- **Custom function tools** (`~/.config/justsayit/tools.json`) — define shell-backed tools in OpenAI function-calling format. The LLM calls them during a request (up to 10 rounds); the overlay shows `⚙ tool_name(params)` while executing. `{param}` placeholders in the `exec` string are shell-quoted automatically. Works with all three LLM backends. See `justsayit init` for an example stub.
 - **Add current clipboard as additional context** — click the 📋 button
   on the overlay during a manual recording to feed your current
   clipboard contents into the next LLM call as one-shot context, then
