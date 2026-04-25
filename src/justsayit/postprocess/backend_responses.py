@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import base64
+import json
 import re
 import time
 from typing import Any
+
+_MAX_TOOL_ROUNDS = 10
 
 from ._processor import PostprocessorBase, _http_post, _log_usage, log
 from ._profile import ProcessResult
@@ -122,21 +125,72 @@ class ResponsesBackend(PostprocessorBase):
             body["prompt_cache_retention"] = self.profile.prompt_cache_retention
         if self.profile.reasoning_effort:
             body["reasoning"] = {"effort": self.profile.reasoning_effort}
+        # Responses API uses flat tool format: {"type":"function","name":...}
+        # (chat/completions nests under a "function" key — different shape).
+        use_custom_tools = bool(tools and tool_caller and self.profile.use_tools)
+        body_tools: list[dict] = []
         if self.profile.responses_web_search:
             trigger = self.profile.responses_web_search_trigger
             if not trigger or extra_context or has_image or re.search(trigger, text):
-                body["tools"] = [{"type": "web_search"}]
+                body_tools.append({"type": "web_search"})
+        if use_custom_tools:
+            for t in (tools or []):
+                fn = t.get("function", {})
+                body_tools.append({
+                    "type": "function",
+                    "name": fn.get("name", ""),
+                    "description": fn.get("description", ""),
+                    "parameters": fn.get("parameters", {}),
+                })
+        if body_tools:
+            body["tools"] = body_tools
 
         url = self.profile.endpoint.rstrip("/") + "/responses"
+        headers = {"Authorization": f"Bearer {api_key}"}
         data = _http_post(
-            url,
-            body,
-            {"Authorization": f"Bearer {api_key}"},
+            url, body, headers,
             remote_retries=self.profile.remote_retries,
             remote_retry_delay_seconds=self.profile.remote_retry_delay_seconds,
             request_timeout=self.profile.request_timeout,
             label="Responses API",
         )
+
+        # Custom tool-call loop.  Responses API returns function_call items in
+        # output[]; follow up with previous_response_id + function_call_result.
+        if use_custom_tools:
+            for _ in range(_MAX_TOOL_ROUNDS):
+                fc_items = [i for i in (data.get("output") or []) if i.get("type") == "function_call"]
+                if not fc_items:
+                    break
+                tool_results: list[dict] = []
+                for fc in fc_items:
+                    fn_name = fc.get("name", "")
+                    call_id = fc.get("call_id", "")
+                    try:
+                        fn_args = json.loads(fc.get("arguments", "{}"))
+                    except Exception:
+                        fn_args = {}
+                    result_str = tool_caller(fn_name, fn_args)
+                    tool_results.append({
+                        "type": "function_call_result",
+                        "call_id": call_id,
+                        "output": result_str,
+                    })
+                followup: dict[str, Any] = {
+                    "model": self.profile.model,
+                    "previous_response_id": data.get("id", ""),
+                    "input": tool_results,
+                    "max_output_tokens": self.profile.max_tokens,
+                }
+                if self.profile.reasoning_effort:
+                    followup["reasoning"] = {"effort": self.profile.reasoning_effort}
+                data = _http_post(
+                    url, followup, headers,
+                    remote_retries=self.profile.remote_retries,
+                    remote_retry_delay_seconds=self.profile.remote_retry_delay_seconds,
+                    request_timeout=self.profile.request_timeout,
+                    label="Responses API (tool follow-up)",
+                )
 
         output_items = data.get("output") or []
         text_parts = []
