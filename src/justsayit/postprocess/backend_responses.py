@@ -172,7 +172,7 @@ class ResponsesBackend(PostprocessorBase):
                         fn_args = {}
                     result_str = tool_caller(fn_name, fn_args)
                     tool_results.append({
-                        "type": "function_call_result",
+                        "type": "function_call_output",
                         "call_id": call_id,
                         "output": result_str,
                     })
