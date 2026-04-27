@@ -4,14 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-04-27
+
 ### Added
-- **Local LLM stash** — switching away from a local profile (to remote, off, or another local) stashes the loaded model in memory instead of unloading it; switching back reattaches instantly with no warmup delay. Stashed and active local profiles show a `*` suffix in the tray submenu.
-- **"Unload local LLM"** tray item (LLM submenu, only visible while a local model is in memory) — drops the stash and falls back to the last-used remote profile or off.
+- **Local LLM stash** — switching away from a local profile stashes the loaded model; switching back reattaches instantly. Stashed and active local profiles show a `*` suffix in the tray submenu.
+- **"Unload local LLM"** tray item (main menu, only when a local model is in memory) — drops the stash and falls back to the last-used remote profile or off.
 - `justsayit unload-llm` subcommand — same as the tray item, for scripting.
+- **Overlay LLM profile label** — tiny top-left line shows the active backend and profile (`local/gemma4-cleanup`, `responses/gpt-5.4-mini`, …) in both the recording pill and the result view; shows `direct (no LLM)` when postprocessing is off.
 
 ### Fixed
-- LLM warmup now runs on a background thread; recording starts immediately instead of waiting for the model to finish loading.
-- `justsayit toggle --profile <same>` no longer rebuilds the postprocessor when the profile is already active.
+- LLM warmup runs on a background thread; recording starts immediately.
+- `justsayit toggle --profile <same>` no longer rebuilds the postprocessor when already active.
+- Gemma 4 native tool call tokens (`<|tool_call>…<tool_call|>`) now parsed and executed correctly.
+- Tool injection gated to button assistant mode only; "Hey Computer" inline calls are unaffected.
+- Clicking the result pill now cancels auto-dismiss only; assistant mode must be activated explicitly via 💬.
 
 ## [0.17.0] - 2026-04-25
 
