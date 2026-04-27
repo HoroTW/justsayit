@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 from typing import Any
 
@@ -9,6 +10,47 @@ from ._processor import PostprocessorBase, log
 from ._profile import ProcessResult
 
 _MAX_TOOL_ROUNDS = 10
+
+# Gemma 4 (and similar models) emit tool calls as native tokens rather than
+# letting llama-cpp-python surface them in finish_reason="tool_calls".
+# The token boundaries and the special quote token are model-specific.
+_NATIVE_TOOL_CALL_RE = re.compile(r"<\|tool_call\>(.*?)<tool_call\|>", re.DOTALL)
+_GEMMA_QUOTE = "<|\"|>"  # special token Gemma uses instead of "
+
+
+def _extract_native_tool_calls(content: str) -> list[dict]:
+    """Parse Gemma-style native tool call tokens from raw LLM content.
+
+    Handles two common shapes after replacing the quote token with ``"``:
+    - ``{"name": "fn", "arguments": {...}}``  (JSON object)
+    - ``fn_name{key:"value", ...}``            (bare-name + JSON-like body)
+    """
+    results = []
+    for raw in _NATIVE_TOOL_CALL_RE.findall(content):
+        normalized = raw.replace(_GEMMA_QUOTE, '"').strip()
+        # Shape 1: full JSON object
+        try:
+            obj = json.loads(normalized)
+            if isinstance(obj, dict) and "name" in obj:
+                results.append({"name": obj["name"], "arguments": obj.get("arguments") or {}})
+                continue
+        except json.JSONDecodeError:
+            pass
+        # Shape 2: [namespace:]fn_name{...} with possibly unquoted keys
+        # Gemma sometimes emits "ns:function_name{args}" where the colon-
+        # separated prefix is a namespace (often the same word as the function).
+        m = re.match(r'^(?:\w+:)?(\w+)\s*(\{.*\})$', normalized, re.DOTALL)
+        if m:
+            fn_name, args_str = m.group(1), m.group(2)
+            # Quote bare keys: {word: → {"word":
+            args_fixed = re.sub(r'(?<!")\b(\w+)\b(?=\s*:)', r'"\1"', args_str)
+            try:
+                results.append({"name": fn_name, "arguments": json.loads(args_fixed)})
+                continue
+            except json.JSONDecodeError:
+                pass
+        log.debug("could not parse native tool call body: %r", raw)
+    return results
 
 
 class LocalBackend(PostprocessorBase):
@@ -138,15 +180,36 @@ class LocalBackend(PostprocessorBase):
             if use_tools:
                 for _ in range(_MAX_TOOL_ROUNDS):
                     choice = (resp.get("choices") or [{}])[0]
-                    if choice.get("finish_reason") != "tool_calls":
-                        break
                     message = choice.get("message") or {}
                     tool_calls = message.get("tool_calls") or []
-                    if not tool_calls:
-                        break
+
+                    if choice.get("finish_reason") != "tool_calls" or not tool_calls:
+                        # Fallback: some models (e.g. Gemma 4) emit tool calls
+                        # as native tokens in content instead of the structured
+                        # tool_calls field, leaving finish_reason="stop".
+                        native = _extract_native_tool_calls(message.get("content") or "")
+                        if not native:
+                            break
+                        tool_calls = [
+                            {
+                                "id": f"native_{i}",
+                                "function": {
+                                    "name": tc["name"],
+                                    "arguments": json.dumps(tc["arguments"]),
+                                },
+                            }
+                            for i, tc in enumerate(native)
+                        ]
+
+                    # Strip native tool call tokens from the assistant turn
+                    # before appending to history so the model doesn't see
+                    # them again on the follow-up call.
+                    raw_content = message.get("content") or ""
+                    clean_content = _NATIVE_TOOL_CALL_RE.sub("", raw_content).strip() or None
+
                     messages.append({
                         "role": "assistant",
-                        "content": message.get("content"),
+                        "content": clean_content,
                         "tool_calls": tool_calls,
                     })
                     for tc in tool_calls:

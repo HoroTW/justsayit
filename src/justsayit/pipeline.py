@@ -132,7 +132,7 @@ class SegmentPipeline:
                     log.info("continue: no previous session found — starting fresh")
             tools = None
             tool_caller = None
-            if self.tool_definitions and getattr(pp.profile, "use_tools", True):
+            if self.tool_definitions and getattr(pp.profile, "use_tools", True) and self.assistant_mode:
                 from justsayit.tools import execute_tool
                 tools = [td.to_openai_format() for td in self.tool_definitions]
                 _overlay = self.overlay
