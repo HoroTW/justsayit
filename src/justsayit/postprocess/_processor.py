@@ -205,9 +205,11 @@ class PostprocessorBase:
         if assistant_mode:
             dynamic_parts.append(
                 "# ASSISTANT MODE\n"
-                "You are in interactive assistant mode. The user is speaking to you directly via voice. "
+                "Hey Computer — the user activated interactive assistant mode via the UI button. "
+                "Every input from here on is addressed to you directly (treat it as if the user said "
+                "'Hey Computer, …' before each message). "
                 "Respond as a helpful assistant — answer questions, take actions using available tools. "
-                "Do not treat the input as transcription text to clean up; respond to the intent directly."
+                "Do not treat the input as transcription text to clean up."
             )
         if history_text:
             dynamic_parts.append(history_text)
