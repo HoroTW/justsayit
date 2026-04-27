@@ -56,6 +56,12 @@ window.justsayit-overlay {
     font-size: 11px;
     font-weight: 500;
 }
+.justsayit-profile-label {
+    color: rgba(180, 180, 210, 0.45);
+    font-family: "Inter", "Cantarell", "Noto Sans", sans-serif;
+    font-size: 9px;
+    font-weight: 400;
+}
 .justsayit-detected-label {
     color: rgba(255, 255, 255, 0.92);
     font-family: "Inter", "Cantarell", "Noto Sans", sans-serif;
@@ -187,7 +193,7 @@ _STATE_STYLE = {
     State.IDLE: ("idle", _DotColor(0.50, 0.50, 0.55)),
     State.VALIDATING: ("listening…", _DotColor(0.95, 0.82, 0.26)),
     State.RECORDING: ("recording", _DotColor(0.95, 0.30, 0.30)),
-    State.MANUAL: ("recording (manual)", _DotColor(0.40, 0.72, 1.00)),
+    State.MANUAL: ("recording…", _DotColor(0.40, 0.72, 1.00)),
 }
 
 _DOT_RESULT = _DotColor(0.35, 0.85, 0.45)   # green during result / linger
@@ -283,11 +289,24 @@ class OverlayWindow(Gtk.ApplicationWindow):
         top_row = Gtk.CenterBox()
         top_row.set_hexpand(True)
 
+        start_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+        start_box.set_valign(Gtk.Align.CENTER)
+        start_box.set_margin_end(11)
+
+        self._profile_label = Gtk.Label(label="")
+        self._profile_label.add_css_class("justsayit-profile-label")
+        self._profile_label.set_xalign(0.0)
+        self._profile_label.set_halign(Gtk.Align.START)
+        self._profile_label.set_visible(False)
+        start_box.append(self._profile_label)
+
         self._state_label = Gtk.Label(label=_STATE_STYLE[State.IDLE][0])
         self._state_label.add_css_class("justsayit-overlay-label")
         self._state_label.set_xalign(0.0)
         self._state_label.set_halign(Gtk.Align.START)
-        top_row.set_start_widget(self._state_label)
+        start_box.append(self._state_label)
+
+        top_row.set_start_widget(start_box)
 
         # Right-anchored cluster: [update badge?] [× button]. The badge
         # is hidden until the GitHub version check finds something newer
@@ -506,6 +525,14 @@ class OverlayWindow(Gtk.ApplicationWindow):
             priority=GLib.PRIORITY_DEFAULT,
         )
 
+    def push_llm_profile(self, backend: str | None, name: str | None) -> None:
+        """Show or hide the tiny LLM profile label (e.g. 'local/gemma4-cleanup').
+        Pass (None, None) to hide it when postprocessing is off."""
+        GLib.idle_add(
+            self._apply_profile_label, backend, name,
+            priority=GLib.PRIORITY_DEFAULT,
+        )
+
     # ── User actions ─────────────────────────────────────────────────────────
 
     def _on_cont_clicked(self, _button: Gtk.Button) -> None:
@@ -713,6 +740,14 @@ class OverlayWindow(Gtk.ApplicationWindow):
         else:
             self._cont_button.remove_css_class("armed")
             self._cont_button.set_tooltip_text("Continue previous LLM session (starts 5 min window)")
+        return False
+
+    def _apply_profile_label(self, backend: str | None, name: str | None) -> bool:
+        if backend and name:
+            self._profile_label.set_label(f"{backend}/{name}")
+        else:
+            self._profile_label.set_label("direct (no LLM)")
+        self._profile_label.set_visible(True)
         return False
 
     def _apply_assistant_mode(self, active: bool) -> bool:

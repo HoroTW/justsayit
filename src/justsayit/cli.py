@@ -298,6 +298,17 @@ class App:
         self._stashed_local_profile = name
         log.info("stashed local LLM (profile=%s)", name)
 
+    def _push_llm_profile(self) -> None:
+        if self.overlay is None:
+            return
+        pp = self.postprocessor
+        if pp is None:
+            self.overlay.push_llm_profile(None, None)
+        else:
+            base = pp.profile.base
+            backend = "local" if base == "builtin" else base
+            self.overlay.push_llm_profile(backend, self._active_profile_name or "?")
+
     def setup_sound(self) -> None:
         if not self.cfg.sound.enabled:
             log.info("sound effects disabled")
@@ -876,6 +887,7 @@ class App:
         if self.cfg.postprocess.enabled and self.postprocessor is not None:
             log.info("LLM profile switched to: %s", self.cfg.postprocess.profile)
         self._refresh_llm_tray_state()
+        self._push_llm_profile()
 
     def _unload_local_llm(self) -> None:
         """Drop all loaded local LLMs (active + stash) and fall back to
@@ -1100,6 +1112,7 @@ class App:
                     self.pipeline.overlay = self.overlay
                 self.setup_tools()
                 self.setup_postprocessor()
+                self._push_llm_profile()
                 self.setup_sound()
                 self.setup_audio()
                 self.setup_transcribe_thread()
