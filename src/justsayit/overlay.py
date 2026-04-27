@@ -545,14 +545,12 @@ class OverlayWindow(Gtk.ApplicationWindow):
                 log.exception("on_toggle_clipboard_context callback raised")
 
     def _on_result_clicked(self, _gesture, _n_press, _x, _y) -> None:
-        """Clicking the pill during result display activates assistant mode."""
-        if self._detected_label.get_visible() and not self._assistant_mode:
-            log.debug("result clicked — activating assistant mode")
-            if self._on_toggle_assistant_mode is not None:
-                try:
-                    self._on_toggle_assistant_mode()
-                except Exception:
-                    log.exception("on_toggle_assistant_mode callback raised")
+        """Clicking the result pill cancels the auto-dismiss so the overlay
+        stays open; the user can then decide to activate assistant mode via
+        the 💬 button."""
+        if self._detected_label.get_visible():
+            log.debug("result clicked — cancelling auto-dismiss")
+            self._cancel_linger()
 
     def _on_abort_clicked(self, _button: Gtk.Button) -> None:
         """× button: abort an active recording (discard, no paste). If
