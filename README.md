@@ -130,6 +130,7 @@ justsayit --no-paste      # print to stdout only
 justsayit init            # write default config + example filters
 justsayit download-models # pre-download models
 justsayit setup-llm       # interactive LLM model setup
+justsayit unload-llm      # drop loaded local LLM from memory (falls back to last remote or off)
 ```
 
 See [docs/configuration.md](docs/configuration.md) for activation modes,

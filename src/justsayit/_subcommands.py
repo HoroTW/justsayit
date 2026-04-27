@@ -386,3 +386,8 @@ def _run_setup_llm(model_key: str | None = None, cpu: bool = False) -> int:
 def _send_toggle(*, profile: str | None, use_clipboard: bool, continue_flag: bool = False) -> int:
     from justsayit.toggle_client import send_toggle as _send
     return _send(profile=profile, use_clipboard=use_clipboard, continue_flag=continue_flag)
+
+
+def _send_unload_llm() -> int:
+    from justsayit.toggle_client import send_unload_llm as _send
+    return _send()

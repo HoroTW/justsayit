@@ -95,6 +95,34 @@ def send_toggle(*, profile: str | None, use_clipboard: bool, continue_flag: bool
     return 0
 
 
+def send_unload_llm() -> int:
+    """Send unload-local-llm to the running primary."""
+    app_id = _app_id()
+    path = _bus_path(app_id)
+    payload = GLib.Variant("(sava{sv})", ("unload-local-llm", [], {}))
+    try:
+        bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+    except GLib.Error as e:
+        print(f"error: session bus unavailable: {e.message}", file=sys.stderr)
+        return 1
+    try:
+        bus.call_sync(
+            app_id, path, "org.gtk.Actions", "Activate",
+            payload, None, Gio.DBusCallFlags.NONE, -1, None,
+        )
+    except GLib.Error as e:
+        if "ServiceUnknown" in e.message or "NameHasNoOwner" in e.message:
+            print(
+                "error: justsayit is not running — start it first "
+                "(`uv run justsayit` or via your .desktop launcher).",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"error: D-Bus call failed: {e.message}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entry invoked by ``_entry.main`` when the subcommand is ``toggle``.
 

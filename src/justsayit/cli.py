@@ -64,6 +64,7 @@ from justsayit.postprocess import (
     load_profile,
     profiles_dir,
 )
+from justsayit.postprocess.backend_local import LocalBackend
 from justsayit.overlay import OverlayWindow
 from justsayit.paste import PasteError, Paster, read_clipboard, read_clipboard_image
 from justsayit.shortcuts import GlobalShortcutClient
@@ -84,6 +85,8 @@ MID_RELOAD_CONFIG = 7
 MID_LLM_SUBMENU = 8  # "LLM: <profile>" parent item
 MID_LLM_OFF = 9  # "Off" radio item inside the LLM submenu
 MID_LLM_SEP_INNER = 10  # separator before the "Off" item
+MID_LLM_UNLOAD = 11  # "Unload local LLM" item inside the LLM submenu
+MID_LLM_SEP_UNLOAD = 12  # separator before the "Unload" item
 MID_SEP_2 = 5
 MID_QUIT = 6
 # LLM profile radio items occupy IDs 100, 101, 102 … (one per profile file)
@@ -150,6 +153,18 @@ class App:
         self._llm_profile_items: dict[str, MenuItem] = {}
         self._llm_off_item: MenuItem | None = None
         self._llm_submenu_item: MenuItem | None = None
+        self._unload_llm_item: MenuItem | None = None
+        self._unload_llm_sep: MenuItem | None = None
+        # Local LLM stash: holds the last displaced LocalBackend so toggling
+        # back to the same profile is instant.
+        self._stashed_local: LLMPostprocessor | None = None
+        self._stashed_local_profile: str | None = None
+        # Profile name of the currently active self.postprocessor.
+        self._active_profile_name: str | None = None
+        # Last non-local profile; fallback target for _unload_local_llm.
+        self._last_non_local_profile: str | None = None
+        # Suppresses stash-on-displacement; set temporarily by _unload_local_llm.
+        self._suppress_stash: bool = False
 
     # --- setup -------------------------------------------------------------
 
@@ -209,28 +224,79 @@ class App:
             # Critical: clear the field, otherwise toggling LLM off via the
             # tray leaves the previous instance attached and _handle_segment
             # keeps routing through it ("LLM: off" but text still cleaned).
+            if isinstance(self.postprocessor, LocalBackend) and not self._suppress_stash:
+                self._stash_local(self.postprocessor, self._active_profile_name)
             self.postprocessor = None
+            self._active_profile_name = None
             log.info("LLM postprocessor disabled")
             if self.pipeline is not None:
                 self.pipeline.postprocessor = None
             return
+
+        profile_name = self.cfg.postprocess.profile
+
+        # Reuse stash when switching back to the same local profile.
+        if self._stashed_local_profile == profile_name and self._stashed_local is not None:
+            log.info("reusing stashed local LLM (profile=%s)", profile_name)
+            if isinstance(self.postprocessor, LocalBackend) and not self._suppress_stash:
+                self._stash_local(self.postprocessor, self._active_profile_name)
+            self.postprocessor = self._stashed_local
+            self._active_profile_name = profile_name
+            self._stashed_local = None
+            self._stashed_local_profile = None
+            if self.pipeline is not None:
+                self.pipeline.postprocessor = self.postprocessor
+            return
+
+        # Stash or drop the outgoing local postprocessor before replacing it.
+        if isinstance(self.postprocessor, LocalBackend) and not self._suppress_stash:
+            self._stash_local(self.postprocessor, self._active_profile_name)
+
         try:
-            profile = load_profile(self.cfg.postprocess.profile)
+            profile = load_profile(profile_name)
             self.postprocessor = LLMPostprocessor(
                 profile,
                 dynamic_context_script=self.cfg.postprocess.dynamic_context_script,
             )
-            log.info(
-                "warming up LLM postprocessor (profile=%s)…",
-                self.cfg.postprocess.profile,
-            )
-            self.postprocessor.warmup()
-            log.info("LLM postprocessor ready")
+            self._active_profile_name = profile_name
         except Exception:
             log.exception("LLM postprocessor failed to load; postprocessing disabled")
             self.postprocessor = None
+            self._active_profile_name = None
+            if self.pipeline is not None:
+                self.pipeline.postprocessor = None
+            return
         if self.pipeline is not None:
             self.pipeline.postprocessor = self.postprocessor
+        log.info("warming up LLM postprocessor (profile=%s) in background…", profile_name)
+        pp = self.postprocessor
+
+        def _warmup() -> None:
+            try:
+                pp.warmup()
+                log.info("LLM postprocessor ready (profile=%s)", profile_name)
+            except Exception:
+                log.exception("LLM postprocessor warmup failed; postprocessing disabled")
+
+                def _clear() -> None:
+                    if self.postprocessor is pp:
+                        self.postprocessor = None
+                        self._active_profile_name = None
+                        if self.pipeline is not None:
+                            self.pipeline.postprocessor = None
+
+                GLib.idle_add(_clear)
+
+        threading.Thread(target=_warmup, daemon=True).start()
+
+    def _stash_local(self, pp: LLMPostprocessor, name: str | None) -> None:
+        if name is None:
+            return
+        if self._stashed_local is not None and self._stashed_local_profile != name:
+            log.info("evicting stashed local LLM (profile=%s)", self._stashed_local_profile)
+        self._stashed_local = pp
+        self._stashed_local_profile = name
+        log.info("stashed local LLM (profile=%s)", name)
 
     def setup_sound(self) -> None:
         if not self.cfg.sound.enabled:
@@ -633,7 +699,19 @@ class App:
         ]
         if llm_submenu_item is not None:
             items.append(llm_submenu_item)
+        has_local = self._has_local_llm_loaded()
+        unload_sep = MenuItem(id=MID_LLM_SEP_UNLOAD, is_separator=True, visible=has_local)
+        unload_item = MenuItem(
+            id=MID_LLM_UNLOAD,
+            label="Unload local LLM",
+            visible=has_local,
+            on_activate=self._unload_local_llm,
+        )
+        self._unload_llm_sep = unload_sep
+        self._unload_llm_item = unload_item
         items += [
+            unload_sep,
+            unload_item,
             MenuItem(id=MID_SEP_2, is_separator=True),
             MenuItem(id=MID_QUIT, label="Quit", on_activate=on_quit),
         ]
@@ -755,12 +833,34 @@ class App:
             return f"LLM: {self.cfg.postprocess.profile}"
         return "LLM: off"
 
+    def _profile_is_local(self, name: str) -> bool:
+        try:
+            return load_profile(name).base == "builtin"
+        except Exception:
+            return False
+
+    def _has_local_llm_loaded(self) -> bool:
+        return isinstance(self.postprocessor, LocalBackend) or self._stashed_local is not None
+
     def _apply_llm_profile(self, name: str | None) -> None:
         """Switch LLM profile (``name=None`` disables postprocessing).
         Persists to state.toml, rebuilds the postprocessor, and refreshes
         any tray radio items. Shared by the tray menu and the toggle-ex
         D-Bus action, so both paths stay in sync.
         """
+        # Track the last non-local profile so _unload_local_llm can fall back to it.
+        if self.cfg.postprocess.enabled and not self._profile_is_local(self.cfg.postprocess.profile):
+            self._last_non_local_profile = self.cfg.postprocess.profile
+
+        # No-op if already on this profile with a loaded postprocessor.
+        if (
+            name is not None
+            and self.cfg.postprocess.enabled
+            and self.cfg.postprocess.profile == name
+            and self.postprocessor is not None
+        ):
+            self._refresh_llm_tray_state()
+            return
         if name is None:
             self.cfg.postprocess.enabled = False
         else:
@@ -775,6 +875,21 @@ class App:
         self.setup_postprocessor()
         if self.cfg.postprocess.enabled and self.postprocessor is not None:
             log.info("LLM profile switched to: %s", self.cfg.postprocess.profile)
+        self._refresh_llm_tray_state()
+
+    def _unload_local_llm(self) -> None:
+        """Drop all loaded local LLMs (active + stash) and fall back to
+        the last non-local profile, or 'off' if none was used."""
+        if self._stashed_local is not None:
+            log.info("dropping stashed local LLM (profile=%s)", self._stashed_local_profile)
+            self._stashed_local = None
+            self._stashed_local_profile = None
+        if isinstance(self.postprocessor, LocalBackend):
+            self._suppress_stash = True
+            try:
+                self._apply_llm_profile(self._last_non_local_profile)
+            finally:
+                self._suppress_stash = False
         self._refresh_llm_tray_state()
 
     def _refresh_llm_tray_state(self) -> None:
@@ -793,8 +908,14 @@ class App:
         prop_updates: list[tuple[int, dict]] = []
         for k, item in self._llm_profile_items.items():
             item.toggle_state = 1 if k == cur else 0
+            in_memory = k == self._stashed_local_profile or (
+                k == cur and isinstance(self.postprocessor, LocalBackend)
+            )
+            new_label = f"{k} *" if in_memory else k
+            if item.label != new_label:
+                item.label = new_label
             prop_updates.append(
-                (item.id, {"toggle-state": GLib.Variant("i", item.toggle_state)})
+                (item.id, {"toggle-state": GLib.Variant("i", item.toggle_state), "label": GLib.Variant("s", item.label)})
             )
         if self._llm_off_item is not None:
             self._llm_off_item.toggle_state = 1 if cur is None else 0
@@ -811,6 +932,17 @@ class App:
                 {"label": GLib.Variant("s", self._llm_submenu_item.label)},
             )
         )
+        if self._unload_llm_item is not None and self._unload_llm_sep is not None:
+            has_local = self._has_local_llm_loaded()
+            if self._unload_llm_item.visible != has_local:
+                self._unload_llm_item.visible = has_local
+                self._unload_llm_sep.visible = has_local
+                prop_updates.append(
+                    (self._unload_llm_item.id, {"visible": GLib.Variant("b", has_local)})
+                )
+                prop_updates.append(
+                    (self._unload_llm_sep.id, {"visible": GLib.Variant("b", has_local)})
+                )
         self.tray.notify_properties_updated(prop_updates)
 
     def _disarm_clipboard_context(self) -> None:
@@ -936,6 +1068,10 @@ class App:
 
         toggle_ex_action.connect("activate", _on_toggle_ex)
         app.add_action(toggle_ex_action)
+
+        unload_llm_action = Gio.SimpleAction.new("unload-local-llm", None)
+        unload_llm_action.connect("activate", lambda _a, _p: self._unload_local_llm())
+        app.add_action(unload_llm_action)
         if not self.no_overlay:
 
             def _on_overlay_abort() -> None:
@@ -1012,6 +1148,7 @@ from justsayit._subcommands import (
     _parse_selection,
     _run_setup_llm,
     _send_toggle,
+    _send_unload_llm,
     _setup_file_logging,
     _write_default_config,
 )
@@ -1071,6 +1208,11 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=False,
         help="install CPU-only llama-cpp-python (skip Vulkan GPU compilation)",
+    )
+
+    sub.add_parser(
+        "unload-llm",
+        help="unload all local LLMs from the running instance and fall back to the last remote profile or off",
     )
 
     toggle_sub = sub.add_parser(
@@ -1145,6 +1287,8 @@ def main(argv: list[str] | None = None) -> int:
             use_clipboard=args.use_clipboard,
             continue_flag=getattr(args, "continue_flag", False),
         )
+    if args.subcommand == "unload-llm":
+        return _send_unload_llm()
     if args.subcommand == "init":
         _write_default_config(force=False, backend=getattr(args, "backend", None))
         return 0

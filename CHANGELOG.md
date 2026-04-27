@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Local LLM stash** — switching away from a local profile (to remote, off, or another local) stashes the loaded model in memory instead of unloading it; switching back reattaches instantly with no warmup delay. Stashed and active local profiles show a `*` suffix in the tray submenu.
+- **"Unload local LLM"** tray item (LLM submenu, only visible while a local model is in memory) — drops the stash and falls back to the last-used remote profile or off.
+- `justsayit unload-llm` subcommand — same as the tray item, for scripting.
+
+### Fixed
+- LLM warmup now runs on a background thread; recording starts immediately instead of waiting for the model to finish loading.
+- `justsayit toggle --profile <same>` no longer rebuilds the postprocessor when the profile is already active.
+
 ## [0.17.0] - 2026-04-25
 
 ### Added
