@@ -131,7 +131,7 @@ class ResponsesBackend(PostprocessorBase):
         body_tools: list[dict] = []
         if self.profile.responses_web_search:
             trigger = self.profile.responses_web_search_trigger
-            if not trigger or extra_context or has_image or re.search(trigger, text):
+            if not trigger or extra_context or has_image or assistant_mode or re.search(trigger, text):
                 body_tools.append({"type": "web_search"})
         if use_custom_tools:
             for t in (tools or []):

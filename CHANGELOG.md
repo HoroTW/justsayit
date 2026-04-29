@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-04-29
+
+### Fixed
+- `responses_web_search_trigger` is now bypassed in assistant mode — web search was silently omitted when assistant mode was activated via the UI button (no "Hey Computer" in the transcription, no clipboard shared).
+
 ## [0.18.0] - 2026-04-27
 
 ### Added

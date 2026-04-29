@@ -643,3 +643,77 @@ def test_responses_continue_second_image_both_stored_as_data_urls():
     assert b64_png1 in img1_url, "turn 1 image doesn't match PNG1"
     assert b64_png2 in img2_url, "turn 2 image doesn't match PNG2"
     assert img1_url != img2_url, "turn 1 and turn 2 images must differ"
+
+
+# ---------------------------------------------------------------------------
+# Regression: responses_web_search_trigger must be bypassed in assistant_mode
+# ---------------------------------------------------------------------------
+
+def test_web_search_included_in_assistant_mode_even_with_trigger():
+    """When assistant_mode=True, the web_search tool must be sent to the API
+    even if the transcription text does not match responses_web_search_trigger.
+
+    Without the fix, activating assistant mode via the UI button and speaking
+    a research request (no 'Hey Computer' in the text, no clipboard shared)
+    silently omitted the web_search tool from the API body."""
+    import unittest.mock as mock
+
+    profile = PostprocessProfile(
+        system_prompt="sys",
+        system_prompt_file="",
+        model="gpt-5.4-mini",
+        endpoint="http://fake/v1",
+        api_key="sk-test",
+        responses_web_search=True,
+        responses_web_search_trigger=r"\b[hH]?e[yi][,\.!?]?\s*[Cc]omput(er|a)\b",
+    )
+    backend = ResponsesBackend(profile)
+
+    captured: list[dict] = []
+
+    def fake_post(url, body, headers, **kw):
+        captured.append(body)
+        return _fake_responses_response()
+
+    with mock.patch("justsayit.postprocess.backend_responses._http_post", side_effect=fake_post):
+        backend._run("please research the latest news", assistant_mode=True)
+
+    assert captured, "expected at least one API call"
+    body_tools = captured[0].get("tools", [])
+    tool_types = [t.get("type") for t in body_tools]
+    assert "web_search" in tool_types, (
+        f"web_search missing from tools in assistant_mode; got: {tool_types}"
+    )
+
+
+def test_web_search_excluded_without_trigger_match_in_normal_mode():
+    """Without clipboard, without assistant_mode, without trigger match:
+    web_search must NOT be added (keeps cached-prefix clean for plain cleanup)."""
+    import unittest.mock as mock
+
+    profile = PostprocessProfile(
+        system_prompt="sys",
+        system_prompt_file="",
+        model="gpt-5.4-mini",
+        endpoint="http://fake/v1",
+        api_key="sk-test",
+        responses_web_search=True,
+        responses_web_search_trigger=r"\b[hH]?e[yi][,\.!?]?\s*[Cc]omput(er|a)\b",
+    )
+    backend = ResponsesBackend(profile)
+
+    captured: list[dict] = []
+
+    def fake_post(url, body, headers, **kw):
+        captured.append(body)
+        return _fake_responses_response()
+
+    with mock.patch("justsayit.postprocess.backend_responses._http_post", side_effect=fake_post):
+        backend._run("fix my text", assistant_mode=False)
+
+    assert captured, "expected at least one API call"
+    body_tools = captured[0].get("tools", [])
+    tool_types = [t.get("type") for t in body_tools]
+    assert "web_search" not in tool_types, (
+        f"web_search must be absent when trigger does not match; got: {tool_types}"
+    )
