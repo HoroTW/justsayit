@@ -95,8 +95,6 @@ def ensure_vad(cfg: Config, *, force: bool = False) -> Path:
     p = _vad_path(cfg)
     if force or not p.exists():
         _download(cfg.model.vad_url, p)
-    if not p.exists():
-        raise RuntimeError(f"VAD model still missing after download: {p}")
     return p
 
 
@@ -140,13 +138,4 @@ def ensure_models(cfg: Config, *, force: bool = False, want_vad: bool = True) ->
     if want_vad:
         ensure_vad(cfg, force=force)
 
-    required = [p.encoder, p.decoder, p.joiner, p.tokens]
-    if want_vad:
-        required.append(p.vad)
-    missing = [x for x in required if not x.exists()]
-    if missing:
-        raise RuntimeError(
-            "Model files still missing after download: "
-            + ", ".join(str(m) for m in missing)
-        )
     return p
