@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.19.2] - 2026-04-29
+
+### Fixed
+- Manual recording stuck in `manual` state after abort: stream opened before `external_start` flag was set, so the first audio chunk could close the stream again before the flag was seen; abort/stop events are only processed on chunks, leaving the engine frozen.
+
 ## [0.19.1] - 2026-04-29
 
 ### Fixed

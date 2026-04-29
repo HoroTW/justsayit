@@ -221,11 +221,14 @@ class AudioEngine:
     def start_manual(self) -> None:
         """External trigger: begin recording (bypass VAD)."""
         log.info("start_manual requested (state=%s)", self._state.value)
-        # In manual-only mode the mic is closed until activation —
-        # open it before flipping the external_start flag so the worker
-        # has chunks to consume.
-        self._ensure_stream_open()
+        # Set the flag before opening the stream: the worker only checks
+        # external events on real chunks, and in no-VAD mode it closes the
+        # stream when state=IDLE.  If the stream opens first, the very first
+        # chunk can arrive before the flag is set, the worker sees IDLE+no-VAD
+        # and closes the stream again, leaving the worker stuck waiting for
+        # chunks that never arrive (abort/stop events then go unprocessed).
         self._external_start.set()
+        self._ensure_stream_open()
 
     def stop_manual(self) -> None:
         """External trigger: stop current recording and emit the buffer."""
