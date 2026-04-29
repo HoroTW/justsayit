@@ -24,17 +24,19 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _http_post(
+def _json_post(
     url: str,
     body: dict,
     headers: dict,
     *,
-    remote_retries: int,
-    remote_retry_delay_seconds: float,
-    request_timeout: float,
+    profile: PostprocessProfile,
     label: str = "LLM",
 ) -> dict:
-    """POST JSON *body* to *url*, retrying on transient HTTP errors."""
+    """POST JSON *body* to *url*, retrying on transient HTTP errors.
+
+    Pulls timeout / retry knobs from *profile*; sets the standard
+    JSON + User-Agent headers on top of the caller's *headers*.
+    """
     encoded = json.dumps(body).encode("utf-8")
     all_headers = {
         "Content-Type": "application/json",
@@ -42,7 +44,13 @@ def _http_post(
         **headers,
     }
     req = urllib.request.Request(url, data=encoded, headers=all_headers, method="POST")
-    raw = request_with_retry(req, timeout=request_timeout, retries=remote_retries, delay=remote_retry_delay_seconds, label=label)
+    raw = request_with_retry(
+        req,
+        timeout=profile.request_timeout,
+        retries=profile.remote_retries,
+        delay=profile.remote_retry_delay_seconds,
+        label=label,
+    )
     return json.loads(raw)
 
 

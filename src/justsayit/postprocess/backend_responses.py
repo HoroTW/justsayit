@@ -9,7 +9,7 @@ from typing import Any
 
 _MAX_TOOL_ROUNDS = 10
 
-from ._processor import PostprocessorBase, _http_post, _log_usage, log
+from ._processor import PostprocessorBase, _json_post, _log_usage, log
 from ._profile import ProcessResult
 
 
@@ -147,11 +147,9 @@ class ResponsesBackend(PostprocessorBase):
 
         url = self.profile.endpoint.rstrip("/") + "/responses"
         headers = {"Authorization": f"Bearer {api_key}"}
-        data = _http_post(
+        data = _json_post(
             url, body, headers,
-            remote_retries=self.profile.remote_retries,
-            remote_retry_delay_seconds=self.profile.remote_retry_delay_seconds,
-            request_timeout=self.profile.request_timeout,
+            profile=self.profile,
             label="Responses API",
         )
 
@@ -184,11 +182,9 @@ class ResponsesBackend(PostprocessorBase):
                 }
                 if self.profile.reasoning_effort:
                     followup["reasoning"] = {"effort": self.profile.reasoning_effort}
-                data = _http_post(
+                data = _json_post(
                     url, followup, headers,
-                    remote_retries=self.profile.remote_retries,
-                    remote_retry_delay_seconds=self.profile.remote_retry_delay_seconds,
-                    request_timeout=self.profile.request_timeout,
+                    profile=self.profile,
                     label="Responses API (tool follow-up)",
                 )
 

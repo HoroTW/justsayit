@@ -7,7 +7,7 @@ import re
 import time
 from typing import Any
 
-from ._processor import PostprocessorBase, _http_post, _log_usage, log
+from ._processor import PostprocessorBase, _json_post, _log_usage, log
 from ._profile import ProcessResult
 
 _MAX_TOOL_ROUNDS = 10
@@ -74,13 +74,11 @@ class RemoteBackend(PostprocessorBase):
             body["tools"] = tools
             body["tool_choice"] = "auto"
 
-        data = _http_post(
+        data = _json_post(
             url,
             body,
             {"Authorization": f"Bearer {api_key}"},
-            remote_retries=self.profile.remote_retries,
-            remote_retry_delay_seconds=self.profile.remote_retry_delay_seconds,
-            request_timeout=self.profile.request_timeout,
+            profile=self.profile,
             label="remote LLM",
         )
 
@@ -115,13 +113,11 @@ class RemoteBackend(PostprocessorBase):
                         "content": result_str,
                     })
                 body["messages"] = messages
-                data = _http_post(
+                data = _json_post(
                     url,
                     body,
                     {"Authorization": f"Bearer {api_key}"},
-                    remote_retries=self.profile.remote_retries,
-                    remote_retry_delay_seconds=self.profile.remote_retry_delay_seconds,
-                    request_timeout=self.profile.request_timeout,
+                    profile=self.profile,
                     label="remote LLM (tool follow-up)",
                 )
 
