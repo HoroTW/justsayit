@@ -10,11 +10,9 @@ import json
 import logging
 import os
 import re
-import shutil
-import sys
 import tomllib
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from platformdirs import user_cache_dir, user_config_dir
 
@@ -33,13 +31,6 @@ from ._schema import (
 )
 
 APP_NAME = "justsayit"
-
-# Distinctive header line written into commented-defaults files. Used as
-# a stable marker so ``ensure_config_file`` can tell "already in
-# commented form" apart from "still on the legacy fully-populated form"
-# without re-checking content equality (which would re-trigger every
-# time we ship a new default value).
-_COMMENTED_FORM_MARKER = "# justsayit configuration (commented-defaults form)."
 
 
 def config_dir() -> Path:
@@ -255,7 +246,7 @@ def render_config_toml(cfg: Config | None = None, *, commented: bool = False) ->
         cfg = Config()
     if commented:
         lines = [
-            _COMMENTED_FORM_MARKER,
+            "# justsayit configuration (commented-defaults form).",
             "# Every key below is the shipped default, commented out.",
             "# Uncomment a line and change the value to override it.",
             "# Lines you don't touch keep tracking the shipped defaults,",
@@ -323,94 +314,16 @@ def save_config(cfg: Config, path: Path | None = None) -> None:
     save_state(cfg, _state_path_for(path))
 
 
-def _has_uncommented_assignment(text: str) -> bool:
-    """True if *text* contains at least one ``key = value`` line that
-    isn't commented out — the heuristic for "still on legacy fully-
-    populated form"."""
-    for line in text.splitlines():
-        stripped = line.lstrip()
-        if not stripped or stripped.startswith("#") or stripped.startswith("["):
-            continue
-        if "=" in stripped:
-            return True
-    return False
-
-
-def ensure_commented_form_file(
-    path: Path,
-    commented: str,
-    marker: str,
-    *,
-    suffix: str = ".bak-pre-commented-form",
-    validator: Callable[[str], None] | None = None,
-) -> bool:
-    """Ensure *path* exists in commented-defaults form, migrating from
-    legacy fully-populated form once if necessary.
-
-    The marker is a stable header line embedded in *commented*; finding
-    it in the user file means migration already happened, so we leave
-    the file alone (the user may have uncommented overrides). For files
-    that lack the marker AND contain uncommented ``key = value`` lines
-    (legacy form), the existing file is backed up to
-    ``<path><suffix>`` (if no backup exists yet) and overwritten with
-    *commented*. Pure-comment / empty files get the commented template
-    written without backup.
-
-    If *validator* is given, it is called on the existing file content
-    even when the marker is present; raising any exception means "this
-    file is corrupt despite the marker" and triggers re-migration. This
-    rescues files written by an earlier buggy template that happened to
-    embed the marker.
-
-    Returns ``True`` if the file was just written / migrated, ``False``
-    if it was found already in commented form.
-    """
-    if not path.exists():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(commented, encoding="utf-8")
-        return True
-    try:
-        head = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return False
-    was_marked_but_corrupt = False
-    if marker in head[:8192]:
-        if validator is None:
-            return False
-        try:
-            validator(head)
-            return False
-        except Exception:
-            was_marked_but_corrupt = True
-    if was_marked_but_corrupt or _has_uncommented_assignment(head):
-        backup = path.with_name(path.name + suffix)
-        if not backup.exists():
-            try:
-                backup.write_bytes(path.read_bytes())
-            except OSError:
-                pass
-    try:
-        path.write_text(commented, encoding="utf-8")
-    except OSError:
-        pass
-    return True
-
-
 def ensure_config_file(path: Path | None = None) -> Path:
     """Write the commented-defaults ``config.toml`` if it doesn't
     exist yet, so the file is always available for inspection /
-    editing. Returns the resolved path.
-
-    One-shot migration: a pre-existing ``config.toml`` in the legacy
-    fully-populated form (every key uncommented) is backed up to
-    ``config.toml.bak-pre-commented-form`` and rewritten in the new
-    commented form. Files that are already in the new form (marker
-    present) or that have only commented content are left alone.
+    editing. Returns the resolved path. Existing files are left alone.
     """
     if path is None:
         path = config_dir() / "config.toml"
-    commented = render_config_toml(None, commented=True)
-    ensure_commented_form_file(path, commented, _COMMENTED_FORM_MARKER)
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(render_config_toml(None, commented=True), encoding="utf-8")
     return path
 
 

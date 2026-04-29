@@ -29,8 +29,6 @@ from ._io import (
     ensure_filters_file,
     ensure_after_llm_filters_file,
     ensure_tools_file,
-    ensure_commented_form_file,
-    _COMMENTED_FORM_MARKER,
     _DOTENV_LOADED,
     _default_filter_chain,
 )
@@ -65,7 +63,5 @@ __all__ = [
     "ensure_filters_file",
     "ensure_after_llm_filters_file",
     "ensure_tools_file",
-    "ensure_commented_form_file",
-    "_COMMENTED_FORM_MARKER",
     "_DOTENV_LOADED",
 ]
