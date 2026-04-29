@@ -195,6 +195,7 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._level = 0.0
         self._level_smoothed = 0.0
         self._pulse = 0.0
+        self._last_tick_us = 0   # frame-clock timestamp from previous _tick
         self._assistant_mode = False
         self._last_llm_text = ""
 
@@ -399,7 +400,10 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self.set_child(root)
         _install_css_once()
 
-        GLib.timeout_add(33, self._tick)
+        # Drive the meter + dot pulse off the frame clock of the dot widget.
+        # Tick callbacks auto-pause when the widget is unmapped, so the
+        # animation loop doesn't run when the overlay is hidden.
+        self._dot.add_tick_callback(self._tick, None)
 
     # ── Thread-safe entry points ─────────────────────────────────────────────
 
@@ -810,23 +814,47 @@ class OverlayWindow(Gtk.ApplicationWindow):
 
     # ── Tick / draw ──────────────────────────────────────────────────────────
 
-    def _tick(self) -> bool:
+    def _tick(self, _widget, frame_clock) -> bool:
+        # Time-based animation: derive a per-frame scale from the frame
+        # clock so behaviour matches the previous fixed-33ms cadence
+        # regardless of the actual refresh rate. Original constants were
+        # tuned for ~33ms ticks.
+        now_us = frame_clock.get_frame_time()
+        if self._last_tick_us == 0:
+            dt_frames = 1.0
+        else:
+            dt_frames = max(0.0, (now_us - self._last_tick_us) / 33_000.0)
+        self._last_tick_us = now_us
+
+        active = self._state in (State.RECORDING, State.MANUAL, State.VALIDATING)
+        in_result = self._dot_color_override is not None
+
+        # Fast-path: truly idle — no recording, no result halo, meter and
+        # pulse already collapsed to zero. Skip queue_draw to stop the
+        # DrawingAreas from re-rendering every frame at idle.
+        if (
+            not active
+            and not in_result
+            and self._level_smoothed < 0.001
+            and abs(self._pulse) < 0.001
+        ):
+            return True
+
         sensitivity = self._cfg.overlay.visualizer_sensitivity
-        # Only animate the meter while actively recording / listening.
-        # In result / linger phase (state=IDLE, dot_color_override set) or
-        # while idle, decay the smoothed level to zero so the bar goes flat.
-        if self._state in (State.RECORDING, State.MANUAL, State.VALIDATING):
+        if active:
             target = min(1.0, self._level * 8.0 * sensitivity)
-            self._level_smoothed += (target - self._level_smoothed) * 0.25
-            self._pulse = (self._pulse + 0.08) % (2 * math.pi)
+            # First-order IIR; per-frame factor scaled by dt for stability.
+            alpha = min(1.0, 0.25 * dt_frames)
+            self._level_smoothed += (target - self._level_smoothed) * alpha
+            self._pulse = (self._pulse + 0.08 * dt_frames) % (2 * math.pi)
         else:
             # Decay to flat: meter goes quiet; pulse slows but keeps halo in
             # result phase via dot_color_override check in _draw_dot.
-            self._level_smoothed *= 0.85
-            if self._dot_color_override is not None:
-                self._pulse = (self._pulse + 0.04) % (2 * math.pi)
+            self._level_smoothed *= 0.85 ** dt_frames
+            if in_result:
+                self._pulse = (self._pulse + 0.04 * dt_frames) % (2 * math.pi)
             else:
-                self._pulse *= 0.9
+                self._pulse *= 0.9 ** dt_frames
         self._meter.queue_draw()
         self._dot.queue_draw()
         return True
