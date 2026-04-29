@@ -200,7 +200,7 @@ def test_pipeline_does_not_save_on_llm_exception():
 
 
 # ---------------------------------------------------------------------------
-# PostprocessorBase: _build_messages_continued + _format_history_text
+# PostprocessorBase: _build_messages + _format_history_text
 # ---------------------------------------------------------------------------
 
 
@@ -240,7 +240,7 @@ def test_build_messages_continued_order():
         {"role": "user", "content": "first"},
         {"role": "assistant", "content": "answer"},
     ]
-    msgs = proc._build_messages_continued("second", "", prev)
+    msgs = proc._build_messages("second", "", prev_messages=prev)
     assert msgs[0]["role"] == "system"
     assert msgs[1] == {"role": "user", "content": "first"}
     assert msgs[2] == {"role": "assistant", "content": "answer"}
@@ -307,13 +307,14 @@ def test_canonical_to_responses_input_with_image():
 
 
 # ---------------------------------------------------------------------------
-# RemoteBackend: cross-backend uses _build_messages_continued directly
+# RemoteBackend: cross-backend uses _build_messages directly
 # ---------------------------------------------------------------------------
 
 
 def test_remote_cross_backend_uses_build_messages_continued():
-    """RemoteBackend must use _build_messages_continued even for cross-backend sessions,
-    since prev_messages is always in canonical chat-completions format."""
+    """RemoteBackend must splice prev_messages into _build_messages even for
+    cross-backend sessions, since prev_messages is always in canonical
+    chat-completions format."""
     from justsayit.postprocess.backend_remote import RemoteBackend
     from justsayit.postprocess._profile import PostprocessProfile
     import unittest.mock as mock

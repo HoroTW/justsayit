@@ -35,11 +35,14 @@ class RemoteBackend(PostprocessorBase):
         img_b64 = base64.b64encode(extra_image).decode("ascii") if has_image else ""  # type: ignore[arg-type]
 
         # prev_messages is always in canonical chat-completions format regardless
-        # of which backend stored it, so _build_messages_continued works directly.
-        if prev_msgs:
-            messages = self._build_messages_continued(text, extra_context, prev_msgs, extra_image_provided=has_image, assistant_mode=assistant_mode)
-        else:
-            messages = self._build_messages(text, extra_context, extra_image_provided=has_image, assistant_mode=assistant_mode)
+        # of which backend stored it, so it can be spliced in directly.
+        messages = self._build_messages(
+            text,
+            extra_context,
+            prev_messages=prev_msgs,
+            extra_image_provided=has_image,
+            assistant_mode=assistant_mode,
+        )
 
         if has_image:
             # Convert last user message from a plain string to a content list.
