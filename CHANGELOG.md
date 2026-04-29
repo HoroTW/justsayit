@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.19.1] - 2026-04-29
+
+### Fixed
+- Pasting broken when stdout is closed (headless/autostart): `print(final)` was unconditional and crashed the segment handler with `OSError: [Errno 5]`; moved inside the no-paste branch where it belongs.
+
 ## [0.19.0] - 2026-04-29
 
 ### Fixed

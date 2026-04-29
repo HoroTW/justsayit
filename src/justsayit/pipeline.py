@@ -244,8 +244,8 @@ class SegmentPipeline:
 
         self._last_transcription_time = now
 
-        print(final, flush=True)
         if self.no_paste or not self.cfg.paste.enabled or self.assistant_mode:
+            print(final, flush=True)
             log.info("paste disabled — text only printed")
             if self.overlay is not None:
                 self.overlay.push_linger_start()
