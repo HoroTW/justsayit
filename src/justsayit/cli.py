@@ -101,7 +101,6 @@ class App:
         self.no_overlay = no_overlay
         self.no_paste = no_paste
 
-        self.model_paths = None  # set in setup_models (Parakeet only)
         self.vad_path = None  # set in setup_models (all backends)
         self.transcriber: TranscriberBase | None = None
         self.engine: AudioEngine | None = None
@@ -176,15 +175,12 @@ class App:
             # local (we don't want to stream audio over the network just
             # to detect silence) so fetch the tiny silero ONNX.
             self.vad_path = ensure_vad(self.cfg)
-            self.model_paths = None
             log.info("openai backend: VAD ready, transcription via remote endpoint")
         elif self.cfg.model.backend == "whisper":
             self.vad_path = ensure_vad(self.cfg)
-            self.model_paths = None
             log.info("whisper backend: VAD ready, Whisper model loads on first use")
         else:
-            self.model_paths = ensure_models(self.cfg, want_vad=True)
-            self.vad_path = self.model_paths.vad
+            self.vad_path = ensure_models(self.cfg, want_vad=True).vad
 
     def setup_filters(self) -> None:
         self.filters = load_filters(self.cfg.filters_path)
@@ -207,7 +203,7 @@ class App:
             self.pipeline.tool_definitions = tool_defs
 
     def setup_transcriber(self) -> None:
-        self.transcriber = make_transcriber(self.cfg, self.model_paths)
+        self.transcriber = make_transcriber(self.cfg)
         log.info("warming up %s recognizer…", self.cfg.model.backend)
         self.transcriber.warmup()
         self.pipeline = SegmentPipeline(

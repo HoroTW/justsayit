@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 import pytest
 
 from justsayit.config import Config
-from justsayit.model import ModelPaths
 from justsayit.transcribe import TranscriberBase, make_transcriber
 from justsayit.transcribe_parakeet import ParakeetTranscriber
 from justsayit.transcribe_whisper import WhisperTranscriber
@@ -17,17 +14,6 @@ from justsayit.transcribe_whisper import WhisperTranscriber
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _fake_paths() -> ModelPaths:
-    """Return a ModelPaths pointing at non-existent files (constructor only)."""
-    return ModelPaths(
-        encoder=Path("/fake/encoder.onnx"),
-        decoder=Path("/fake/decoder.onnx"),
-        joiner=Path("/fake/joiner.onnx"),
-        tokens=Path("/fake/tokens.txt"),
-        vad=Path("/fake/silero_vad.onnx"),
-    )
 
 
 class _StubTranscriber(TranscriberBase):
@@ -48,7 +34,7 @@ class _StubTranscriber(TranscriberBase):
 def test_make_transcriber_parakeet_returns_correct_type():
     cfg = Config()
     cfg.model.backend = "parakeet"
-    t = make_transcriber(cfg, _fake_paths())
+    t = make_transcriber(cfg)
     assert isinstance(t, ParakeetTranscriber)
 
 
@@ -74,17 +60,20 @@ def test_make_transcriber_unknown_backend_raises():
         make_transcriber(cfg)
 
 
-def test_make_transcriber_parakeet_requires_model_paths():
+def test_make_transcriber_parakeet_resolves_paths_internally():
+    """ParakeetTranscriber must resolve its own ModelPaths from cfg —
+    callers shouldn't have to pre-compute them."""
     cfg = Config()
     cfg.model.backend = "parakeet"
-    with pytest.raises(ValueError, match="model_paths"):
-        make_transcriber(cfg, model_paths=None)
+    t = make_transcriber(cfg)
+    assert isinstance(t, ParakeetTranscriber)
+    assert t.paths.encoder.name == cfg.model.parakeet_encoder
 
 
 def test_make_transcriber_parakeet_does_not_load_model():
     """ParakeetTranscriber is lazy; construction alone must not import sherpa-onnx."""
     cfg = Config()
-    t = make_transcriber(cfg, _fake_paths())
+    t = make_transcriber(cfg)
     assert t._recog is None  # type: ignore[attr-defined]
 
 

@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 
 from justsayit.config import Config
-from justsayit.model import ModelPaths
+from justsayit.model import paths as _resolve_paths
 from justsayit.transcribe import TranscriberBase
 
 log = logging.getLogger(__name__)
@@ -18,9 +18,9 @@ log = logging.getLogger(__name__)
 class ParakeetTranscriber(TranscriberBase):
     """Thin wrapper around sherpa_onnx.OfflineRecognizer for Parakeet TDT."""
 
-    def __init__(self, cfg: Config, paths: ModelPaths) -> None:
+    def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
-        self.paths = paths
+        self.paths = _resolve_paths(cfg)
         self._recog = None  # lazy
         self._lock = threading.Lock()
 

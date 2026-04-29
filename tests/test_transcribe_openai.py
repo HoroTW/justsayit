@@ -192,5 +192,5 @@ def test_make_transcriber_dispatches_to_openai(monkeypatch):
     """make_transcriber must wire backend = "openai" to our transcriber."""
     from justsayit.transcribe import make_transcriber
     cfg = _make_cfg()
-    t = make_transcriber(cfg, model_paths=None)
+    t = make_transcriber(cfg)
     assert isinstance(t, OpenAIWhisperTranscriber)
