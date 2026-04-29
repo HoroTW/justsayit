@@ -272,58 +272,6 @@ def _restore_clipboard_image(data: bytes, mime_type: str, *, timeout: float = 2.
         raise PasteError(f"wl-copy exited {proc.returncode}")
 
 
-def _dotool_input(combo: str) -> bytes:
-    # dotool reads commands from stdin; `key` accepts XKB-style
-    # modifier+key joined by '+'.
-    return f"key {combo}\n".encode("utf-8")
-
-
-def send_paste_shortcut(
-    combo: str = "ctrl+shift+v",
-    *,
-    backend: str = "dotool",
-    timeout: float = 5.0,
-) -> None:
-    """Synthesise ``combo`` as a keystroke via dotool."""
-    if backend != "dotool":
-        raise PasteError(f"unknown paste backend: {backend!r}")
-    dotool = _require("dotool")
-    try:
-        proc = subprocess.run(
-            [dotool],
-            input=_dotool_input(combo),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=timeout,
-            check=False,
-        )
-    except subprocess.TimeoutExpired as e:
-        raise PasteError(
-            f"dotool timed out after {timeout}s — is the service running?"
-        ) from e
-    if proc.returncode != 0:
-        raise PasteError(f"dotool exited {proc.returncode}")
-
-
-def paste_text(
-    text: str,
-    *,
-    combo: str = "ctrl+shift+v",
-    backend: str = "dotool",
-    settle_ms: int = 40,
-    timeout: float = 5.0,
-    sensitive: bool = False,
-) -> None:
-    """One-shot copy + paste. Prefer :class:`Paster` if you paste repeatedly —
-    it keeps ``dotool`` warm and saves hundreds of ms per paste."""
-    if not text:
-        return
-    copy_to_clipboard(text, timeout=timeout, sensitive=sensitive)
-    if settle_ms > 0:
-        time.sleep(settle_ms / 1000)
-    send_paste_shortcut(combo, backend=backend, timeout=timeout)
-
-
 def _build_type_payload(text: str) -> bytes:
     """Build the dotool stdin payload to type *text* directly.
 
