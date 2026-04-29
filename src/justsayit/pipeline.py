@@ -5,7 +5,7 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from justsayit.filters import apply_filters
 
@@ -19,6 +19,10 @@ if TYPE_CHECKING:
     from justsayit.tools import ToolDefinition
 
 log = logging.getLogger(__name__)
+
+# How long after a successful paste the pipeline remembers the result
+# for the overlay's undo / re-paste buttons.
+_LAST_RESULT_TTL_S = 60.0
 
 
 def _session_path() -> Path:
@@ -58,6 +62,8 @@ class SegmentPipeline:
         *,
         no_paste: bool = False,
         after_llm_filters: list | None = None,
+        on_error: Callable[[str, str, Callable[[], None] | None], None] | None = None,
+        enqueue_segment: Callable[["Segment"], None] | None = None,
     ) -> None:
         self.cfg = cfg
         self.transcriber = transcriber
@@ -69,7 +75,41 @@ class SegmentPipeline:
         self.overlay: "OverlayWindow | None" = None             # set externally
         self.tool_definitions: "list[ToolDefinition]" = []     # set externally
         self.assistant_mode: bool = False                       # set externally
+        self.on_error = on_error
+        self.enqueue_segment = enqueue_segment
         self._last_transcription_time: float | None = None
+        # Last successful paste content + when it landed; surfaced via
+        # last_result() for the overlay's undo / re-paste buttons.
+        self._last_result: str | None = None
+        self._last_result_at: float | None = None
+
+    def last_result(self) -> str | None:
+        """Return the last pasted text if it's still within the TTL window."""
+        if self._last_result is None or self._last_result_at is None:
+            return None
+        if time.monotonic() - self._last_result_at > _LAST_RESULT_TTL_S:
+            return None
+        return self._last_result
+
+    def _build_retry_cb(self, seg: "Segment") -> Callable[[], None] | None:
+        if self.enqueue_segment is None:
+            return None
+        eq = self.enqueue_segment
+        def _retry() -> None:
+            try:
+                eq(seg)
+            except Exception:
+                log.exception("retry re-enqueue failed")
+        return _retry
+
+    def _emit_error(self, stage: str, exc: BaseException, seg: "Segment") -> None:
+        if self.on_error is None:
+            return
+        msg = (str(exc).strip().splitlines() or [exc.__class__.__name__])[0]
+        try:
+            self.on_error(stage, msg, self._build_retry_cb(seg))
+        except Exception:
+            log.exception("on_error callback raised")
 
     def handle(self, seg: "Segment", *, consume_clipboard_fn=None, is_continue: bool = False) -> None:
         """Process one audio segment end-to-end."""
@@ -90,7 +130,12 @@ class SegmentPipeline:
             return
         log.info("transcribing %.2fs (reason=%s)", duration, seg.reason)
         t0 = time.monotonic()
-        raw = self.transcriber.transcribe(seg.samples, seg.sample_rate)
+        try:
+            raw = self.transcriber.transcribe(seg.samples, seg.sample_rate)
+        except Exception as exc:
+            log.exception("transcription failed")
+            self._emit_error("transcribe", exc, seg)
+            return
         dt = time.monotonic() - t0
         log.info("transcription done in %.2fs: raw=%r", dt, raw)
         if not raw:
@@ -166,6 +211,10 @@ class SegmentPipeline:
                 log.exception("LLM postprocessor failed; using unprocessed text")
                 detail = str(exc).strip().splitlines()[0]
                 llm_overlay_text = f"LLM error: {detail or exc.__class__.__name__}"
+                # Also surface an amber error pill with retry so the
+                # failure is visible even when the user wasn't watching
+                # the LLM line.
+                self._emit_error("llm", exc, seg)
             else:
                 stripped = pp.strip_for_paste(paste_text)
                 # Surface the reasoning preamble (whatever paste_strip_regex
@@ -285,6 +334,8 @@ class SegmentPipeline:
             t_paste0 = time.monotonic()
             self.paster.paste(final)
             log.debug("paste call returned after %.0fms", (time.monotonic() - t_paste0) * 1000)
+            self._last_result = final
+            self._last_result_at = time.monotonic()
         except PasteError as e:
             log.error("paste failed: %s", e)
         finally:

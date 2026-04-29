@@ -459,6 +459,11 @@ class Paster:
                 except PasteError as e:
                     log.warning("clipboard restore failed: %s", e)
 
+    def send_undo(self) -> None:
+        """Synthesise Ctrl+Z to the focused window — used by the overlay's
+        undo button after a paste the user wants to revert."""
+        self._send_key("ctrl+z")
+
     # --- internals --------------------------------------------------------
 
     def _send_key(self, combo: str) -> None:

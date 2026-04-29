@@ -51,6 +51,9 @@ class _StubOverlay:
         self.llm = []
         self.linger_calls = 0
         self.clip_armed_calls: list[bool] = []
+        self.errors: list[tuple[str, str, object]] = []
+        self.undo_avail: list[bool] = []
+        self.repaste_avail: list[bool] = []
 
     def push_hide(self) -> None:
         self.hide_calls += 1
@@ -66,6 +69,15 @@ class _StubOverlay:
 
     def push_clipboard_context_armed(self, armed: bool) -> None:
         self.clip_armed_calls.append(armed)
+
+    def push_error(self, stage: str, msg: str, retry_cb=None) -> None:
+        self.errors.append((stage, msg, retry_cb))
+
+    def push_undo_available(self, available: bool) -> None:
+        self.undo_avail.append(available)
+
+    def push_repaste_available(self, available: bool) -> None:
+        self.repaste_avail.append(available)
 
 
 class _RaisingPostprocessor:
@@ -416,3 +428,140 @@ def test_toggle_clipboard_context_flips_flag_and_pushes_overlay():
     app._toggle_clipboard_context()
     assert app._clipboard_context_armed is False
     assert app.overlay.clip_armed_calls == [True, False]
+
+
+# ---------------------------------------------------------------------------
+# Pipeline: error surface + undo/re-paste
+# ---------------------------------------------------------------------------
+
+
+class _RaisingTranscriber(TranscriberBase):
+    def __init__(self, message: str = "asr exploded") -> None:
+        self.message = message
+        self.calls = 0
+
+    def transcribe(self, samples: np.ndarray, sample_rate: int) -> str:
+        self.calls += 1
+        raise RuntimeError(self.message)
+
+
+def test_pipeline_transcribe_failure_emits_on_error():
+    """A direct SegmentPipeline test — when the transcriber raises, on_error
+    fires with the stage tag and the retry callback re-enqueues the segment."""
+    from justsayit.pipeline import SegmentPipeline
+
+    cfg = Config()
+    captured: list[tuple[str, str, object]] = []
+    enqueued: list = []
+
+    pipe = SegmentPipeline(
+        cfg,
+        _RaisingTranscriber("network down"),
+        filters=[],
+        paster=None,
+        no_paste=True,
+        on_error=lambda stage, msg, cb: captured.append((stage, msg, cb)),
+        enqueue_segment=lambda s: enqueued.append(s),
+    )
+
+    seg = _make_seg()
+    pipe.handle(seg)
+
+    assert len(captured) == 1
+    stage, msg, cb = captured[0]
+    assert stage == "transcribe"
+    assert "network down" in msg
+    assert cb is not None
+    cb()
+    assert enqueued == [seg]
+
+
+def test_pipeline_llm_failure_also_emits_on_error(capsys):
+    """LLM exception still falls back to original text but additionally fires on_error."""
+    from justsayit.pipeline import SegmentPipeline
+
+    cfg = Config()
+    captured: list[tuple[str, str, object]] = []
+
+    pipe = SegmentPipeline(
+        cfg,
+        _StubTranscriber("hello world"),
+        filters=[],
+        paster=None,
+        no_paste=True,
+        on_error=lambda stage, msg, cb: captured.append((stage, msg, cb)),
+    )
+    pipe.postprocessor = _RaisingPostprocessor("HTTP 503: upstream timeout")
+
+    pipe.handle(_make_seg())
+
+    # Original text still printed (fallback preserved).
+    assert capsys.readouterr().out == "hello world\n"
+    # And the error pill was fired.
+    assert [(s, m) for s, m, _cb in captured] == [
+        ("llm", "HTTP 503: upstream timeout")
+    ]
+
+
+def test_pipeline_last_result_is_none_without_paste():
+    """No paster + no_paste means last_result() stays None."""
+    from justsayit.pipeline import SegmentPipeline
+
+    cfg = Config()
+    pipe = SegmentPipeline(
+        cfg,
+        _StubTranscriber("hello"),
+        filters=[],
+        paster=None,
+        no_paste=True,
+    )
+    pipe.handle(_make_seg())
+    assert pipe.last_result() is None
+
+
+def test_pipeline_last_result_set_after_successful_paste():
+    """A successful paster.paste() call records the text in last_result()."""
+    from justsayit.pipeline import SegmentPipeline
+
+    pasted: list[str] = []
+
+    class _StubPaster:
+        def paste(self, text: str) -> None:
+            pasted.append(text)
+
+    cfg = Config()
+    cfg.paste.enabled = True
+    pipe = SegmentPipeline(
+        cfg,
+        _StubTranscriber("hello"),
+        filters=[],
+        paster=_StubPaster(),  # type: ignore[arg-type]
+        no_paste=False,
+    )
+    pipe.handle(_make_seg())
+    assert pasted == ["hello"]
+    assert pipe.last_result() == "hello"
+
+
+def test_pipeline_last_result_expires_after_ttl(monkeypatch):
+    """last_result() returns None once the 60s TTL is past."""
+    from justsayit.pipeline import SegmentPipeline
+
+    class _StubPaster:
+        def paste(self, text: str) -> None:
+            pass
+
+    cfg = Config()
+    cfg.paste.enabled = True
+    pipe = SegmentPipeline(
+        cfg,
+        _StubTranscriber("hi"),
+        filters=[],
+        paster=_StubPaster(),  # type: ignore[arg-type]
+        no_paste=False,
+    )
+    pipe.handle(_make_seg())
+    assert pipe.last_result() == "hi"
+    # Pretend the TTL has passed.
+    pipe._last_result_at = (pipe._last_result_at or 0) - 1000.0
+    assert pipe.last_result() is None
