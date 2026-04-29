@@ -1,0 +1,39 @@
+# justsayit snippets — canned-text expansions triggered from spoken phrases.
+#
+# Each [[snippet]] table defines one trigger → replacement mapping.
+# Snippets are matched AFTER regex filters and BEFORE the LLM cleanup
+# pass; when bypass_llm = true, the snippet's replacement is pasted
+# directly and the LLM step is skipped for that recording.
+#
+# Fields:
+#   trigger     (required, string) — the spoken phrase. Compared
+#               case-insensitively, with ASCII punctuation stripped, so
+#               "insert email signature" also matches "Insert email,
+#               signature." (literal mode, the default).
+#   replacement (required, string) — the text to paste. Embedded \n
+#               becomes a real newline.
+#   mode        ("replace" | "expand", default "replace")
+#               • "replace" — the entire utterance must equal the
+#                 trigger; the replacement is pasted verbatim.
+#               • "expand"  — the trigger only has to match the START
+#                 of the utterance; the replacement is treated as a
+#                 prefix and any remaining dictation is appended.
+#   bypass_llm  (bool, default true) — when true, paste the snippet
+#               directly without LLM cleanup. Set false to let the LLM
+#               see the expanded text first.
+#   literal     (bool, default true) — when false, `trigger` is
+#               interpreted as a Python regex (case-insensitive).
+#
+# Uncomment one of the examples below to try it out.
+
+# [[snippet]]
+# trigger     = "insert email signature"
+# replacement = "Best,\nHoro\nhttps://example.com"
+# mode        = "replace"
+# bypass_llm  = true
+
+# [[snippet]]
+# trigger     = "todo"
+# replacement = "TODO:"
+# mode        = "expand"     # "todo finish the test" → "TODO: finish the test"
+# bypass_llm  = false        # keep LLM cleanup for the appended text

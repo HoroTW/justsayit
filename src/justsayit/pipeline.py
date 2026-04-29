@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from justsayit.filters import apply_filters
+from justsayit.snippets import match_snippet
 
 if TYPE_CHECKING:
     from justsayit.audio import Segment
@@ -16,6 +18,7 @@ if TYPE_CHECKING:
     from justsayit.postprocess import PostprocessorBase
     from justsayit.overlay import OverlayWindow
     from justsayit.paste import Paster
+    from justsayit.snippets import Snippet
     from justsayit.tools import ToolDefinition
 
 log = logging.getLogger(__name__)
@@ -58,6 +61,7 @@ class SegmentPipeline:
         *,
         no_paste: bool = False,
         after_llm_filters: list | None = None,
+        snippets: "list[Snippet] | None" = None,
     ) -> None:
         self.cfg = cfg
         self.transcriber = transcriber
@@ -65,11 +69,15 @@ class SegmentPipeline:
         self.paster = paster
         self.no_paste = no_paste
         self.after_llm_filters: list = after_llm_filters or []
+        self.snippets: "list[Snippet]" = snippets or []
         self.postprocessor: "PostprocessorBase | None" = None  # set externally
         self.overlay: "OverlayWindow | None" = None             # set externally
         self.tool_definitions: "list[ToolDefinition]" = []     # set externally
         self.assistant_mode: bool = False                       # set externally
         self._last_transcription_time: float | None = None
+        # Optional override-pp resolver: callable(profile_name) -> postprocessor
+        # instance, used by the prefix-router to swap profile for one call.
+        self.resolve_profile: "Callable[[str], PostprocessorBase | None] | None" = None
 
     def handle(self, seg: "Segment", *, consume_clipboard_fn=None, is_continue: bool = False) -> None:
         """Process one audio segment end-to-end."""
@@ -105,6 +113,60 @@ class SegmentPipeline:
         # Snapshot pp before the overlay update so we know whether to show the
         # LLM field immediately (as "Wait for LLM processing…").
         pp = self.postprocessor  # snapshot — avoids TOCTOU with tray thread
+
+        # --- spoken prefix router -------------------------------------------
+        # Strip a leading "<word>:" or "<word>," before snippet matching and
+        # the LLM call, so users can route a single utterance through a
+        # different profile or skip the LLM entirely.
+        force_skip_llm = False
+        router = getattr(self.cfg, "prefix_router", None)
+        if router is not None and router.enabled and final:
+            m = re.match(r"^\s*([A-Za-z][A-Za-z0-9_-]*)\s*[:,]\s*(.*)$", final, re.DOTALL)
+            if m is not None:
+                word, rest = m.group(1).lower(), m.group(2)
+                if router.quick_skip_llm and word == "quick":
+                    log.info("prefix-router: 'quick:' → skipping LLM")
+                    final = rest
+                    force_skip_llm = True
+                else:
+                    # Case-insensitive lookup: build a fold-mapped dict.
+                    target_profile = None
+                    for k, v in (router.prefixes or {}).items():
+                        if k.lower() == word:
+                            target_profile = v
+                            break
+                    if target_profile is not None:
+                        log.info(
+                            "prefix-router: %r → profile %r",
+                            word,
+                            target_profile,
+                        )
+                        final = rest
+                        if self.resolve_profile is not None:
+                            override_pp = self.resolve_profile(target_profile)
+                            if override_pp is not None:
+                                pp = override_pp
+
+        # --- snippet expansion ---------------------------------------------
+        # After regex filters + prefix routing, before LLM cleanup. When the
+        # snippet matches with bypass_llm=true, paste the replacement
+        # directly and skip the LLM call.
+        snippet_bypass = False
+        if self.snippets:
+            sm = match_snippet(final, self.snippets)
+            if sm is not None:
+                log.info(
+                    "snippet matched: %r -> %r (bypass_llm=%s)",
+                    final[:60],
+                    sm.replacement[:60],
+                    sm.bypass_llm,
+                )
+                final = sm.replacement
+                if sm.bypass_llm:
+                    snippet_bypass = True
+
+        if force_skip_llm or snippet_bypass:
+            pp = None
 
         # Show the filtered text in the top field.  The bottom (LLM) field is
         # shown as a waiting placeholder if the postprocessor is active.

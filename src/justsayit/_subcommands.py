@@ -21,6 +21,7 @@ from justsayit.config import (
     ensure_filters_file,
     ensure_after_llm_filters_file,
     ensure_tools_file,
+    ensure_snippets_file,
     load_config,
 )
 from justsayit.postprocess import (
@@ -99,6 +100,17 @@ def _write_default_config(force: bool = False, backend: str | None = None) -> No
         print(f"tools already exist: {tools_path}", file=sys.stderr)
     else:
         print(f"wrote {tools_path}")
+
+    snippets_path = config_dir() / "snippets.toml"
+    snippets_pre_existed = snippets_path.exists()
+    if snippets_pre_existed and force:
+        snippets_path.unlink()
+        snippets_pre_existed = False
+    ensure_snippets_file(snippets_path)
+    if snippets_pre_existed:
+        print(f"snippets already exist: {snippets_path}", file=sys.stderr)
+    else:
+        print(f"wrote {snippets_path}")
 
 
 def _download_models_only() -> int:

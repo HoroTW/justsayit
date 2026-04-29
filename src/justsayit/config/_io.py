@@ -27,6 +27,8 @@ from ._schema import (
     OverlayConfig,
     SoundConfig,
     PostprocessConfig,
+    PrefixRouterConfig,
+    WindowClipboardPolicy,
     LogConfig,
     Config,
     _coerce_section,
@@ -155,6 +157,12 @@ def load_config(path: Path | None = None) -> Config:
         cfg.sound = _coerce_section(SoundConfig, raw.get("sound"))
         cfg.log = _coerce_section(LogConfig, raw.get("log"))
         cfg.postprocess = _coerce_section(PostprocessConfig, raw.get("postprocess"))
+        cfg.prefix_router = _coerce_section(
+            PrefixRouterConfig, raw.get("prefix_router")
+        )
+        cfg.window_clipboard_policy = _coerce_section(
+            WindowClipboardPolicy, raw.get("window_clipboard_policy")
+        )
 
         if "filters_path" in raw:
             cfg.filters_path = Path(raw["filters_path"]).expanduser()
@@ -270,6 +278,17 @@ def render_config_toml(cfg: Config | None = None, *, commented: bool = False) ->
             "",
         ]
     prefix = "# " if commented else ""
+
+    def _render_scalar(val) -> str:
+        if isinstance(val, bool):
+            return "true" if val else "false"
+        if isinstance(val, str):
+            return f'"{val}"'
+        if isinstance(val, list):
+            inner = ", ".join(_render_scalar(v) for v in val)
+            return f"[{inner}]"
+        return repr(val)
+
     for section_name in (
         "audio",
         "vad",
@@ -280,6 +299,8 @@ def render_config_toml(cfg: Config | None = None, *, commented: bool = False) ->
         "sound",
         "log",
         "postprocess",
+        "prefix_router",
+        "window_clipboard_policy",
     ):
         section = getattr(cfg, section_name)
         lines.append(f"[{section_name}]")
@@ -289,12 +310,20 @@ def render_config_toml(cfg: Config | None = None, *, commented: bool = False) ->
                 # Already commented (Optional/None default). No extra prefix.
                 lines.append(f'# {f.name} = ""')
                 continue
-            if isinstance(val, bool):
-                rendered = "true" if val else "false"
-            elif isinstance(val, str):
-                rendered = f'"{val}"'
-            else:
-                rendered = repr(val)
+            if isinstance(val, dict):
+                # Inline-table form keeps everything in one line for the
+                # commented-defaults file. Empty dict: keep the line as
+                # an empty inline table the user can fill in.
+                if val:
+                    items = ", ".join(
+                        f"{k} = {_render_scalar(v)}" for k, v in val.items()
+                    )
+                    rendered = "{ " + items + " }"
+                else:
+                    rendered = "{}"
+                lines.append(f"{prefix}{f.name} = {rendered}")
+                continue
+            rendered = _render_scalar(val)
             lines.append(f"{prefix}{f.name} = {rendered}")
         lines.append("")
     lines.append(f'{prefix}filters_path = "{cfg.filters_path}"')
@@ -595,6 +624,31 @@ def _default_after_llm_filter_chain() -> list[dict]:
             "enabled": False,
         },
     ]
+
+
+def ensure_snippets_file(path: Path | None = None) -> Path:
+    """Write the default ``snippets.toml`` if it doesn't exist. Returns
+    the resolved path.
+
+    The shipped template is fully-commented out so no snippets are
+    active by default. Users uncomment / add ``[[snippet]]`` tables to
+    define canned-text expansions.
+    """
+    if path is None:
+        path = config_dir() / "snippets.toml"
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        template_path = (
+            Path(__file__).parent.parent / "templates" / "snippets-defaults.toml"
+        )
+        try:
+            content = template_path.read_text(encoding="utf-8")
+        except OSError:
+            # Fallback if the bundled template is missing for some
+            # reason — at least leave a usable empty file.
+            content = "# justsayit snippets — see docs.\n"
+        path.write_text(content, encoding="utf-8")
+    return path
 
 
 def ensure_tools_file(path: Path | None = None) -> Path:
