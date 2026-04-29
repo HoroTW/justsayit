@@ -25,7 +25,9 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from dataclasses import dataclass
+from html import escape
 from typing import Callable
 
 import gi
@@ -201,6 +203,106 @@ _DOT_RESULT = _DotColor(0.35, 0.85, 0.45)   # green during result / linger
 _SAFETY_MS = 30_000
 _LLM_WAITING = "Wait for LLM processing…"
 _CHAR_WIDTH_PX = 6.5   # approximate for Inter 11px
+
+
+# ── Markdown → Pango ────────────────────────────────────────────────────────
+# GtkLabel's set_markup() only understands Pango markup, not Markdown. The
+# LLM frequently emits **bold**, `code`, lists and headings — render those
+# inline rather than showing the raw asterisks. Block elements Pango doesn't
+# have (headings, lists, quotes) are reproduced via <span> / bullet glyphs.
+
+_MD_FENCE_RE = re.compile(r"```[^\n]*\n(.*?)```", re.DOTALL)
+_MD_INLINE_CODE_RE = re.compile(r"`([^`\n]+)`")
+_MD_LINK_RE = re.compile(r"\[([^\]\n]+)\]\(([^)\s]+)\)")
+_MD_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
+_MD_BULLET_RE = re.compile(r"^(\s*)[-*+]\s+(.*)$")
+_MD_QUOTE_RE = re.compile(r"^&gt;\s*(.*)$")
+_MD_BOLD_RE = re.compile(r"\*\*([^*\n]+?)\*\*")
+_MD_BOLD_UNDER_RE = re.compile(r"(?<![A-Za-z0-9_])__([^_\n]+?)__(?![A-Za-z0-9_])")
+_MD_ITALIC_RE = re.compile(r"(?<![*A-Za-z0-9])\*([^*\n]+?)\*(?![*A-Za-z0-9])")
+_MD_ITALIC_UNDER_RE = re.compile(r"(?<![A-Za-z0-9_])_([^_\n]+?)_(?![A-Za-z0-9_])")
+_MD_STRIKE_RE = re.compile(r"~~([^~\n]+?)~~")
+
+_HEADING_SIZES = {1: "x-large", 2: "large", 3: "large"}
+
+
+def _md_to_pango(text: str) -> str:
+    """Translate a small subset of Markdown to Pango markup.
+
+    Handles fenced + inline code, bold, italic, strikethrough, links,
+    ATX headings, bullet lists, and blockquotes. Anything else falls
+    through as escaped plain text. Code spans/blocks are stashed first
+    so their contents are never re-interpreted as markdown."""
+    if not text:
+        return ""
+
+    stash: dict[str, str] = {}
+
+    def _stash(value: str) -> str:
+        key = f"\x00MD{len(stash)}\x00"
+        stash[key] = value
+        return key
+
+    def _fence(m: re.Match[str]) -> str:
+        return _stash(f"<tt>{escape(m.group(1).rstrip())}</tt>")
+
+    text = _MD_FENCE_RE.sub(_fence, text)
+
+    def _inline_code(m: re.Match[str]) -> str:
+        return _stash(f"<tt>{escape(m.group(1))}</tt>")
+
+    text = _MD_INLINE_CODE_RE.sub(_inline_code, text)
+
+    def _link(m: re.Match[str]) -> str:
+        label, url = m.group(1), m.group(2)
+        return _stash(
+            f'<a href="{escape(url, quote=True)}">{escape(label)}</a>'
+        )
+
+    text = _MD_LINK_RE.sub(_link, text)
+
+    text = escape(text)
+
+    out_lines: list[str] = []
+    for line in text.split("\n"):
+        m = _MD_HEADING_RE.match(line)
+        if m:
+            level = len(m.group(1))
+            size = _HEADING_SIZES.get(level, "medium")
+            line = f'<span size="{size}" weight="bold">{m.group(2)}</span>'
+            out_lines.append(line)
+            continue
+        m = _MD_BULLET_RE.match(line)
+        if m:
+            out_lines.append(f"{m.group(1)}• {m.group(2)}")
+            continue
+        m = _MD_QUOTE_RE.match(line)
+        if m:
+            out_lines.append(f"<i>│ {m.group(1)}</i>")
+            continue
+        out_lines.append(line)
+    text = "\n".join(out_lines)
+
+    text = _MD_BOLD_RE.sub(r"<b>\1</b>", text)
+    text = _MD_BOLD_UNDER_RE.sub(r"<b>\1</b>", text)
+    text = _MD_STRIKE_RE.sub(r"<s>\1</s>", text)
+    text = _MD_ITALIC_RE.sub(r"<i>\1</i>", text)
+    text = _MD_ITALIC_UNDER_RE.sub(r"<i>\1</i>", text)
+
+    for key, value in stash.items():
+        text = text.replace(key, value)
+    return text
+
+
+def _set_label_markup_safe(label: Gtk.Label, markup: str, fallback: str) -> None:
+    """``set_markup`` but if Pango rejects the string, fall back to plain
+    text. The markdown converter is best-effort; an LLM emitting an
+    unbalanced asterisk inside HTML-looking text shouldn't blank the pill."""
+    try:
+        label.set_markup(markup)
+    except Exception:
+        log.exception("set_markup failed; falling back to plain text")
+        label.set_text(fallback)
 
 
 def _install_css_once() -> None:
@@ -391,6 +493,11 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._detected_label.set_hexpand(True)
         self._detected_label.set_wrap(True)
         self._detected_label.set_visible(False)
+        self._detected_label.set_selectable(True)
+        self._detected_label.set_can_focus(False)
+        self._detected_label.connect(
+            "notify::has-selection", self._on_label_has_selection
+        )
         root.append(self._detected_label)
 
         # Separator + bottom (LLM) field
@@ -406,6 +513,11 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._llm_label.set_hexpand(True)
         self._llm_label.set_wrap(True)
         self._llm_label.set_visible(False)
+        self._llm_label.set_selectable(True)
+        self._llm_label.set_can_focus(False)
+        self._llm_label.connect(
+            "notify::has-selection", self._on_label_has_selection
+        )
         root.append(self._llm_label)
 
         # Separator above bottom row (only shown in result mode)
@@ -579,6 +691,14 @@ class OverlayWindow(Gtk.ApplicationWindow):
             log.debug("result clicked — cancelling auto-dismiss")
             self._cancel_linger()
 
+    def _on_label_has_selection(self, label: Gtk.Label, _pspec) -> None:
+        """Selectable labels swallow click events from the parent gesture
+        controller, so mid-selection the linger timer would still fire and
+        yank the pill out from under the user. Cancel auto-dismiss as soon
+        as a selection is made."""
+        if label.get_property("has-selection"):
+            self._cancel_linger()
+
     def _on_abort_clicked(self, _button: Gtk.Button) -> None:
         """× button: abort an active recording (discard, no paste). If
         the overlay is in the post-result linger phase, just dismiss."""
@@ -652,12 +772,12 @@ class OverlayWindow(Gtk.ApplicationWindow):
 
         # Hide state label, show text fields above the bottom row.
         self._state_label.set_visible(False)
-        self._detected_label.set_label(text)
+        self._detected_label.set_text(text)
         self._sep1.set_visible(True)
         self._detected_label.set_visible(True)
 
         if llm_pending:
-            self._llm_label.set_label(_LLM_WAITING)
+            self._llm_label.set_text(_LLM_WAITING)
             self._sep2.set_visible(True)
             self._llm_label.set_visible(True)
         else:
@@ -678,14 +798,12 @@ class OverlayWindow(Gtk.ApplicationWindow):
     def _apply_tool_call(self, name: str, params: dict) -> bool:
         param_str = ", ".join(f"{k}={v!r}" for k, v in params.items())
         annotation = f"⚙ {name}({param_str})"
-        # Show in the LLM field as an intermediate status update.
-        # If the field is already showing a previous annotation, append.
-        existing = self._llm_label.get_text() if not self._llm_label.get_use_markup() else ""
-        if existing and existing not in (_LLM_WAITING,):
+        existing = self._llm_label.get_text()
+        if existing and existing != _LLM_WAITING:
             text = existing + "\n" + annotation
         else:
             text = annotation
-        self._llm_label.set_label(text)
+        self._llm_label.set_text(text)
         if not self._llm_label.get_visible():
             self._sep2.set_visible(True)
             self._llm_label.set_visible(True)
@@ -693,17 +811,17 @@ class OverlayWindow(Gtk.ApplicationWindow):
 
     def _apply_llm_text(self, text: str, thought: str = "") -> bool:
         self._last_llm_text = text
+        body_markup = _md_to_pango(text)
         if thought:
-            from html import escape
             # Blue-green / teal italic for the thought, then a newline and
-            # the normal-weight body that will actually be pasted.
+            # the markdown-rendered body that will actually be pasted.
             markup = (
                 f'<span foreground="#5ed1c4"><i>{escape(thought)}</i></span>'
-                f"\n\n{escape(text)}"
+                f"\n\n{body_markup}"
             )
-            self._llm_label.set_markup(markup)
         else:
-            self._llm_label.set_label(text)
+            markup = body_markup
+        _set_label_markup_safe(self._llm_label, markup, text)
         if not self._llm_label.get_visible():
             self._sep2.set_visible(True)
             self._llm_label.set_visible(True)

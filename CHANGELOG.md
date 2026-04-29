@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-04-29
+
+### Added
+- Selectable text in the overlay — both the regex-filtered transcript and the LLM result can now be selected and copied with the mouse. Starting a selection cancels the auto-dismiss timer.
+- Markdown rendering in the LLM result field — bold, italic, inline/fenced code, headings, bullet lists, links, blockquotes, and strikethrough render as Pango markup instead of showing raw `**stars**`.
+
 ## [0.19.2] - 2026-04-29
 
 ### Fixed
