@@ -121,9 +121,6 @@ class App:
         self._seg_q: queue.Queue[Segment | None] = queue.Queue(maxsize=8)
         self._stop = threading.Event()
         self._transcribe_thread: threading.Thread | None = None
-        # Monotonic timestamp of the last successful transcription output,
-        # used by the auto_space_timeout_ms feature.
-        self._last_transcription_time: float | None = None
         self._restart_requested: bool = False
         # One-time flag set by the overlay's 📋 button. Read+cleared in
         # _handle_segment; when True, clipboard contents are appended to
@@ -993,33 +990,10 @@ class App:
         return "", None, ""
 
     def _handle_segment(self, seg: Segment) -> None:
-        """Process one audio segment. Delegates to SegmentPipeline when set up,
-        otherwise builds a transient pipeline from current App state (used in tests
-        that set app.transcriber directly without going through setup_transcriber).
-        """
+        """Process one audio segment via the configured SegmentPipeline."""
+        assert self.pipeline is not None, "_handle_segment called before setup_transcriber"
         is_continue = self._continue_this_recording
-        if self.pipeline is not None:
-            self.pipeline._last_transcription_time = self._last_transcription_time
-            self.pipeline.handle(seg, consume_clipboard_fn=self._consume_clipboard_context, is_continue=is_continue)
-            self._last_transcription_time = self.pipeline._last_transcription_time
-            if is_continue and self._continue_window_active:
-                GLib.idle_add(self._reset_continue_timer)
-            return
-        # Fallback: build a transient pipeline from App state (tests / no-setup path).
-        assert self.transcriber is not None
-        _pl = SegmentPipeline(
-            self.cfg,
-            self.transcriber,
-            self.filters,
-            self.paster,
-            no_paste=self.no_paste,
-            after_llm_filters=self.after_llm_filters,
-        )
-        _pl.postprocessor = self.postprocessor
-        _pl.overlay = self.overlay
-        _pl._last_transcription_time = self._last_transcription_time
-        _pl.handle(seg, consume_clipboard_fn=self._consume_clipboard_context, is_continue=is_continue)
-        self._last_transcription_time = _pl._last_transcription_time
+        self.pipeline.handle(seg, consume_clipboard_fn=self._consume_clipboard_context, is_continue=is_continue)
         if is_continue and self._continue_window_active:
             GLib.idle_add(self._reset_continue_timer)
 
