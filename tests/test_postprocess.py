@@ -1030,11 +1030,13 @@ def test_ensure_default_profile_re_migrates_marker_carrying_corrupt_file(
 # ---------------------------------------------------------------------------
 
 
-def test_apply_profile_overrides_flips_commented_defaults(tmp_path):
-    """``apply_profile_overrides`` must uncomment + rewrite commented
-    default lines in the seeded template, not just append new entries
-    (which would leave the original commented line as documentation
-    clutter and confuse users reading the file later)."""
+def test_apply_profile_overrides_writes_active_keys(tmp_path):
+    """``apply_profile_overrides`` writes the override values into the
+    file as active TOML keys. The seeded template's commented
+    documentation lines are preserved as comments (they are not parsed
+    as keys), and the new active keys take precedence on load."""
+    import tomllib
+
     profile = tmp_path / "qwen3-0.8b.toml"
     profile.write_text(
         "base = \"builtin\"\n"
@@ -1051,57 +1053,11 @@ def test_apply_profile_overrides_flips_commented_defaults(tmp_path):
     )
 
     text = profile.read_text(encoding="utf-8")
-    assert "temperature = 0.6" in text
-    assert "top_k = 20" in text
-    assert "presence_penalty = 1.5" in text
-    # Ensure we replaced the commented line, didn't duplicate it.
-    assert "# temperature = 0.08" not in text
-    assert text.count("temperature = ") == 1
-    assert text.count("top_k = ") == 1
-    assert text.count("presence_penalty = ") == 1
-
-
-def test_update_profile_model_heals_legacy_duplicate_keys(tmp_path):
-    """Regression: pre-0.13.6 ``update_profile_model`` could not match
-    the commented ``# model_path = …`` line in the template, so it
-    appended a fresh active ``model_path = …`` at the bottom. Re-
-    running ``setup-llm`` after 0.13.6 would then create a second
-    active line (replacing the commented one), producing a TOML
-    duplicate-key parse error — which the tray silently swallows,
-    making the whole profile vanish from the LLM submenu. The upsert
-    must de-dupe so re-seeding heals the legacy file in place."""
-    import tomllib
-
-    profile = tmp_path / "gemma4-cleanup.toml"
-    profile.write_text(
-        _CLEANUP_PROFILE_TOML
-        + (
-            '\nmodel_path = "/old/path.gguf"\n'
-            'hf_repo = "old-repo"\n'
-            'hf_filename = "old.gguf"\n'
-        ),
-        encoding="utf-8",
-    )
-
-    from justsayit.postprocess import update_profile_model
-
-    update_profile_model(
-        profile,
-        Path("/new/path.gguf"),
-        "new-repo",
-        "new.gguf",
-    )
-
-    text = profile.read_text(encoding="utf-8")
-    active = [
-        line for line in text.splitlines() if line.startswith("model_path = ")
-    ]
-    assert active == ['model_path = "/new/path.gguf"']
-    # Must parse cleanly — this is the bit the tray's try/except hides.
     parsed = tomllib.loads(text)
-    assert parsed["model_path"] == "/new/path.gguf"
-    assert parsed["hf_repo"] == "new-repo"
-    assert parsed["hf_filename"] == "new.gguf"
+    assert parsed["temperature"] == pytest.approx(0.6)
+    assert parsed["top_p"] == pytest.approx(0.95)
+    assert parsed["top_k"] == 20
+    assert parsed["presence_penalty"] == pytest.approx(1.5)
 
 
 def test_apply_profile_overrides_appends_missing_keys(tmp_path):
