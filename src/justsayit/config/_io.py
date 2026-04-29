@@ -11,8 +11,11 @@ import logging
 import os
 import re
 import tomllib
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
+
+import tomli_w
 
 from platformdirs import user_cache_dir, user_config_dir
 
@@ -235,61 +238,103 @@ def render_config_toml(cfg: Config | None = None, *, commented: bool = False) ->
     Default mode emits every setting with its current value (good for
     ``show-defaults`` output and for inspecting a runtime config).
 
-    With ``commented=True`` every value line is prefixed with ``# ``,
-    leaving section headers uncommented. This is the "commented-defaults"
-    form shipped on fresh install: only knobs the user explicitly cares
-    about live in the file as uncommented lines, so future updates that
-    move a default never collide with their settings.
+    With ``commented=True`` every non-blank, non-section-header,
+    non-comment line is prefixed with ``# ``. This is the
+    "commented-defaults" form shipped on fresh install: only knobs the
+    user explicitly cares about live in the file as uncommented lines,
+    so future updates that move a default never collide with their
+    settings.
     """
-    from dataclasses import fields as dc_fields
     if cfg is None:
         cfg = Config()
     if commented:
-        lines = [
-            "# justsayit configuration (commented-defaults form).",
-            "# Every key below is the shipped default, commented out.",
-            "# Uncomment a line and change the value to override it.",
-            "# Lines you don't touch keep tracking the shipped defaults,",
-            "# so future updates that tweak a default just work.",
-            "",
-        ]
+        header = (
+            "# justsayit configuration (commented-defaults form).\n"
+            "# Every key below is the shipped default, commented out.\n"
+            "# Uncomment a line and change the value to override it.\n"
+            "# Lines you don't touch keep tracking the shipped defaults,\n"
+            "# so future updates that tweak a default just work.\n"
+            "\n"
+        )
     else:
-        lines = [
-            "# justsayit configuration. Every setting is listed with its",
-            "# current value. Delete or comment a line to fall back to the",
-            "# built-in default (the app will not rewrite unchanged sections).",
-            "",
-        ]
-    prefix = "# " if commented else ""
-    for section_name in (
-        "audio",
-        "vad",
-        "shortcut",
-        "paste",
-        "model",
-        "overlay",
-        "sound",
-        "log",
-        "postprocess",
-    ):
-        section = getattr(cfg, section_name)
-        lines.append(f"[{section_name}]")
-        for f in dc_fields(section):
-            val = getattr(section, f.name)
-            if val is None:
-                # Already commented (Optional/None default). No extra prefix.
-                lines.append(f'# {f.name} = ""')
-                continue
-            if isinstance(val, bool):
-                rendered = "true" if val else "false"
-            elif isinstance(val, str):
-                rendered = f'"{val}"'
-            else:
-                rendered = repr(val)
-            lines.append(f"{prefix}{f.name} = {rendered}")
-        lines.append("")
-    lines.append(f'{prefix}filters_path = "{cfg.filters_path}"')
-    return "\n".join(lines) + "\n"
+        header = (
+            "# justsayit configuration. Every setting is listed with its\n"
+            "# current value. Delete or comment a line to fall back to the\n"
+            "# built-in default (the app will not rewrite unchanged sections).\n"
+            "\n"
+        )
+    cfg_dict, none_fields = _cfg_to_toml_dict(cfg)
+    body = tomli_w.dumps(cfg_dict)
+    body = _inject_none_field_comments(body, none_fields)
+    if commented:
+        body = _comment_value_lines(body)
+    return header + body
+
+
+def _cfg_to_toml_dict(cfg: Config) -> tuple[dict[str, Any], dict[str, list[str]]]:
+    """asdict(cfg) but stripping None (TOML has no null) and stringifying
+    Paths. Returns ``(toml_dict, none_fields_per_section)``; the second
+    map carries field names whose value was None so the renderer can
+    emit ``# field = ""`` placeholder lines (kept for documentation,
+    matching the legacy renderer's behaviour).
+
+    Only ``filters_path`` is emitted as a top-level scalar to match the
+    legacy hand-rolled renderer (load_config doesn't read the other Path
+    fields back; they default at runtime)."""
+    raw = asdict(cfg)
+    out: dict[str, Any] = {"filters_path": str(cfg.filters_path)}
+    none_fields: dict[str, list[str]] = {}
+    for key, val in raw.items():
+        if not isinstance(val, dict):
+            continue
+        out[key] = {k: v for k, v in val.items() if v is not None}
+        nones = [k for k, v in val.items() if v is None]
+        if nones:
+            none_fields[key] = nones
+    return out, none_fields
+
+
+def _inject_none_field_comments(body: str, none_fields: dict[str, list[str]]) -> str:
+    """For each section listed in *none_fields*, append ``# field = ""``
+    placeholder lines after the section's last value line."""
+    if not none_fields:
+        return body
+    lines = body.splitlines()
+    out_lines: list[str] = []
+    current_section: str | None = None
+    pending: list[str] = []
+
+    def flush_pending(out: list[str]) -> None:
+        nonlocal pending
+        for name in pending:
+            out.append(f'# {name} = ""')
+        pending = []
+
+    for line in lines:
+        stripped = line.lstrip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            flush_pending(out_lines)
+            current_section = stripped[1:-1]
+            out_lines.append(line)
+            pending = list(none_fields.get(current_section, []))
+            continue
+        if not stripped and pending:
+            flush_pending(out_lines)
+        out_lines.append(line)
+    flush_pending(out_lines)
+    return "\n".join(out_lines) + ("\n" if body.endswith("\n") else "")
+
+
+def _comment_value_lines(toml_text: str) -> str:
+    """Prefix every non-blank, non-section-header, non-comment line with ``# ``."""
+    lines = []
+    for line in toml_text.splitlines():
+        stripped = line.lstrip()
+        if not stripped or stripped.startswith("[") or stripped.startswith("#"):
+            lines.append(line)
+        else:
+            lines.append("# " + line)
+    return "\n".join(lines) + ("\n" if toml_text.endswith("\n") else "")
 
 
 def default_config_toml() -> str:
