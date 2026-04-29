@@ -27,19 +27,25 @@ def _load_template(name: str) -> str:
     return (_TEMPLATES_DIR / name).read_text(encoding="utf-8")
 
 
-# Canonical defaults for each inference backend. These TOML files are
-# the single source of truth: the dataclass defaults are derived from
-# them at module-import time, AND the user-facing profile templates
-# document them by reference.
-_BASE_DEFAULTS: dict[str, dict[str, Any]] = {
-    "builtin": tomllib.loads(_load_template("builtin-defaults.toml")),
-    "remote": tomllib.loads(_load_template("remote-defaults.toml")),
-    "responses": tomllib.loads(_load_template("responses-defaults.toml")),
+# Per-base default overrides applied in ``load_profile`` only for keys
+# the user did NOT set in their profile TOML. The dataclass defaults
+# below match ``base = "builtin"``; the dicts here capture the small
+# set of fields whose default differs for the remote / responses
+# backends. Keep these in sync with the documentation in the
+# corresponding ``templates/{remote,responses}-defaults.toml`` files.
+_BASE_OVERRIDES: dict[str, dict[str, Any]] = {
+    "builtin": {},
+    "remote": {
+        "system_prompt_file": "cleanup_openai.md",
+        "paste_strip_regex": "",
+        "chat_template_kwargs": {},
+    },
+    "responses": {
+        "endpoint": "https://api.openai.com/v1",
+        "system_prompt_file": "cleanup_openai.md",
+        "paste_strip_regex": "",
+    },
 }
-
-
-def _builtin_default(name: str, fallback: Any) -> Any:
-    return _BASE_DEFAULTS["builtin"].get(name, fallback)
 
 
 _PROFILE_COMMENTED_FORM_MARKER = (
@@ -80,49 +86,45 @@ class ProcessResult:
 @dataclass
 class PostprocessProfile:
     # Which backend defaults file to overlay user values onto.
-    base: str = _builtin_default("base", "builtin")
+    base: str = "builtin"
 
     # --- Inference backend (built-in via llama-cpp-python + GGUF) -------
-    model_path: str = _builtin_default("model_path", "")
-    hf_repo: str = _builtin_default("hf_repo", "")
-    hf_filename: str = _builtin_default("hf_filename", "")
-    n_gpu_layers: int = _builtin_default("n_gpu_layers", -1)
-    n_ctx: int = _builtin_default("n_ctx", 20480)
+    model_path: str = "~/.cache/justsayit/models/llm/gemma-4-E4B-it-Q4_K_M.gguf"
+    hf_repo: str = "unsloth/gemma-4-E4B-it-GGUF"
+    hf_filename: str = "gemma-4-E4B-it-Q4_K_M.gguf"
+    n_gpu_layers: int = -1
+    n_ctx: int = 20480
 
     # --- Cleanup tuning -------------------------------------------------
-    temperature: float = _builtin_default("temperature", 0.08)
-    max_tokens: int = _builtin_default("max_tokens", 4096)
+    temperature: float = 0.08
+    max_tokens: int = 4096
     # Sampling knobs — defaults match llama-cpp-python's
     # ``create_chat_completion`` defaults. Raise ``presence_penalty``
     # (e.g. 1.5) to break loops on small models.
-    top_p: float = _builtin_default("top_p", 0.95)
-    top_k: int = _builtin_default("top_k", 40)
-    min_p: float = _builtin_default("min_p", 0.05)
-    repeat_penalty: float = _builtin_default("repeat_penalty", 1.0)
-    presence_penalty: float = _builtin_default("presence_penalty", 0.0)
-    frequency_penalty: float = _builtin_default("frequency_penalty", 0.0)
-    user_template: str = _builtin_default("user_template", "{text}")
-    paste_strip_regex: str = _builtin_default(
-        "paste_strip_regex", r"<\|channel>thought(.*?)<channel\|>"
-    )
+    top_p: float = 0.95
+    top_k: int = 40
+    min_p: float = 0.05
+    repeat_penalty: float = 1.0
+    presence_penalty: float = 0.0
+    frequency_penalty: float = 0.0
+    user_template: str = "{text}"
+    paste_strip_regex: str = r"<\|channel>thought(.*?)<channel\|>"
 
     # --- System prompt (orthogonal to backend) --------------------------
-    system_prompt_file: str = _builtin_default(
-        "system_prompt_file", "cleanup_gemma.md"
-    )
-    system_prompt: str = _builtin_default("system_prompt", "")
-    append_to_system_prompt: str = _builtin_default("append_to_system_prompt", "")
+    system_prompt_file: str = "cleanup_gemma.md"
+    system_prompt: str = ""
+    append_to_system_prompt: str = ""
 
     # Passthrough dict forwarded to the chat template. On llama-cpp-python
     # it reaches the Jinja renderer via ``chat_template_kwargs=``; on the
     # remote OpenAI-compatible path it's included in the JSON body. Empty
     # → not forwarded (keeps requests clean for providers that reject it).
     chat_template_kwargs: dict[str, Any] = field(
-        default_factory=lambda: dict(_builtin_default("chat_template_kwargs", {}))
+        default_factory=lambda: {"enable_thinking": True}
     )
 
     # --- User context ---------------------------------------------------
-    context: str = _builtin_default("context", "")
+    context: str = ""
 
     # --- HTTP / OpenAI-compatible backend (base = "remote") -------------
     endpoint: str = ""
@@ -291,9 +293,10 @@ def load_profile(name_or_path: str) -> PostprocessProfile:
     with ``.toml``) it is used directly; otherwise it is resolved to
     ``config_dir()/postprocess/<name>.toml``.
 
-    Resolution order: ``<base>-defaults.toml`` (where *base* comes from
-    the user file's ``base`` field, defaulting to ``"builtin"``) is the
-    starting point; the user file's keys are then overlaid on top.
+    The dataclass defaults match ``base = "builtin"``. For ``base =
+    "remote"`` / ``"responses"``, a small per-base override dict
+    (:data:`_BASE_OVERRIDES`) supplies the divergent defaults for keys
+    the user did not set explicitly.
     """
     p = Path(name_or_path).expanduser()
     is_explicit = p.suffix == ".toml" or "/" in name_or_path or "\\" in name_or_path
@@ -310,15 +313,18 @@ def load_profile(name_or_path: str) -> PostprocessProfile:
     base = raw.get("base")
     if base is None:
         base = "remote" if raw.get("endpoint") else "builtin"
-    if base not in _BASE_DEFAULTS:
+    if base not in _BASE_OVERRIDES:
         log.warning(
             "profile %s: unknown base %r, falling back to 'builtin'", p, base
         )
         base = "builtin"
 
-    merged: dict[str, Any] = {**_BASE_DEFAULTS[base], **raw, "base": base}
     valid = {fld.name for fld in fields(PostprocessProfile)}
-    kwargs = {k: v for k, v in merged.items() if k in valid}
+    kwargs = {k: v for k, v in raw.items() if k in valid}
+    # Apply per-base divergent defaults only for keys the user did NOT set.
+    for k, v in _BASE_OVERRIDES[base].items():
+        kwargs.setdefault(k, v)
+    kwargs["base"] = base
     profile = PostprocessProfile(**kwargs)
     if not profile.context.strip():
         profile.context = load_context_sidecar()
