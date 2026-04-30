@@ -4,10 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-## [0.23.0] - 2026-04-29
+## [0.23.0] - 2026-04-30
 
 ### Added
 - Overlay redo buttons (🧹 cleanup / 🤖 assistant): after an LLM result is shown, the opposite-mode button appears so the user can re-run the cached detected text without re-recording. Clicking 🧹 re-runs with cleanup mode; 🤖 re-runs with assistant mode. A strong nudge is injected into the system prompt so the model honours the override.
+- "LLM thinking" placeholder is animated (cycling dots) so the wait feels alive instead of frozen. Updates every 300 ms while the LLM call is in flight.
 
 ## [0.22.5] - 2026-04-30
 
