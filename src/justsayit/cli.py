@@ -52,7 +52,6 @@ from justsayit.config import (
     save_config,
 )
 from justsayit.filters import load_filters
-from justsayit.snippets import load_snippets
 from justsayit.tools import load_tools
 from justsayit.window_info import active_window_id
 from justsayit.model import ensure_models, ensure_vad
@@ -117,7 +116,6 @@ class App:
         self.gtk_app: Gtk.Application | None = None
         self.filters = []
         self.after_llm_filters = []
-        self.snippets = []
 
         # Bounded queue so we can't run unbounded transcription work if the
         # user is trigger-happy with the hotkey.
@@ -203,9 +201,6 @@ class App:
                 len(self.after_llm_filters),
                 self.cfg.after_llm_filters_path,
             )
-        self.snippets = load_snippets()
-        if self.snippets:
-            log.info("loaded %d snippet(s)", len(self.snippets))
 
     def setup_tools(self) -> None:
         tool_defs = load_tools(self.cfg.tools_path)
@@ -223,9 +218,7 @@ class App:
             self.paster,
             no_paste=self.no_paste,
             after_llm_filters=self.after_llm_filters,
-            snippets=self.snippets,
         )
-        self.pipeline.resolve_profile = self._resolve_profile_postprocessor
 
     def setup_postprocessor(self) -> None:
         if not self.cfg.postprocess.enabled:
@@ -296,25 +289,6 @@ class App:
                 GLib.idle_add(_clear)
 
         threading.Thread(target=_warmup, daemon=True).start()
-
-    def _resolve_profile_postprocessor(self, name: str) -> "LLMPostprocessor | None":
-        """Build a one-shot postprocessor for *name* (used by the
-        spoken-prefix router). Returns None if the profile is missing
-        or fails to load — the pipeline then falls back to the active
-        postprocessor."""
-        try:
-            profile = load_profile(name)
-        except Exception:
-            log.warning("prefix-router: profile %r not found / unparseable", name)
-            return None
-        try:
-            return LLMPostprocessor(
-                profile,
-                dynamic_context_script=self.cfg.postprocess.dynamic_context_script,
-            )
-        except Exception:
-            log.exception("prefix-router: failed to build postprocessor for %r", name)
-            return None
 
     def _stash_local(self, pp: LLMPostprocessor, name: str | None) -> None:
         if name is None:
@@ -1089,11 +1063,9 @@ class App:
             self.paster,
             no_paste=self.no_paste,
             after_llm_filters=self.after_llm_filters,
-            snippets=self.snippets,
         )
         _pl.postprocessor = self.postprocessor
         _pl.overlay = self.overlay
-        _pl.resolve_profile = self._resolve_profile_postprocessor
         _pl._last_transcription_time = self._last_transcription_time
         _pl.handle(seg, consume_clipboard_fn=self._consume_clipboard_context, is_continue=is_continue)
         self._last_transcription_time = _pl._last_transcription_time

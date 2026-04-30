@@ -261,35 +261,6 @@ class WindowClipboardPolicy:
 
 
 @dataclass
-class PrefixRouterConfig:
-    """Spoken-prefix routing.
-
-    When enabled, the pipeline matches a leading ``word:`` (or ``word,``)
-    against ``prefixes`` to switch the LLM profile for one recording, or
-    against the special ``quick`` prefix (when ``quick_skip_llm=True``)
-    to skip the LLM entirely. The prefix is stripped from the text
-    before snippet matching and the LLM call.
-
-    Example config snippet::
-
-        [prefix_router]
-        enabled = true
-        quick_skip_llm = true
-        [prefix_router.prefixes]
-        code  = "code-cleanup"
-        email = "email-polish"
-    """
-
-    enabled: bool = False
-    # When True, the literal "quick" prefix routes around the LLM
-    # (regardless of whether it appears in the prefixes mapping).
-    quick_skip_llm: bool = True
-    # Spoken-word → profile-name mapping. Keys are matched
-    # case-insensitively.
-    prefixes: dict[str, str] = field(default_factory=dict)
-
-
-@dataclass
 class LogConfig:
     # Rotating debug log written to disk. Off by default — turn this on
     # when you need to share a trace of a bug. Console logging is always
@@ -313,7 +284,6 @@ class Config:
     sound: SoundConfig = field(default_factory=SoundConfig)
     log: LogConfig = field(default_factory=LogConfig)
     postprocess: PostprocessConfig = field(default_factory=PostprocessConfig)
-    prefix_router: PrefixRouterConfig = field(default_factory=PrefixRouterConfig)
     window_clipboard_policy: WindowClipboardPolicy = field(
         default_factory=WindowClipboardPolicy
     )

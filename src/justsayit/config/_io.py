@@ -27,7 +27,6 @@ from ._schema import (
     OverlayConfig,
     SoundConfig,
     PostprocessConfig,
-    PrefixRouterConfig,
     WindowClipboardPolicy,
     LogConfig,
     Config,
@@ -157,9 +156,6 @@ def load_config(path: Path | None = None) -> Config:
         cfg.sound = _coerce_section(SoundConfig, raw.get("sound"))
         cfg.log = _coerce_section(LogConfig, raw.get("log"))
         cfg.postprocess = _coerce_section(PostprocessConfig, raw.get("postprocess"))
-        cfg.prefix_router = _coerce_section(
-            PrefixRouterConfig, raw.get("prefix_router")
-        )
         cfg.window_clipboard_policy = _coerce_section(
             WindowClipboardPolicy, raw.get("window_clipboard_policy")
         )
@@ -299,7 +295,6 @@ def render_config_toml(cfg: Config | None = None, *, commented: bool = False) ->
         "sound",
         "log",
         "postprocess",
-        "prefix_router",
         "window_clipboard_policy",
     ):
         section = getattr(cfg, section_name)
@@ -624,31 +619,6 @@ def _default_after_llm_filter_chain() -> list[dict]:
             "enabled": False,
         },
     ]
-
-
-def ensure_snippets_file(path: Path | None = None) -> Path:
-    """Write the default ``snippets.toml`` if it doesn't exist. Returns
-    the resolved path.
-
-    The shipped template is fully-commented out so no snippets are
-    active by default. Users uncomment / add ``[[snippet]]`` tables to
-    define canned-text expansions.
-    """
-    if path is None:
-        path = config_dir() / "snippets.toml"
-    if not path.exists():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        template_path = (
-            Path(__file__).parent.parent / "templates" / "snippets-defaults.toml"
-        )
-        try:
-            content = template_path.read_text(encoding="utf-8")
-        except OSError:
-            # Fallback if the bundled template is missing for some
-            # reason — at least leave a usable empty file.
-            content = "# justsayit snippets — see docs.\n"
-        path.write_text(content, encoding="utf-8")
-    return path
 
 
 def ensure_tools_file(path: Path | None = None) -> Path:
