@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.22.1] - 2026-04-29
+
+### Fixed
+- Overlay no longer hangs at "Wait for LLM processing…" when the LLM returns a fenced code block containing a markdown table. The fence pass now runs before the table pass so `|`-lines inside fences are never misdetected as tables.
+- `_set_label_markup_safe` now validates markup with `Pango.parse_markup` before calling `set_markup`; invalid markup falls back to `set_text` instead of silently leaving the label unchanged.
+
 ## [0.22.0] - 2026-04-30
 
 ### Fixed

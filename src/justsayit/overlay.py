@@ -34,8 +34,9 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gtk4LayerShell", "1.0")
+gi.require_version("Pango", "1.0")
 
-from gi.repository import Gdk, GLib, Gtk, Gtk4LayerShell  # noqa: E402
+from gi.repository import Gdk, GLib, Gtk, Gtk4LayerShell, Pango  # noqa: E402
 
 from justsayit.audio import State
 from justsayit.config import Config
@@ -261,9 +262,19 @@ def _md_to_pango(text: str) -> str:
         stash[key] = value
         return key
 
-    # Tables first — collect contiguous "|"-prefixed lines that include a
+    # Fences first — stash their contents before the table pass so that
+    # "|"-prefixed lines INSIDE a fence are not mistakenly detected as a
+    # markdown table (which would embed a stash key inside a fence stash,
+    # producing unresolvable nested keys and invalid Pango markup).
+    def _fence(m: re.Match[str]) -> str:
+        return _stash(f"<tt>{escape(m.group(1).rstrip())}</tt>")
+
+    text = _MD_FENCE_RE.sub(_fence, text)
+
+    # Tables — collect contiguous "|"-prefixed lines that include a
     # separator row (|---|---|), render to a stashed <tt> block so later
-    # passes (escape, bold, etc.) don't touch them.
+    # passes (escape, bold, etc.) don't touch them. Fenced content is
+    # already replaced with stash keys so it is invisible to this pass.
     src_lines = text.splitlines()
     out_table_pass: list[str] = []
     i = 0
@@ -283,11 +294,6 @@ def _md_to_pango(text: str) -> str:
         out_table_pass.append(line)
         i += 1
     text = "\n".join(out_table_pass)
-
-    def _fence(m: re.Match[str]) -> str:
-        return _stash(f"<tt>{escape(m.group(1).rstrip())}</tt>")
-
-    text = _MD_FENCE_RE.sub(_fence, text)
 
     def _inline_code(m: re.Match[str]) -> str:
         return _stash(f"<tt>{escape(m.group(1))}</tt>")
@@ -338,11 +344,16 @@ def _md_to_pango(text: str) -> str:
 def _set_label_markup_safe(label: Gtk.Label, markup: str, fallback: str) -> None:
     """``set_markup`` but if Pango rejects the string, fall back to plain
     text. The markdown converter is best-effort; an LLM emitting an
-    unbalanced asterisk inside HTML-looking text shouldn't blank the pill."""
+    unbalanced asterisk inside HTML-looking text shouldn't blank the pill.
+
+    ``Gtk.Label.set_markup()`` does NOT raise on invalid markup — it logs
+    a Gtk-WARNING and leaves the label unchanged (causing a frozen pill).
+    ``Pango.parse_markup`` DOES raise, so we validate first."""
     try:
+        Pango.parse_markup(markup, -1, "\0")  # validate; raises GLib.Error on bad markup
         label.set_markup(markup)
     except Exception:
-        log.exception("set_markup failed; falling back to plain text")
+        log.exception("Pango markup invalid; falling back to plain text")
         label.set_text(fallback)
 
 
