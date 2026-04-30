@@ -370,6 +370,9 @@ def _md_to_pango(text: str) -> str:
     return text
 
 
+_GTKLABEL_ONLY_TAGS_RE = re.compile(r"</?a\b[^>]*>", re.IGNORECASE)
+
+
 def _set_label_markup_safe(label: Gtk.Label, markup: str, fallback: str) -> None:
     """``set_markup`` but if Pango rejects the string, fall back to plain
     text. The markdown converter is best-effort; an LLM emitting an
@@ -377,9 +380,18 @@ def _set_label_markup_safe(label: Gtk.Label, markup: str, fallback: str) -> None
 
     ``Gtk.Label.set_markup()`` does NOT raise on invalid markup — it logs
     a Gtk-WARNING and leaves the label unchanged (causing a frozen pill).
-    ``Pango.parse_markup`` DOES raise, so we validate first."""
+    ``Pango.parse_markup`` DOES raise, so we validate first.
+
+    BUT — ``Pango.parse_markup`` is stricter than ``GtkLabel.set_markup``:
+    GtkLabel accepts ``<a href="...">`` for clickable links as a GTK
+    extension, while pure Pango doesn't recognise ``<a>`` at all and
+    rejects it. Strip ``<a>`` open/close tags for the validation pass
+    only; the original markup (with links intact) is what goes to
+    ``set_markup``. Otherwise any LLM response containing a link gets
+    every other markdown style (bold, code, tables) silently stripped."""
+    validation_markup = _GTKLABEL_ONLY_TAGS_RE.sub("", markup)
     try:
-        Pango.parse_markup(markup, -1, "\0")  # validate; raises GLib.Error on bad markup
+        Pango.parse_markup(validation_markup, -1, "\0")
         label.set_markup(markup)
     except Exception:
         log.exception("Pango markup invalid; falling back to plain text")

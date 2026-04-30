@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.22.5] - 2026-04-30
+
+### Fixed
+- LLM output containing a markdown link no longer falls back to plain text. The Pango validator added in 0.22.1 rejects `<a>` tags (a GtkLabel extension that pure Pango doesn't recognise), so any response with even one link lost ALL its markdown styling — bold, code, tables, italics — and rendered as raw text. The validator now strips `<a>` open/close tags for the validation pass only; the original markup with links intact still reaches `set_markup`.
+
 ## [0.22.4] - 2026-04-30
 
 ### Fixed

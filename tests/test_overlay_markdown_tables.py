@@ -247,3 +247,38 @@ def test_table_uses_allow_breaks_false():
     assert 'allow_breaks="false"' in out
     # Pango must still parse it.
     Pango.parse_markup(out, -1, "\0")
+
+
+# ── Pango validation tolerates GtkLabel <a> tags ────────────────────────────
+
+
+def test_set_label_markup_safe_accepts_links():
+    """``Pango.parse_markup`` rejects ``<a href="...">``, but
+    ``GtkLabel.set_markup`` accepts it as a GTK extension. The validator
+    must strip ``<a>`` for validation only; the link must reach the label
+    so it renders styled and clickable."""
+    label = MagicMock(spec=Gtk.Label)
+    markup = (
+        '<b>bold</b> and a link '
+        '<a href="https://example.com">click me</a> plus more text.'
+    )
+    _set_label_markup_safe(label, markup, "fallback")
+    label.set_markup.assert_called_once_with(markup)
+    label.set_text.assert_not_called()
+
+
+def test_md_to_pango_with_link_accepted_by_validator():
+    """Regression: an LLM output with a markdown link used to be rejected
+    by the validator (unknown tag 'a') and fall back to plain text,
+    losing all other markdown formatting."""
+    src = (
+        "I couldn't find a doc, but here's a reference: "
+        "[help.openai.com](https://help.openai.com/en/articles/8400625) "
+        "for **voice mode** details."
+    )
+    out = _md_to_pango(src)
+    assert '<a href="https://help.openai.com/en/articles/8400625">' in out
+    label = MagicMock(spec=Gtk.Label)
+    _set_label_markup_safe(label, out, src)
+    label.set_markup.assert_called_once_with(out)
+    label.set_text.assert_not_called()
