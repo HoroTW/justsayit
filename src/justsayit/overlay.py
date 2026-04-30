@@ -237,8 +237,14 @@ def _render_md_table(lines: list[str]) -> str:
     out: list[str] = []
     for row in rows:
         if row is None:
+            # Separator row: each column's dashes match that column's
+            # width; the inter-column "─┼─" lines up with " │ " in the
+            # data rows so ┼ sits exactly where │ does. No leading/
+            # trailing dash — data rows don't have leading/trailing
+            # chars either, so adding them here would shift all the ┼
+            # columns one position right.
             segs = ["─" * widths[j] for j in range(col_count)]
-            out.append("─" + "─┼─".join(segs) + "─")
+            out.append("─┼─".join(segs))
         else:
             segs = [escape(cell).ljust(widths[j]) for j, cell in enumerate(row)]
             out.append(" │ ".join(segs))
@@ -568,7 +574,9 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._detected_label.set_wrap(True)
         self._detected_label.set_visible(False)
         self._detected_label.set_selectable(True)
-        self._detected_label.set_can_focus(False)
+        # Selectable labels need can_focus=True so the layer-shell
+        # ON_DEMAND keyboard mode can deliver Ctrl+C to GtkLabel's
+        # native clipboard handler when the user clicks the pill.
         self._detected_label.connect(
             "notify::has-selection", self._on_label_has_selection
         )
@@ -588,21 +596,10 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._llm_label.set_wrap(True)
         self._llm_label.set_visible(False)
         self._llm_label.set_selectable(True)
-        self._llm_label.set_can_focus(False)
         self._llm_label.connect(
             "notify::has-selection", self._on_label_has_selection
         )
         root.append(self._llm_label)
-
-        # Selectable labels capture clicks and don't bubble to the parent
-        # gesture, so attach a CAPTURE-phase gesture directly to each so
-        # any click — even one that doesn't produce a selection — cancels
-        # the auto-dismiss linger.
-        for _label in (self._detected_label, self._llm_label):
-            _lbl_click = Gtk.GestureClick.new()
-            _lbl_click.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
-            _lbl_click.connect("pressed", self._on_label_clicked)
-            _label.add_controller(_lbl_click)
 
         # Separator above bottom row (only shown in result mode)
         self._sep_bottom = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
@@ -631,8 +628,12 @@ class OverlayWindow(Gtk.ApplicationWindow):
 
         root.append(bottom_row)
 
-        # Click anywhere on the pill during result-display → pause auto-close.
+        # Click anywhere on the pill (including on selectable text labels)
+        # during result-display → pause auto-close. CAPTURE-phase fires
+        # from root DOWN to target before any child gesture, so it sees
+        # clicks even on selectable labels which would otherwise eat them.
         _click_ctrl = Gtk.GestureClick.new()
+        _click_ctrl.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
         _click_ctrl.connect("pressed", self._on_result_clicked)
         root.add_controller(_click_ctrl)
 
@@ -801,25 +802,20 @@ class OverlayWindow(Gtk.ApplicationWindow):
     def _on_result_clicked(self, _gesture, _n_press, _x, _y) -> None:
         """Clicking the result pill cancels the auto-dismiss so the overlay
         stays open; the user can then decide to activate assistant mode via
-        the 💬 button."""
+        the 💬 button. Wired in CAPTURE phase on the root box so it fires
+        for clicks on selectable labels too (which would otherwise eat the
+        click before any BUBBLE-phase gesture sees it)."""
         if self._detected_label.get_visible():
-            log.debug("result clicked — cancelling auto-dismiss")
+            log.info("result pill clicked — cancelling auto-dismiss")
             self._cancel_linger()
 
     def _on_label_has_selection(self, label: Gtk.Label, _pspec) -> None:
-        """Selectable labels swallow click events from the parent gesture
-        controller, so mid-selection the linger timer would still fire and
-        yank the pill out from under the user. Cancel auto-dismiss as soon
-        as a selection is made."""
+        """Selecting text in a label is itself a strong signal of user
+        engagement — also cancel the linger. Belt-and-braces with the
+        root CAPTURE-phase gesture: even if a click somehow fails to
+        reach _on_result_clicked, dragging out a selection still keeps
+        the pill open."""
         if label.get_property("has-selection"):
-            self._cancel_linger()
-
-    def _on_label_clicked(self, _gesture, _n_press, _x, _y) -> None:
-        """Cancel auto-dismiss on any click on a result label — even one
-        that doesn't produce a selection. Selectable GtkLabels capture
-        clicks, so the parent gesture never fires; this CAPTURE-phase
-        gesture runs before the label's own click handling."""
-        if self._detected_label.get_visible():
             self._cancel_linger()
 
     def _on_abort_clicked(self, _button: Gtk.Button) -> None:

@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.22.2] - 2026-04-30
+
+### Fixed
+- Ctrl+C in the result overlay actually works now: the labels were marked `can_focus=False` (a leftover from 0.20.0), so the layer-shell ON_DEMAND keyboard mode had nothing to deliver focus to. Removed `can_focus=False` so clicking the label grabs focus and routes Ctrl+C to GtkLabel's clipboard handler.
+- Clicking on the result text actually cancels the auto-dismiss now: switched the root gesture controller to CAPTURE phase so it fires before selectable-label gestures swallow the click. Removed the per-label CAPTURE-phase gestures (no longer needed). The handler also logs at INFO so the cancellation is visible in the logs.
+- Markdown table separator row no longer has an extra `─` at each end; the `┼` columns now align exactly with the `│` columns in the data rows.
+
 ## [0.22.1] - 2026-04-30
 
 ### Fixed

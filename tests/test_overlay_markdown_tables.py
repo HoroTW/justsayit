@@ -45,6 +45,30 @@ def test_table_columns_are_aligned():
     assert len(widths) == 1, f"data rows misaligned: {widths}"
 
 
+def test_separator_aligns_with_data_rows():
+    """The ``─┼─`` separator must be the same length as the data rows so
+    each ``┼`` sits exactly under a ``│`` in the data rows. Earlier code
+    prepended/appended an extra ``─`` that shifted columns right by one."""
+    out = _md_to_pango(SIMPLE_TABLE)
+    body = out.replace("<tt>", "").replace("</tt>", "")
+    lines = [ln for ln in body.split("\n") if ln.strip()]
+    # Find the separator row (contains ┼) and a data row (contains │ but not ┼).
+    sep_lines = [ln for ln in lines if "┼" in ln]
+    data_lines = [ln for ln in lines if "│" in ln and "┼" not in ln]
+    assert sep_lines and data_lines
+    assert len(sep_lines[0]) == len(data_lines[0]), (
+        f"sep len {len(sep_lines[0])} != data len {len(data_lines[0])}\n"
+        f"sep:  {sep_lines[0]!r}\ndata: {data_lines[0]!r}"
+    )
+    # Every ┼ in the separator must sit at the same column index as a │
+    # in the data rows.
+    sep_pluses = [i for i, c in enumerate(sep_lines[0]) if c == "┼"]
+    data_pipes = [i for i, c in enumerate(data_lines[0]) if c == "│"]
+    assert sep_pluses == data_pipes, (
+        f"┼ at {sep_pluses} but │ at {data_pipes}"
+    )
+
+
 def test_no_separator_falls_through_unchanged():
     """A `|`-line block without a separator should NOT be table-rendered."""
     src = "| just  | text |\n| more  | text |\n"
