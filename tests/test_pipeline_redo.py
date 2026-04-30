@@ -225,27 +225,15 @@ def test_redo_noop_when_no_postprocessor(caplog):
 
 
 # ---------------------------------------------------------------------------
-# 4. REDO nudge ends up in extra_system_prompt seen by postprocessor
+# 4. Redo mirrors the regular handle() call shape — no custom nudge
 # ---------------------------------------------------------------------------
 
 
-def test_redo_cleanup_nudge_in_extra_system_prompt(capsys):
-    pipe = _make_pipeline("text to redo")
-    pp = _RecordingPostprocessor("cleaned")
-    pipe.postprocessor = pp
-    pipe.handle(_make_seg())
-    pp.calls.clear()
-
-    pipe.redo_with_override(assistant_mode_override=False)
-
-    assert len(pp.calls) == 1
-    nudge = pp.calls[0]["extra_system_prompt"]
-    assert "REDO" in nudge
-    assert "cleanup" in nudge.lower()
-    assert "DO NOT" in nudge
-
-
-def test_redo_assistant_nudge_in_extra_system_prompt(capsys):
+def test_redo_passes_assistant_mode_flag(capsys):
+    """Redo must pass ``assistant_mode`` to the postprocessor — that's the
+    SAME mechanism the regular 💬 button uses, and it's the only one strong
+    enough to flip strict-rule models like Gemma. A free-text "REDO" nudge
+    is not sent (it confused models that follow the static prompt rules)."""
     pipe = _make_pipeline("text to redo")
     pp = _RecordingPostprocessor("assistant reply")
     pipe.postprocessor = pp
@@ -255,10 +243,23 @@ def test_redo_assistant_nudge_in_extra_system_prompt(capsys):
     pipe.redo_with_override(assistant_mode_override=True)
 
     assert len(pp.calls) == 1
-    nudge = pp.calls[0]["extra_system_prompt"]
-    assert "REDO" in nudge
-    assert "assistant" in nudge.lower()
-    assert "DO NOT" in nudge
+    assert pp.calls[0]["assistant_mode"] is True
+    # No custom nudge — the mode flag does the work.
+    assert pp.calls[0].get("extra_system_prompt", "") == ""
+
+
+def test_redo_cleanup_passes_false(capsys):
+    pipe = _make_pipeline("text to redo")
+    pp = _RecordingPostprocessor("cleaned")
+    pipe.postprocessor = pp
+    pipe.handle(_make_seg())
+    pp.calls.clear()
+
+    pipe.redo_with_override(assistant_mode_override=False)
+
+    assert len(pp.calls) == 1
+    assert pp.calls[0]["assistant_mode"] is False
+    assert pp.calls[0].get("extra_system_prompt", "") == ""
 
 
 # ---------------------------------------------------------------------------

@@ -360,20 +360,37 @@ class SegmentPipeline:
 
         text = self._last_detected_text
 
-        if assistant_mode_override:
-            nudge = (
-                "REDO: respond as an assistant to the transcribed input. "
-                "DO NOT just clean up the transcription."
-            )
-        else:
-            nudge = (
-                "REDO: ONLY do cleanup of the transcription. "
-                "DO NOT respond conversationally / assistant-style."
-            )
-
         # Switch overlay to LLM-thinking placeholder.
         if self.overlay is not None:
             self.overlay.push_detected_text(text, llm_pending=True)
+
+        # Mirror the regular handle() path's tool wiring so the LLM gets
+        # the exact same call shape it would for a normal recording with
+        # the corresponding mode. Free-text "REDO" nudges aren't enough
+        # for models like Gemma with strict static-prompt rules — only
+        # the same prompt+tool structure as the regular path reliably
+        # flips them between cleanup and assistant.
+        tools = None
+        tool_caller = None
+        if (
+            self.tool_definitions
+            and getattr(pp.profile, "use_tools", True)
+            and assistant_mode_override
+        ):
+            from justsayit.tools import execute_tool
+            _overlay = self.overlay
+            _tools_by_name = {td.name: td for td in self.tool_definitions}
+            tools = [td.to_openai_format() for td in self.tool_definitions]
+
+            def _call_tool(name: str, params: dict) -> str:
+                if _overlay is not None:
+                    _overlay.push_tool_call(name, params)
+                td = _tools_by_name.get(name)
+                if td is None:
+                    log.warning("tool %r called but not defined", name)
+                    return f"Error: tool '{name}' is not defined."
+                return execute_tool(td, params)
+            tool_caller = _call_tool
 
         llm_overlay_text = text
         llm_overlay_thought = ""
@@ -381,7 +398,8 @@ class SegmentPipeline:
         try:
             result = pp.process_with_reasoning(
                 text,
-                extra_system_prompt=nudge,
+                tools=tools,
+                tool_caller=tool_caller,
                 assistant_mode=assistant_mode_override,
             )
             cleaned = result.text

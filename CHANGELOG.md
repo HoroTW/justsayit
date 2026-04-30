@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.23.1] - 2026-04-30
+
+### Fixed
+- 🤖 redo button now actually flips strict-rule models (Gemma) into assistant mode. The 0.23.0 implementation passed the right `assistant_mode=True` flag but ALSO injected a free-text "REDO: respond as an assistant…" nudge — Gemma's static cleanup prompt has hard rules ("MUST have 'Computer' in transcript") that override loose nudges, and the redo path also lacked the tool-wiring the regular 💬 button path sets up. `redo_with_override` now mirrors `handle()`'s LLM call shape exactly: no custom nudge, same tool/tool_caller setup; the mode flag alone does the work, just like the regular button.
+
 ## [0.23.0] - 2026-04-30
 
 ### Added
