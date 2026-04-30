@@ -24,17 +24,19 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _http_post(
+def _json_post(
     url: str,
     body: dict,
     headers: dict,
     *,
-    remote_retries: int,
-    remote_retry_delay_seconds: float,
-    request_timeout: float,
+    profile: PostprocessProfile,
     label: str = "LLM",
 ) -> dict:
-    """POST JSON *body* to *url*, retrying on transient HTTP errors."""
+    """POST JSON *body* to *url*, retrying on transient HTTP errors.
+
+    Pulls timeout / retry knobs from *profile*; sets the standard
+    JSON + User-Agent headers on top of the caller's *headers*.
+    """
     encoded = json.dumps(body).encode("utf-8")
     all_headers = {
         "Content-Type": "application/json",
@@ -42,7 +44,13 @@ def _http_post(
         **headers,
     }
     req = urllib.request.Request(url, data=encoded, headers=all_headers, method="POST")
-    raw = request_with_retry(req, timeout=request_timeout, retries=remote_retries, delay=remote_retry_delay_seconds, label=label)
+    raw = request_with_retry(
+        req,
+        timeout=profile.request_timeout,
+        retries=profile.remote_retries,
+        delay=profile.remote_retry_delay_seconds,
+        label=label,
+    )
     return json.loads(raw)
 
 
@@ -235,29 +243,36 @@ class PostprocessorBase:
             )
         return prompt, "\n\n".join(dynamic_parts)
 
-    def _build_system_prompt(self, extra_context: str = "", history_text: str = "", extra_image_provided: bool = False, assistant_mode: bool = False) -> str:
-        static, dynamic = self._build_system_prompt_parts(extra_context, extra_image_provided=extra_image_provided, history_text=history_text, assistant_mode=assistant_mode)
-        return "\n\n".join(filter(None, [static, dynamic]))
-
     def _build_messages(
-        self, text: str, extra_context: str = "", history_text: str = "", extra_image_provided: bool = False, assistant_mode: bool = False
-    ) -> list[dict[str, str]]:
-        messages = [
-            {"role": "system", "content": self._build_system_prompt(extra_context, history_text=history_text, extra_image_provided=extra_image_provided, assistant_mode=assistant_mode)},
-            {"role": "user", "content": self.profile.user_template.format(text=text)},
-        ]
-        log.debug("assembled LLM system prompt:\n%s", messages[0]["content"])
-        return messages
-
-    def _build_messages_continued(
-        self, text: str, extra_context: str, prev_messages: list[dict], extra_image_provided: bool = False, assistant_mode: bool = False
+        self,
+        text: str,
+        extra_context: str = "",
+        *,
+        prev_messages: list[dict] | tuple[dict, ...] = (),
+        extra_image_provided: bool = False,
+        assistant_mode: bool = False,
+        history_text: str = "",
     ) -> list[dict]:
-        messages = [
-            {"role": "system", "content": self._build_system_prompt(extra_context, extra_image_provided=extra_image_provided, assistant_mode=assistant_mode)},
+        """Assemble the chat-completions message list.
+
+        ``prev_messages`` (when non-empty) is spliced between the system
+        message and the new user turn. ``history_text`` is folded into
+        the system prompt's dynamic section instead — used by the local
+        backend, which serializes prior turns as plain text.
+        """
+        static, dynamic = self._build_system_prompt_parts(
+            extra_context,
+            extra_image_provided=extra_image_provided,
+            history_text=history_text,
+            assistant_mode=assistant_mode,
+        )
+        system_content = "\n\n".join(filter(None, [static, dynamic]))
+        messages: list[dict] = [
+            {"role": "system", "content": system_content},
             *prev_messages,
             {"role": "user", "content": self.profile.user_template.format(text=text)},
         ]
-        log.debug("assembled LLM system prompt (continued):\n%s", messages[0]["content"])
+        log.debug("assembled LLM system prompt:\n%s", system_content)
         return messages
 
     @staticmethod

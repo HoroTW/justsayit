@@ -147,11 +147,10 @@ class LocalBackend(PostprocessorBase):
         prev_msgs: list[dict] = (previous_session.get("prev_messages") or []) if previous_session else []
         # Local models are text-only for inference; always use formatted history text.
         # Images in prev_msgs are preserved in session storage for cross-backend switches.
-        if prev_msgs:
-            history_text = self._format_history_text(prev_msgs)
-            messages = self._build_messages(text, extra_context, history_text=history_text, assistant_mode=assistant_mode)
-        else:
-            messages = self._build_messages(text, extra_context, assistant_mode=assistant_mode)
+        history_text = self._format_history_text(prev_msgs) if prev_msgs else ""
+        messages = self._build_messages(
+            text, extra_context, history_text=history_text, assistant_mode=assistant_mode
+        )
 
         use_tools = bool(tools and tool_caller and self.profile.use_tools)
 

@@ -1,7 +1,7 @@
 """Burn tests for cross-backend session continuation with images.
 
 Verifies that images stored in session.json via _canonical_to_responses_input
-(Responses API) and _build_messages_continued (Chat Completions) are actually
+(Responses API) and _build_messages (Chat Completions) are actually
 visible to the model in turn 2 after a backend switch.
 
     pytest -m burn tests/test_burn_cross_backend_image.py
@@ -113,7 +113,7 @@ def _mentions_image_content(text: str) -> bool:
 def test_burn_responses_to_remote_cross_backend_image(tmp_path):
     """Turn 1 (Responses API): image sent, model told NOT to describe it yet.
     Turn 2 (Chat Completions, cross-backend continue): model asked to now describe
-    the image from turn 1. Verifies _build_messages_continued injects the image."""
+    the image from turn 1. Verifies _build_messages injects the prev_messages."""
     _require_openai_key()
     png = _make_test_png()
 

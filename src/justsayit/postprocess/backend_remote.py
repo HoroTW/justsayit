@@ -7,7 +7,7 @@ import re
 import time
 from typing import Any
 
-from ._processor import PostprocessorBase, _http_post, _log_usage, log
+from ._processor import PostprocessorBase, _json_post, _log_usage, log
 from ._profile import ProcessResult
 
 _MAX_TOOL_ROUNDS = 10
@@ -35,11 +35,14 @@ class RemoteBackend(PostprocessorBase):
         img_b64 = base64.b64encode(extra_image).decode("ascii") if has_image else ""  # type: ignore[arg-type]
 
         # prev_messages is always in canonical chat-completions format regardless
-        # of which backend stored it, so _build_messages_continued works directly.
-        if prev_msgs:
-            messages = self._build_messages_continued(text, extra_context, prev_msgs, extra_image_provided=has_image, assistant_mode=assistant_mode)
-        else:
-            messages = self._build_messages(text, extra_context, extra_image_provided=has_image, assistant_mode=assistant_mode)
+        # of which backend stored it, so it can be spliced in directly.
+        messages = self._build_messages(
+            text,
+            extra_context,
+            prev_messages=prev_msgs,
+            extra_image_provided=has_image,
+            assistant_mode=assistant_mode,
+        )
 
         if has_image:
             # Convert last user message from a plain string to a content list.
@@ -74,13 +77,11 @@ class RemoteBackend(PostprocessorBase):
             body["tools"] = tools
             body["tool_choice"] = "auto"
 
-        data = _http_post(
+        data = _json_post(
             url,
             body,
             {"Authorization": f"Bearer {api_key}"},
-            remote_retries=self.profile.remote_retries,
-            remote_retry_delay_seconds=self.profile.remote_retry_delay_seconds,
-            request_timeout=self.profile.request_timeout,
+            profile=self.profile,
             label="remote LLM",
         )
 
@@ -115,13 +116,11 @@ class RemoteBackend(PostprocessorBase):
                         "content": result_str,
                     })
                 body["messages"] = messages
-                data = _http_post(
+                data = _json_post(
                     url,
                     body,
                     {"Authorization": f"Bearer {api_key}"},
-                    remote_retries=self.profile.remote_retries,
-                    remote_retry_delay_seconds=self.profile.remote_retry_delay_seconds,
-                    request_timeout=self.profile.request_timeout,
+                    profile=self.profile,
                     label="remote LLM (tool follow-up)",
                 )
 

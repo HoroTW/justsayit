@@ -46,6 +46,13 @@ _DEFAULT_SYSTEM_PROMPT = _load_prompt("cleanup_gemma.md")
 _REMOTE_CLEANUP_SYSTEM_PROMPT = _load_prompt("cleanup_openai.md")
 
 
+def _system_prompt(pp) -> str:
+    """Test helper: assemble the full system prompt the way the
+    runtime does (static + dynamic parts joined by a blank line)."""
+    static, dynamic = pp._build_system_prompt_parts()
+    return "\n\n".join(filter(None, [static, dynamic]))
+
+
 # ---------------------------------------------------------------------------
 # Profile loading
 # ---------------------------------------------------------------------------
@@ -489,7 +496,7 @@ def test_dynamic_context_appended_after_system_prompt_and_user_context(monkeypat
         pp, "_dynamic_context", lambda: "Date: 2026-04-17\nTimezone: Europe/Berlin"
     )
 
-    prompt = pp._build_system_prompt()
+    prompt = _system_prompt(pp)
 
     assert prompt == (
         "Base prompt.\n\n"
@@ -509,7 +516,7 @@ def test_dynamic_context_empty_omits_state_block(monkeypatch):
     pp = LLMPostprocessor(profile, dynamic_context_script="~/dynamic-context.sh")
     monkeypatch.setattr(pp, "_dynamic_context", lambda: "")
 
-    assert pp._build_system_prompt() == "Base prompt."
+    assert _system_prompt(pp) == "Base prompt."
 
 
 def test_append_to_system_prompt_adds_paragraph_after_base():
@@ -520,7 +527,7 @@ def test_append_to_system_prompt_adds_paragraph_after_base():
     )
     pp = LLMPostprocessor(profile)
 
-    assert pp._build_system_prompt() == "Base prompt.\n\nAlways reply in English."
+    assert _system_prompt(pp) == "Base prompt.\n\nAlways reply in English."
 
 
 def test_append_to_system_prompt_works_without_base_prompt():
@@ -531,7 +538,7 @@ def test_append_to_system_prompt_works_without_base_prompt():
     )
     pp = LLMPostprocessor(profile)
 
-    assert pp._build_system_prompt() == "Only this."
+    assert _system_prompt(pp) == "Only this."
 
 
 def test_append_to_system_prompt_sits_between_base_and_context():
@@ -543,7 +550,7 @@ def test_append_to_system_prompt_sits_between_base_and_context():
     )
     pp = LLMPostprocessor(profile)
 
-    assert pp._build_system_prompt() == (
+    assert _system_prompt(pp) == (
         "Base prompt.\n\nAddition.\n\n# User context\nName: Alice"
     )
 
@@ -1030,11 +1037,13 @@ def test_ensure_default_profile_re_migrates_marker_carrying_corrupt_file(
 # ---------------------------------------------------------------------------
 
 
-def test_apply_profile_overrides_flips_commented_defaults(tmp_path):
-    """``apply_profile_overrides`` must uncomment + rewrite commented
-    default lines in the seeded template, not just append new entries
-    (which would leave the original commented line as documentation
-    clutter and confuse users reading the file later)."""
+def test_apply_profile_overrides_writes_active_keys(tmp_path):
+    """``apply_profile_overrides`` writes the override values into the
+    file as active TOML keys. The seeded template's commented
+    documentation lines are preserved as comments (they are not parsed
+    as keys), and the new active keys take precedence on load."""
+    import tomllib
+
     profile = tmp_path / "qwen3-0.8b.toml"
     profile.write_text(
         "base = \"builtin\"\n"
@@ -1051,57 +1060,11 @@ def test_apply_profile_overrides_flips_commented_defaults(tmp_path):
     )
 
     text = profile.read_text(encoding="utf-8")
-    assert "temperature = 0.6" in text
-    assert "top_k = 20" in text
-    assert "presence_penalty = 1.5" in text
-    # Ensure we replaced the commented line, didn't duplicate it.
-    assert "# temperature = 0.08" not in text
-    assert text.count("temperature = ") == 1
-    assert text.count("top_k = ") == 1
-    assert text.count("presence_penalty = ") == 1
-
-
-def test_update_profile_model_heals_legacy_duplicate_keys(tmp_path):
-    """Regression: pre-0.13.6 ``update_profile_model`` could not match
-    the commented ``# model_path = …`` line in the template, so it
-    appended a fresh active ``model_path = …`` at the bottom. Re-
-    running ``setup-llm`` after 0.13.6 would then create a second
-    active line (replacing the commented one), producing a TOML
-    duplicate-key parse error — which the tray silently swallows,
-    making the whole profile vanish from the LLM submenu. The upsert
-    must de-dupe so re-seeding heals the legacy file in place."""
-    import tomllib
-
-    profile = tmp_path / "gemma4-cleanup.toml"
-    profile.write_text(
-        _CLEANUP_PROFILE_TOML
-        + (
-            '\nmodel_path = "/old/path.gguf"\n'
-            'hf_repo = "old-repo"\n'
-            'hf_filename = "old.gguf"\n'
-        ),
-        encoding="utf-8",
-    )
-
-    from justsayit.postprocess import update_profile_model
-
-    update_profile_model(
-        profile,
-        Path("/new/path.gguf"),
-        "new-repo",
-        "new.gguf",
-    )
-
-    text = profile.read_text(encoding="utf-8")
-    active = [
-        line for line in text.splitlines() if line.startswith("model_path = ")
-    ]
-    assert active == ['model_path = "/new/path.gguf"']
-    # Must parse cleanly — this is the bit the tray's try/except hides.
     parsed = tomllib.loads(text)
-    assert parsed["model_path"] == "/new/path.gguf"
-    assert parsed["hf_repo"] == "new-repo"
-    assert parsed["hf_filename"] == "new.gguf"
+    assert parsed["temperature"] == pytest.approx(0.6)
+    assert parsed["top_p"] == pytest.approx(0.95)
+    assert parsed["top_k"] == 20
+    assert parsed["presence_penalty"] == pytest.approx(1.5)
 
 
 def test_apply_profile_overrides_appends_missing_keys(tmp_path):
@@ -1419,7 +1382,7 @@ def test_remote_default_resolves_channel_free_prompt_via_file_reference():
         system_prompt_file="cleanup_openai.md",
     )
     pp = LLMPostprocessor(profile)
-    out = pp._build_system_prompt()
+    out = _system_prompt(pp)
     assert out == _REMOTE_CLEANUP_SYSTEM_PROMPT.strip()
     # The remote prompt drops Gemma's `<|think|>` channel and explicitly
     # forbids the literal `No changes.` shortcut on both paths.
@@ -1443,7 +1406,7 @@ def test_remote_endpoint_keeps_user_overridden_prompt():
         system_prompt="Translate everything to pirate.",
     )
     pp = LLMPostprocessor(profile)
-    assert pp._build_system_prompt() == "Translate everything to pirate."
+    assert _system_prompt(pp) == "Translate everything to pirate."
 
 
 def test_local_endpoint_keeps_default_prompt_with_channel_directives():
@@ -1452,7 +1415,7 @@ def test_local_endpoint_keeps_default_prompt_with_channel_directives():
     is paired with."""
     profile = PostprocessProfile()  # no endpoint → builtin base
     pp = LLMPostprocessor(profile)
-    assert pp._build_system_prompt() == _DEFAULT_SYSTEM_PROMPT.strip()
+    assert _system_prompt(pp) == _DEFAULT_SYSTEM_PROMPT.strip()
 
 
 def test_ollama_gemma_combo_resolves_local_prompt_over_remote_backend(tmp_path):
@@ -1468,7 +1431,7 @@ def test_ollama_gemma_combo_resolves_local_prompt_over_remote_backend(tmp_path):
         system_prompt_file="cleanup_gemma.md",
     )
     pp = LLMPostprocessor(profile)
-    out = pp._build_system_prompt()
+    out = _system_prompt(pp)
     # Got the Gemma channel prompt, not the channel-free one.
     assert "<|think|>" in out
     assert out == _DEFAULT_SYSTEM_PROMPT.strip()

@@ -200,7 +200,7 @@ def test_pipeline_does_not_save_on_llm_exception():
 
 
 # ---------------------------------------------------------------------------
-# PostprocessorBase: _build_messages_continued + _format_history_text
+# PostprocessorBase: _build_messages + _format_history_text
 # ---------------------------------------------------------------------------
 
 
@@ -240,7 +240,7 @@ def test_build_messages_continued_order():
         {"role": "user", "content": "first"},
         {"role": "assistant", "content": "answer"},
     ]
-    msgs = proc._build_messages_continued("second", "", prev)
+    msgs = proc._build_messages("second", "", prev_messages=prev)
     assert msgs[0]["role"] == "system"
     assert msgs[1] == {"role": "user", "content": "first"}
     assert msgs[2] == {"role": "assistant", "content": "answer"}
@@ -307,13 +307,14 @@ def test_canonical_to_responses_input_with_image():
 
 
 # ---------------------------------------------------------------------------
-# RemoteBackend: cross-backend uses _build_messages_continued directly
+# RemoteBackend: cross-backend uses _build_messages directly
 # ---------------------------------------------------------------------------
 
 
 def test_remote_cross_backend_uses_build_messages_continued():
-    """RemoteBackend must use _build_messages_continued even for cross-backend sessions,
-    since prev_messages is always in canonical chat-completions format."""
+    """RemoteBackend must splice prev_messages into _build_messages even for
+    cross-backend sessions, since prev_messages is always in canonical
+    chat-completions format."""
     from justsayit.postprocess.backend_remote import RemoteBackend
     from justsayit.postprocess._profile import PostprocessProfile
     import unittest.mock as mock
@@ -338,11 +339,11 @@ def test_remote_cross_backend_uses_build_messages_continued():
 
     captured_messages = []
 
-    def fake_http_post(url, body, headers, **kw):
+    def fake_json_post(url, body, headers, **kw):
         captured_messages.extend(body["messages"])
         return {"choices": [{"message": {"content": "ok", "role": "assistant"}}], "usage": {}}
 
-    with mock.patch("justsayit.postprocess.backend_remote._http_post", side_effect=fake_http_post):
+    with mock.patch("justsayit.postprocess.backend_remote._json_post", side_effect=fake_json_post):
         backend._run("follow up", previous_session=prev_session)
 
     # Should have: system, user(question), assistant(answer), user(follow up)
@@ -385,7 +386,7 @@ def test_extra_context_stored_in_remote_prev_messages():
     clipboard = "def foo():\n    pass"
 
     with mock.patch(
-        "justsayit.postprocess.backend_remote._http_post",
+        "justsayit.postprocess.backend_remote._json_post",
         return_value={"choices": [{"message": {"content": "ok", "role": "assistant"}}], "usage": {}},
     ):
         result = backend._run("please refactor this", extra_context=clipboard)
@@ -411,7 +412,7 @@ def test_extra_context_stored_in_responses_prev_messages():
     clipboard = "some clipboard content"
 
     with mock.patch(
-        "justsayit.postprocess.backend_responses._http_post",
+        "justsayit.postprocess.backend_responses._json_post",
         return_value=_fake_responses_response(),
     ):
         result = backend._run("help me with this", extra_context=clipboard)
@@ -472,7 +473,7 @@ def test_local_to_remote_cross_backend_image_visible():
     captured: list[dict] = []
 
     with mock.patch(
-        "justsayit.postprocess.backend_remote._http_post",
+        "justsayit.postprocess.backend_remote._json_post",
         side_effect=lambda url, body, headers, **kw: (
             captured.extend(body["messages"]) or
             {"choices": [{"message": {"content": "it's a png", "role": "assistant"}}], "usage": {}}
@@ -529,7 +530,7 @@ def test_remote_continue_second_image_preserves_both_as_data_urls():
 
     # Turn 1
     with mock.patch(
-        "justsayit.postprocess.backend_remote._http_post",
+        "justsayit.postprocess.backend_remote._json_post",
         return_value={"choices": [{"message": {"content": "ack", "role": "assistant"}}], "usage": {}},
     ):
         turn1 = backend._run("image one", extra_image=_PNG1, extra_image_mime="image/png")
@@ -550,7 +551,7 @@ def test_remote_continue_second_image_preserves_both_as_data_urls():
         captured.extend(body["messages"])
         return {"choices": [{"message": {"content": "both seen", "role": "assistant"}}], "usage": {}}
 
-    with mock.patch("justsayit.postprocess.backend_remote._http_post", side_effect=fake_post):
+    with mock.patch("justsayit.postprocess.backend_remote._json_post", side_effect=fake_post):
         turn2 = backend._run("image two", extra_image=_PNG2, extra_image_mime="image/png",
                              previous_session=session)
 
@@ -618,7 +619,7 @@ def test_responses_continue_second_image_both_stored_as_data_urls():
         return _fake_responses_response()
 
     # Turn 1
-    with mock.patch("justsayit.postprocess.backend_responses._http_post", side_effect=fake_post):
+    with mock.patch("justsayit.postprocess.backend_responses._json_post", side_effect=fake_post):
         turn1 = backend._run("image one", extra_image=_PNG1, extra_image_mime="image/png")
 
     img_url_1 = _url_from_session(turn1.session_data["prev_messages"][0])
@@ -626,7 +627,7 @@ def test_responses_continue_second_image_both_stored_as_data_urls():
     assert _has_no_binary(img_url_1)
 
     # Turn 2 — same backend (uses response_id chain)
-    with mock.patch("justsayit.postprocess.backend_responses._http_post", side_effect=fake_post):
+    with mock.patch("justsayit.postprocess.backend_responses._json_post", side_effect=fake_post):
         turn2 = backend._run("image two", extra_image=_PNG2, extra_image_mime="image/png",
                              previous_session=turn1.session_data)
 
@@ -675,7 +676,7 @@ def test_web_search_included_in_assistant_mode_even_with_trigger():
         captured.append(body)
         return _fake_responses_response()
 
-    with mock.patch("justsayit.postprocess.backend_responses._http_post", side_effect=fake_post):
+    with mock.patch("justsayit.postprocess.backend_responses._json_post", side_effect=fake_post):
         backend._run("please research the latest news", assistant_mode=True)
 
     assert captured, "expected at least one API call"
@@ -708,7 +709,7 @@ def test_web_search_excluded_without_trigger_match_in_normal_mode():
         captured.append(body)
         return _fake_responses_response()
 
-    with mock.patch("justsayit.postprocess.backend_responses._http_post", side_effect=fake_post):
+    with mock.patch("justsayit.postprocess.backend_responses._json_post", side_effect=fake_post):
         backend._run("fix my text", assistant_mode=False)
 
     assert captured, "expected at least one API call"
