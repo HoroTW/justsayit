@@ -45,6 +45,29 @@ def test_horizontal_rule_five_dashes():
     Pango.parse_markup(out, -1, "\0")
 
 
+def test_horizontal_rule_width_uses_hr_chars_arg():
+    """The HR character count comes from the converter's hr_chars
+    keyword so the overlay can size the divider to its actual content
+    width (Pango has no stretch-to-width markup)."""
+    out = _md_to_pango("---", hr_chars=10)
+    assert "─" * 10 in out
+    assert "─" * 11 not in out  # not longer than asked
+
+    out = _md_to_pango("---", hr_chars=120)
+    assert "─" * 120 in out
+
+
+def test_overlay_passes_hr_chars_from_max_width():
+    """The OverlayWindow caller of _md_to_pango must derive hr_chars from
+    cfg.overlay.max_width so HR rendering stays roughly the width of the
+    pill across config changes (default 1100 px → ~85 chars)."""
+    import inspect
+    from justsayit.overlay import OverlayWindow
+    src = inspect.getsource(OverlayWindow._apply_llm_text)
+    assert "hr_chars=" in src
+    assert "self._cfg.overlay.max_width" in src
+
+
 def test_horizontal_rule_does_not_break_tables():
     """A markdown table's `|---|---|` separator must NOT be misdetected
     as a horizontal rule (which would corrupt the table)."""

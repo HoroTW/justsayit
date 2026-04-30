@@ -221,6 +221,11 @@ _MD_ITALIC_UNDER_RE = re.compile(r"(?<![A-Za-z0-9_])_([^_\n]+?)_(?![A-Za-z0-9_])
 _MD_STRIKE_RE = re.compile(r"~~([^~\n]+?)~~")
 _MD_TABLE_SEP_RE = re.compile(r"^\|[-| :]+\|?\s*$")
 _MD_HR_RE = re.compile(r"^[ \t]*([-*_])\1{2,}[ \t]*$")
+_HR_DEFAULT_CHARS = 80   # fallback when the caller doesn't pass hr_chars
+# Approximate render width of one Inter-11px monospace char. Used by
+# overlay code to translate cfg.overlay.max_width (px) → HR char count
+# so the divider visually fills the result area.
+_CHAR_WIDTH_PX = 6.5
 _MD_TABLE_MAX_COL_WIDTH = 40   # cells longer than this wrap to multiple lines
 
 _HEADING_SIZES = {1: "x-large", 2: "large", 3: "large"}
@@ -296,7 +301,7 @@ def _render_md_table(lines: list[str]) -> str:
     return f'<span allow_breaks="false"><tt>{chr(10).join(out)}</tt></span>'
 
 
-def _md_to_pango(text: str) -> str:
+def _md_to_pango(text: str, *, hr_chars: int = _HR_DEFAULT_CHARS) -> str:
     """Translate a small subset of Markdown to Pango markup.
 
     Handles fenced + inline code, bold, italic, strikethrough, links,
@@ -365,7 +370,9 @@ def _md_to_pango(text: str) -> str:
     for line in text.split("\n"):
         m = _MD_HR_RE.match(line)
         if m:
-            out_lines.append('<span allow_breaks="false">────────────────────────────────</span>')
+            out_lines.append(
+                f'<span allow_breaks="false">{"─" * hr_chars}</span>'
+            )
             continue
         m = _MD_HEADING_RE.match(line)
         if m:
@@ -1091,7 +1098,13 @@ class OverlayWindow(Gtk.ApplicationWindow):
     def _apply_llm_text(self, text: str, thought: str = "") -> bool:
         self._stop_llm_waiting_anim()
         self._last_llm_text = text
-        body_markup = _md_to_pango(text)
+        # Derive HR char count from the overlay's allocated text width so
+        # markdown horizontal rules (---) visually span the pill instead
+        # of being a stubby fixed-length stripe. Subtract a small padding
+        # margin so the rule never overflows on rounding.
+        usable_w = self._cfg.overlay.max_width - 14 * 2 - 16 - 10
+        hr_chars = max(20, int(usable_w / _CHAR_WIDTH_PX))
+        body_markup = _md_to_pango(text, hr_chars=hr_chars)
         if thought:
             # Blue-green / teal italic for the thought, then a newline and
             # the markdown-rendered body that will actually be pasted.

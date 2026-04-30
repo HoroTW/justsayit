@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.24.2] - 2026-04-30
+
+### Changed
+- Markdown horizontal rule (`---`) now spans roughly the full width of the result pill instead of a fixed 32-char stripe. `_md_to_pango` accepts an `hr_chars` kwarg; the overlay computes it from `cfg.overlay.max_width / ~6.5 px-per-char` (with a small padding margin) so the divider scales with the configured pill width.
+
 ## [0.24.1] - 2026-04-30
 
 ### Fixed
