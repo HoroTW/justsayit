@@ -29,6 +29,11 @@ class AudioConfig:
     # Segments shorter than this are dropped before transcription,
     # regex filters, and LLM cleanup.  Set to 0 to disable.
     skip_segments_below_seconds: float = 1.0
+    # When set, every emitted segment AND every VAD validation snapshot is
+    # written to this directory as a WAV file. Used for diagnosing missing
+    # words / empty transcriptions. Off by default — turn on only while
+    # debugging because it grows unboundedly.
+    debug_dump_dir: str | None = None
 
 
 @dataclass
@@ -179,6 +184,16 @@ class ModelConfig:
     # Retry count + delay for transient HTTP errors (408, 429, 5xx, …).
     openai_retries: int = 3
     openai_retry_delay: float = 1.0
+
+    # Parakeet has a quirk where some quiet-but-clear segments transcribe
+    # as empty (peak ~0.13 / -17 dBFS confirmed). We optionally peak-boost
+    # the input into a safe band before inference. Presets:
+    #   "off" - never normalize (raw behavior)
+    #   "A"   - boost up to peak 0.15, max 8x gain (safe default)
+    #   "B"   - boost up to peak 0.30, max 8x gain (more aggressive)
+    #   "C"   - boost up to peak 0.30, max 4x gain (can break very-quiet
+    #            clean audio — kept for parity, not recommended)
+    parakeet_normalize: str = "A"
 
     # --- Shared ---------------------------------------------------------------
     # Silero VAD ONNX (tiny file, downloaded directly).

@@ -14,6 +14,26 @@ from justsayit.transcribe import TranscriberBase
 
 log = logging.getLogger(__name__)
 
+_NORMALIZE_PRESETS: dict[str, tuple[float, float]] = {
+    "off": (0.0, 1.0),
+    "A":   (0.15, 8.0),
+    "B":   (0.30, 8.0),
+    "C":   (0.30, 4.0),
+}
+
+
+def _normalize(samples: np.ndarray, preset: str) -> tuple[np.ndarray, float]:
+    """Boost ``samples`` toward the preset's min_peak, capped by max_gain.
+    Returns (samples, gain). Unknown presets fall back to "A"."""
+    min_peak, max_gain = _NORMALIZE_PRESETS.get(preset, _NORMALIZE_PRESETS["A"])
+    if min_peak <= 0.0:
+        return samples, 1.0
+    peak = float(np.abs(samples).max())
+    if peak <= 0.0 or peak >= min_peak:
+        return samples, 1.0
+    gain = min(min_peak / peak, max_gain)
+    return samples * gain, gain
+
 
 class ParakeetTranscriber(TranscriberBase):
     """Thin wrapper around sherpa_onnx.OfflineRecognizer for Parakeet TDT."""
@@ -53,6 +73,14 @@ class ParakeetTranscriber(TranscriberBase):
         with self._lock:
             if self._recog is None:
                 self._recog = self._build()
+            samples, gain = _normalize(samples, self.cfg.model.parakeet_normalize)
+            if gain != 1.0:
+                log.info(
+                    "parakeet input boost: %.2fx (preset=%s, peak %.4f -> %.4f)",
+                    gain, self.cfg.model.parakeet_normalize,
+                    float(np.abs(samples).max()) / gain,
+                    float(np.abs(samples).max()),
+                )
             stream = self._recog.create_stream()
             stream.accept_waveform(int(sample_rate), samples.astype(np.float32, copy=False))
             self._recog.decode_stream(stream)

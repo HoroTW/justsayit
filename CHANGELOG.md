@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.24.5] - 2026-05-01
+
+### Added
+- audio: optional `audio.debug_dump_dir` config dumps each emitted segment and VAD validation snapshot to WAV for diagnosing missing-word / empty-transcription regressions.
+- transcribe: optional `model.parakeet_normalize` (default "A", presets "off" | "A" | "B" | "C") peak-boosts quiet input into a safe band — fixes empty transcriptions on segments around -17 dBFS where Parakeet's internal speech filter rejects the buffer.
+
+### Notes
+- Parakeet blind spot also closes if leading/trailing silence is trimmed (peak-gain and head/tail trim both fix the same internal heuristic). Future improvement: add an optional pre-transcribe pass that strips silence below an RMS threshold from both ends before handing the buffer to Parakeet — would complement `parakeet_normalize` from the other direction.
+
 ## [0.24.3] - 2026-04-30
 
 ### Changed

@@ -18,11 +18,13 @@ callbacks so the ML-heavy work can live in another module/thread.
 
 from __future__ import annotations
 
+import datetime
 import enum
 import logging
 import queue
 import threading
 import time
+import wave
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -33,6 +35,17 @@ import sounddevice as sd
 from justsayit.config import Config
 
 log = logging.getLogger(__name__)
+
+
+def _write_wav(path: Path, samples: np.ndarray, sample_rate: int) -> None:
+    """Write mono float32 *samples* to *path* as a 16-bit PCM WAV file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pcm16 = np.clip(samples * 32767.0, -32768, 32767).astype(np.int16)
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(int(sample_rate))
+        w.writeframes(pcm16.tobytes())
 
 
 class State(enum.Enum):
@@ -394,6 +407,17 @@ class AudioEngine:
             stop_requested_at=stop_at,
         )
         log.info("emitting segment: %.2fs reason=%s", secs, reason)
+        if self.cfg.audio.debug_dump_dir is not None:
+            try:
+                dump_dir = Path(self.cfg.audio.debug_dump_dir).expanduser()
+                ts = datetime.datetime.now().isoformat(timespec="milliseconds").replace(":", "-")
+                dur_ms = int(len(samples) / self.cfg.audio.sample_rate * 1000)
+                fname = f"{ts}_{reason}_{dur_ms}ms.wav"
+                path = dump_dir / fname
+                _write_wav(path, samples, self.cfg.audio.sample_rate)
+                log.info("dumped segment audio to %s", path)
+            except Exception:
+                log.exception("debug WAV dump failed")
         try:
             self.on_segment(seg)
         except Exception:  # pragma: no cover
@@ -510,6 +534,17 @@ class AudioEngine:
                         len(snapshot) / sr,
                         trigger,
                     )
+                    if self.cfg.audio.debug_dump_dir is not None:
+                        try:
+                            dump_dir = Path(self.cfg.audio.debug_dump_dir).expanduser()
+                            ts = datetime.datetime.now().isoformat(timespec="milliseconds").replace(":", "-")
+                            dur_ms = int(len(snapshot) / sr * 1000)
+                            fname = f"{ts}_validation-{trigger}_{dur_ms}ms.wav"
+                            path = dump_dir / fname
+                            _write_wav(path, snapshot, sr)
+                            log.info("dumped validation audio to %s", path)
+                        except Exception:
+                            log.exception("debug WAV dump failed")
                     try:
                         ok = bool(self.validate_words(snapshot, sr))
                     except Exception:
