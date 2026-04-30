@@ -196,8 +196,52 @@ _MD_BOLD_UNDER_RE = re.compile(r"(?<![A-Za-z0-9_])__([^_\n]+?)__(?![A-Za-z0-9_])
 _MD_ITALIC_RE = re.compile(r"(?<![*A-Za-z0-9])\*([^*\n]+?)\*(?![*A-Za-z0-9])")
 _MD_ITALIC_UNDER_RE = re.compile(r"(?<![A-Za-z0-9_])_([^_\n]+?)_(?![A-Za-z0-9_])")
 _MD_STRIKE_RE = re.compile(r"~~([^~\n]+?)~~")
+_MD_TABLE_SEP_RE = re.compile(r"^\|[-| :]+\|?\s*$")
 
 _HEADING_SIZES = {1: "x-large", 2: "large", 3: "large"}
+
+
+def _render_md_table(lines: list[str]) -> str:
+    """Render a markdown table block as a monospace ``<tt>`` block with
+    aligned columns. Cell contents are HTML-escaped; inline markdown
+    inside cells is intentionally NOT processed (kept as literal text)."""
+
+    def _parse_row(line: str) -> list[str]:
+        inner = line.strip()
+        if inner.startswith("|"):
+            inner = inner[1:]
+        if inner.endswith("|"):
+            inner = inner[:-1]
+        return [cell.strip() for cell in inner.split("|")]
+
+    rows: list[list[str] | None] = []
+    for line in lines:
+        if _MD_TABLE_SEP_RE.match(line.strip()):
+            rows.append(None)  # placeholder — replaced with ─ divider
+        else:
+            rows.append(_parse_row(line))
+
+    col_count = max((len(r) for r in rows if r is not None), default=1)
+    for i, row in enumerate(rows):
+        if row is not None:
+            rows[i] = (row + [""] * col_count)[:col_count]
+
+    widths = [1] * col_count
+    for row in rows:
+        if row is None:
+            continue
+        for j, cell in enumerate(row):
+            widths[j] = max(widths[j], len(cell))
+
+    out: list[str] = []
+    for row in rows:
+        if row is None:
+            segs = ["─" * widths[j] for j in range(col_count)]
+            out.append("─" + "─┼─".join(segs) + "─")
+        else:
+            segs = [escape(cell).ljust(widths[j]) for j, cell in enumerate(row)]
+            out.append(" │ ".join(segs))
+    return "<tt>" + "\n".join(out) + "</tt>"
 
 
 def _md_to_pango(text: str) -> str:
@@ -216,6 +260,29 @@ def _md_to_pango(text: str) -> str:
         key = f"\x00MD{len(stash)}\x00"
         stash[key] = value
         return key
+
+    # Tables first — collect contiguous "|"-prefixed lines that include a
+    # separator row (|---|---|), render to a stashed <tt> block so later
+    # passes (escape, bold, etc.) don't touch them.
+    src_lines = text.splitlines()
+    out_table_pass: list[str] = []
+    i = 0
+    while i < len(src_lines):
+        line = src_lines[i]
+        if line.strip().startswith("|"):
+            block: list[str] = []
+            j = i
+            while j < len(src_lines) and src_lines[j].strip().startswith("|"):
+                block.append(src_lines[j])
+                j += 1
+            has_sep = any(_MD_TABLE_SEP_RE.match(b.strip()) for b in block)
+            if len(block) >= 2 and has_sep:
+                out_table_pass.append(_stash(_render_md_table(block)))
+                i = j
+                continue
+        out_table_pass.append(line)
+        i += 1
+    text = "\n".join(out_table_pass)
 
     def _fence(m: re.Match[str]) -> str:
         return _stash(f"<tt>{escape(m.group(1).rstrip())}</tt>")
@@ -344,6 +411,11 @@ class OverlayWindow(Gtk.ApplicationWindow):
 
         Gtk4LayerShell.init_for_window(self)
         Gtk4LayerShell.set_layer(self, Gtk4LayerShell.Layer.OVERLAY)
+        # Default: don't intercept keyboard. Switched to ON_DEMAND while the
+        # result pill is visible so Ctrl+C on selected text works (the
+        # compositor routes key events to us only when the user clicks the
+        # pill, then back to the previous window when they click elsewhere).
+        Gtk4LayerShell.set_keyboard_mode(self, Gtk4LayerShell.KeyboardMode.NONE)
         edge = (
             Gtk4LayerShell.Edge.TOP
             if cfg.overlay.anchor == "top"
@@ -510,6 +582,16 @@ class OverlayWindow(Gtk.ApplicationWindow):
             "notify::has-selection", self._on_label_has_selection
         )
         root.append(self._llm_label)
+
+        # Selectable labels capture clicks and don't bubble to the parent
+        # gesture, so attach a CAPTURE-phase gesture directly to each so
+        # any click — even one that doesn't produce a selection — cancels
+        # the auto-dismiss linger.
+        for _label in (self._detected_label, self._llm_label):
+            _lbl_click = Gtk.GestureClick.new()
+            _lbl_click.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+            _lbl_click.connect("pressed", self._on_label_clicked)
+            _label.add_controller(_lbl_click)
 
         # Separator above bottom row (only shown in result mode)
         self._sep_bottom = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
@@ -721,6 +803,14 @@ class OverlayWindow(Gtk.ApplicationWindow):
         if label.get_property("has-selection"):
             self._cancel_linger()
 
+    def _on_label_clicked(self, _gesture, _n_press, _x, _y) -> None:
+        """Cancel auto-dismiss on any click on a result label — even one
+        that doesn't produce a selection. Selectable GtkLabels capture
+        clicks, so the parent gesture never fires; this CAPTURE-phase
+        gesture runs before the label's own click handling."""
+        if self._detected_label.get_visible():
+            self._cancel_linger()
+
     def _on_abort_clicked(self, _button: Gtk.Button) -> None:
         """× button: abort an active recording (discard, no paste). If
         the overlay is in the post-result linger phase, just dismiss."""
@@ -760,6 +850,7 @@ class OverlayWindow(Gtk.ApplicationWindow):
             if prev in (State.RECORDING, State.MANUAL):
                 self._cancel_linger()
                 self._dot_color_override = None
+                Gtk4LayerShell.set_keyboard_mode(self, Gtk4LayerShell.KeyboardMode.NONE)
                 self._state_label.set_label("processing…")
                 self._state_label.set_visible(True)
                 self._hide_text_areas()
@@ -777,6 +868,7 @@ class OverlayWindow(Gtk.ApplicationWindow):
             self._cancel_linger()
             self._cancel_safety()
             self._dot_color_override = None
+            Gtk4LayerShell.set_keyboard_mode(self, Gtk4LayerShell.KeyboardMode.NONE)
             label, _ = _STATE_STYLE[state]
             self._state_label.set_label(label)
             self._state_label.set_visible(True)
@@ -791,6 +883,9 @@ class OverlayWindow(Gtk.ApplicationWindow):
     def _apply_detected_text(self, text: str, llm_pending: bool) -> bool:
         self._cancel_safety()
         self._dot_color_override = _DOT_RESULT
+        # Result is selectable — let layer-shell route Ctrl+C to us when the
+        # user clicks the pill (focus auto-releases when they click elsewhere).
+        Gtk4LayerShell.set_keyboard_mode(self, Gtk4LayerShell.KeyboardMode.ON_DEMAND)
 
         # Hide state label, show text fields above the bottom row.
         self._state_label.set_visible(False)
@@ -906,6 +1001,8 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._error_active = True
         self._retry_cb = retry_cb
         self._dot_color_override = _DOT_ERROR
+        # Allow keyboard focus so the user can Ctrl+C the error message.
+        Gtk4LayerShell.set_keyboard_mode(self, Gtk4LayerShell.KeyboardMode.ON_DEMAND)
 
         # State label: "error: <stage>" in amber.
         self._state_label.remove_css_class("justsayit-overlay-label")
@@ -974,6 +1071,7 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._dot_color_override = None
         self._hide_text_areas()
         self._collapse_window()
+        Gtk4LayerShell.set_keyboard_mode(self, Gtk4LayerShell.KeyboardMode.NONE)
         self.set_visible(False)
         self._last_llm_text = ""
         # An audio-thread IDLE callback may still be queued behind us

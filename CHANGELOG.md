@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-04-30
+
+### Fixed
+- Ctrl+C in the result overlay now copies selected text. The layer-shell window switches to `KeyboardMode.ON_DEMAND` while a result is shown so the compositor routes key events to GTK's native clipboard handler; switches back to `NONE` when the overlay collapses so it never intercepts keys while you're typing into the focused app.
+- Clicking directly on the result text now cancels the auto-dismiss timer. Selectable GtkLabels capture clicks so the parent gesture wasn't firing — added a CAPTURE-phase gesture on each label that runs before the label's own click handling.
+
+### Added
+- Markdown tables in the LLM result render as monospace aligned blocks with `─┼─` dividers instead of raw `| col | col |` text.
+
 ## [0.21.2] - 2026-04-30
 
 ### Fixed

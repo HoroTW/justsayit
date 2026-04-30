@@ -75,3 +75,13 @@ def test_label_has_selection_notify_handler_signature():
     assert _positional_count(method) >= 2, (
         "_on_label_has_selection must accept (label, pspec)"
     )
+
+
+def test_label_clicked_handler_signature():
+    """The CAPTURE-phase ``GestureClick.connect('pressed', cb)`` on each
+    label invokes ``cb(gesture, n_press, x, y)`` — 4 positional args plus
+    self."""
+    method = OverlayWindow._on_label_clicked
+    assert _positional_count(method) >= 4, (
+        "_on_label_clicked must accept (gesture, n_press, x, y)"
+    )
