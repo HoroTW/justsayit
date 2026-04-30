@@ -245,6 +245,22 @@ class PostprocessConfig:
 
 
 @dataclass
+class WindowClipboardPolicy:
+    """Auto-arm or block clipboard-context based on the focused window.
+
+    When ``enabled`` is True, the focused-window's class / app-id is
+    queried at the start of every recording. If the class is in
+    ``block``, clipboard-context is forcibly disarmed for that
+    recording. If it is in ``auto_arm``, clipboard-context is armed.
+    Comparison is case-insensitive substring on the lowercased class.
+    """
+
+    enabled: bool = False
+    auto_arm: list[str] = field(default_factory=list)
+    block: list[str] = field(default_factory=list)
+
+
+@dataclass
 class LogConfig:
     # Rotating debug log written to disk. Off by default — turn this on
     # when you need to share a trace of a bug. Console logging is always
@@ -268,6 +284,9 @@ class Config:
     sound: SoundConfig = field(default_factory=SoundConfig)
     log: LogConfig = field(default_factory=LogConfig)
     postprocess: PostprocessConfig = field(default_factory=PostprocessConfig)
+    window_clipboard_policy: WindowClipboardPolicy = field(
+        default_factory=WindowClipboardPolicy
+    )
     # File path for user regex filters (applied after transcription, before LLM).
     filters_path: Path = field(default_factory=lambda: _lazy_config_dir() / "filters.json")
     # File path for post-LLM normalization filters (applied after LLM, before paste).

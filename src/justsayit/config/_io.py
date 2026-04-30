@@ -28,6 +28,7 @@ from ._schema import (
     OverlayConfig,
     SoundConfig,
     PostprocessConfig,
+    WindowClipboardPolicy,
     LogConfig,
     Config,
     _coerce_section,
@@ -149,6 +150,9 @@ def load_config(path: Path | None = None) -> Config:
         cfg.sound = _coerce_section(SoundConfig, raw.get("sound"))
         cfg.log = _coerce_section(LogConfig, raw.get("log"))
         cfg.postprocess = _coerce_section(PostprocessConfig, raw.get("postprocess"))
+        cfg.window_clipboard_policy = _coerce_section(
+            WindowClipboardPolicy, raw.get("window_clipboard_policy")
+        )
 
         if "filters_path" in raw:
             cfg.filters_path = Path(raw["filters_path"]).expanduser()

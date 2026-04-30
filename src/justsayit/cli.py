@@ -53,6 +53,7 @@ from justsayit.config import (
 )
 from justsayit.filters import load_filters
 from justsayit.tools import load_tools
+from justsayit.window_info import active_window_id
 from justsayit.model import ensure_models, ensure_vad
 from justsayit.postprocess import (
     KNOWN_LLM_MODELS,
@@ -371,6 +372,10 @@ class App:
                     # per-recording, so clear any leftover flag before it can
                     # feed a stale clipboard into this session's LLM call.
                     self._disarm_clipboard_context()
+                # Window-class clipboard policy: auto-arm or block based
+                # on the focused window. Block wins if a class appears in
+                # both lists.
+                self._apply_window_clipboard_policy()
             if self.overlay is not None:
                 self.overlay.push_state(state)
             if self.sound_player is not None:
@@ -962,6 +967,50 @@ class App:
                     (self._unload_llm_sep.id, {"visible": GLib.Variant("b", has_local)})
                 )
         self.tray.notify_properties_updated(prop_updates)
+
+    def _apply_window_clipboard_policy(self) -> None:
+        """Apply the window-class clipboard policy to the upcoming
+        recording. Called at the IDLE → VALIDATING/MANUAL edge.
+
+        ``block`` wins over ``auto_arm`` when a class matches both —
+        stricter rule prevails.
+        """
+        policy = getattr(self.cfg, "window_clipboard_policy", None)
+        if policy is None or not policy.enabled:
+            return
+        if not (policy.auto_arm or policy.block):
+            return
+        cls = active_window_id()
+        if cls is None:
+            log.debug("window policy: focused-window class unavailable; skipping")
+            return
+        cls_l = cls.lower()
+
+        def _matches(patterns: list[str]) -> bool:
+            for p in patterns:
+                if not p:
+                    continue
+                if p.lower() in cls_l:
+                    return True
+            return False
+
+        if _matches(policy.block):
+            log.info("window policy: %r in block list → disarming clipboard", cls)
+            self._clipboard_context_arm_next = False
+            if self._clipboard_context_armed:
+                self._clipboard_context_armed = False
+                if self.overlay is not None:
+                    self.overlay.push_clipboard_context_armed(False)
+            return
+        if _matches(policy.auto_arm):
+            if not self._clipboard_context_armed:
+                log.info(
+                    "window policy: %r in auto_arm list → arming clipboard",
+                    cls,
+                )
+                self._clipboard_context_armed = True
+                if self.overlay is not None:
+                    self.overlay.push_clipboard_context_armed(True)
 
     def _disarm_clipboard_context(self) -> None:
         """Clear the armed flag without reading the clipboard. Called at
