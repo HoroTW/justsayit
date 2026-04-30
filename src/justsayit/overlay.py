@@ -646,8 +646,13 @@ class OverlayWindow(Gtk.ApplicationWindow):
 
         # ── Scrolled content area (result mode only, hidden by default) ──────
         self._content_scroll = Gtk.ScrolledWindow()
-        self._content_scroll.set_hscrollbar_policy(Gtk.PolicyType.NEVER)
-        self._content_scroll.set_vscrollbar_policy(Gtk.PolicyType.AUTOMATIC)
+        # GTK4 has a single combined set_policy(h, v); the per-axis
+        # set_hscrollbar_policy / set_vscrollbar_policy that GTK3 had do
+        # NOT exist on GTK4 ScrolledWindow and would raise AttributeError
+        # at construction time.
+        self._content_scroll.set_policy(
+            Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC
+        )
         self._content_scroll.set_propagate_natural_height(True)
         self._content_scroll.set_max_content_height(cfg.overlay.max_height)
         self._content_scroll.set_visible(False)

@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.24.1] - 2026-04-30
+
+### Fixed
+- App startup crashed with `AttributeError: 'ScrolledWindow' object has no attribute 'set_hscrollbar_policy'` (introduced in 0.24.0). GTK4's `Gtk.ScrolledWindow` only has the combined `set_policy(h, v)` — the per-axis setters are GTK3 fictions that don't exist on GTK4. The 0.24.0 structural tests using `inspect.getsource` "passed" because the buggy method names appeared as substrings in the source.
+
+### Added
+- `tests/test_overlay_smoke.py` — real-instantiation smoke tests that construct `OverlayWindow` under a `Gtk.Application` activate cycle. Catches the whole class of "I assumed an API name that doesn't exist on the real widget" bugs at unit-test time. Verified: temporarily reintroducing the 0.24.0 bug fails all three smoke tests instead of all tests passing.
+
 ## [0.24.0] - 2026-04-30
 
 ### Added
