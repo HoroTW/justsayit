@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.21.2] - 2026-04-30
+
+### Fixed
+- `setup-llm gemma4`: unpacking `ensure_default_profiles()` into 4 variables crashed with `ValueError`; corrected to 5.
+- `pipeline.py`: `apply_filters` exceptions (pre-LLM and post-LLM) are now caught and surfaced as error pills instead of crashing the transcribe thread.
+- `pipeline.py`: paste failures now emit an error pill so the user sees the failure in the overlay.
+- `pipeline.py`: empty exception message no longer causes `IndexError` in the LLM error detail line.
+- Overlay clipboard-context tooltip had a dangling `"recording"` word; corrected to `"just once for the next recording"`.
+- `_StubOverlay` test fixture lacked `push_tool_call`; added no-op to prevent future `AttributeError`.
+- Clipboard-context tests no longer spawn a real `wl-paste` process; `read_clipboard_image` is now monkeypatched to `None` in the relevant fixtures.
+
 ## [0.21.1] - 2026-04-30
 
 ### Fixed

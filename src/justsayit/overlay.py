@@ -872,10 +872,8 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._set_armed(
             self._clip_button,
             armed,
-            tip_off="Use clipboard contents, as LLM context (just once for this recording) "
-                    "recording",
-            tip_on="Use clipboard contents, as LLM context (just once for this recording) "
-                   "recording — click to disarm",
+            tip_off="Use clipboard contents as LLM context (just once for the next recording)",
+            tip_on="Use clipboard contents as LLM context (just once for the next recording) — click to disarm",
         )
         return False
 

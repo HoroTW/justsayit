@@ -344,7 +344,7 @@ def _run_setup_llm(model_key: str | None = None, cpu: bool = False) -> int:
         print(f"  Model:   {model_path}")
 
         if key == "gemma4":
-            cleanup_path, fun_path, _openai_path, _ollama_path = (
+            cleanup_path, fun_path, _openai_path, _responses_path, _ollama_path = (
                 ensure_default_profiles()
             )
             update_profile_model(cleanup_path, model_path, hf_repo, hf_filename)

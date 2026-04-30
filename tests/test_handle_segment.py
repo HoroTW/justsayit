@@ -72,6 +72,9 @@ class _StubOverlay:
     def push_error(self, stage: str, msg: str, retry_cb=None) -> None:
         self.errors.append((stage, msg, retry_cb))
 
+    def push_tool_call(self, name: str, params: dict) -> None:
+        pass
+
 
 class _RaisingPostprocessor:
     def __init__(self, message: str = "remote exploded") -> None:
@@ -397,6 +400,7 @@ def test_armed_clipboard_context_is_passed_to_postprocessor_and_disarms(
         "justsayit.cli.read_clipboard",
         lambda **_kw: "extra context from clipboard",
     )
+    monkeypatch.setattr("justsayit.cli.read_clipboard_image", lambda: None)
     app._clipboard_context_armed = True
 
     app._handle_segment(_make_seg())
@@ -421,6 +425,7 @@ def test_unarmed_clipboard_context_does_not_read_clipboard(capsys, monkeypatch):
         return "should not be read"
 
     monkeypatch.setattr("justsayit.cli.read_clipboard", _boom)
+    monkeypatch.setattr("justsayit.cli.read_clipboard_image", lambda: None)
 
     app._handle_segment(_make_seg())
 
@@ -437,6 +442,7 @@ def test_armed_with_empty_clipboard_still_disarms(capsys, monkeypatch):
     app.postprocessor = pp
     _wire_pipeline(app)
     monkeypatch.setattr("justsayit.cli.read_clipboard", lambda **_kw: None)
+    monkeypatch.setattr("justsayit.cli.read_clipboard_image", lambda: None)
     app._clipboard_context_armed = True
 
     app._handle_segment(_make_seg())

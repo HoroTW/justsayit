@@ -127,7 +127,12 @@ class SegmentPipeline:
             if self.overlay is not None:
                 self.overlay.push_hide()
             return
-        final = apply_filters(raw, self.filters)
+        try:
+            final = apply_filters(raw, self.filters)
+        except Exception as e:
+            log.exception("filters failed")
+            self._emit_error("filters", str(e))
+            return
         if final != raw:
             log.info("filters changed output: %r -> %r", raw, final)
 
@@ -193,7 +198,7 @@ class SegmentPipeline:
                 paste_text = cleaned
             except Exception as exc:
                 log.exception("LLM postprocessor failed; using unprocessed text")
-                detail = str(exc).strip().splitlines()[0]
+                detail = (str(exc).strip().splitlines() or [exc.__class__.__name__])[0]
                 llm_overlay_text = f"LLM error: {detail or exc.__class__.__name__}"
                 # Also surface an amber error pill with retry so the
                 # failure is visible even when the user wasn't watching
@@ -229,7 +234,12 @@ class SegmentPipeline:
                 llm_overlay_text = stripped
                 paste_text = stripped
                 if self.after_llm_filters:
-                    normalized = apply_filters(stripped, self.after_llm_filters)
+                    try:
+                        normalized = apply_filters(stripped, self.after_llm_filters)
+                    except Exception as e:
+                        log.exception("after-LLM filters failed")
+                        self._emit_error("filters", str(e))
+                        normalized = stripped
                     if normalized != stripped:
                         log.info(
                             "after-LLM filters applied: %r -> %r",
@@ -320,6 +330,7 @@ class SegmentPipeline:
             log.debug("paste call returned after %.0fms", (time.monotonic() - t_paste0) * 1000)
         except PasteError as e:
             log.error("paste failed: %s", e)
+            self._emit_error("paste", str(e))
         finally:
             # Linger so the user can read the transcribed text regardless of
             # whether paste succeeded or failed.
