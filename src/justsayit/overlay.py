@@ -26,6 +26,7 @@ from __future__ import annotations
 import logging
 import math
 import re
+import textwrap
 from dataclasses import dataclass
 from html import escape
 from typing import Callable
@@ -198,6 +199,7 @@ _MD_ITALIC_RE = re.compile(r"(?<![*A-Za-z0-9])\*([^*\n]+?)\*(?![*A-Za-z0-9])")
 _MD_ITALIC_UNDER_RE = re.compile(r"(?<![A-Za-z0-9_])_([^_\n]+?)_(?![A-Za-z0-9_])")
 _MD_STRIKE_RE = re.compile(r"~~([^~\n]+?)~~")
 _MD_TABLE_SEP_RE = re.compile(r"^\|[-| :]+\|?\s*$")
+_MD_TABLE_MAX_COL_WIDTH = 40   # cells longer than this wrap to multiple lines
 
 _HEADING_SIZES = {1: "x-large", 2: "large", 3: "large"}
 
@@ -205,7 +207,13 @@ _HEADING_SIZES = {1: "x-large", 2: "large", 3: "large"}
 def _render_md_table(lines: list[str]) -> str:
     """Render a markdown table block as a monospace ``<tt>`` block with
     aligned columns. Cell contents are HTML-escaped; inline markdown
-    inside cells is intentionally NOT processed (kept as literal text)."""
+    inside cells is intentionally NOT processed (kept as literal text).
+
+    Long cells (over ``_MD_TABLE_MAX_COL_WIDTH`` chars) are wrapped onto
+    multiple display rows so wide content doesn't blow out the overlay
+    horizontally. The whole table is wrapped in
+    ``<span allow_breaks="false">`` so Pango doesn't re-break the
+    carefully-aligned rows on whitespace inside the table."""
 
     def _parse_row(line: str) -> list[str]:
         inner = line.strip()
@@ -227,12 +235,21 @@ def _render_md_table(lines: list[str]) -> str:
         if row is not None:
             rows[i] = (row + [""] * col_count)[:col_count]
 
+    # Per-column width = max natural width across cells, capped at
+    # MAX_COL_WIDTH. Cells longer than the cap wrap to multiple lines.
     widths = [1] * col_count
     for row in rows:
         if row is None:
             continue
         for j, cell in enumerate(row):
-            widths[j] = max(widths[j], len(cell))
+            widths[j] = max(widths[j], min(len(cell), _MD_TABLE_MAX_COL_WIDTH))
+
+    def _wrap_cell(cell: str, width: int) -> list[str]:
+        if len(cell) <= width:
+            return [cell] if cell else [""]
+        return textwrap.wrap(
+            cell, width=width, break_long_words=True, break_on_hyphens=False,
+        ) or [""]
 
     out: list[str] = []
     for row in rows:
@@ -246,9 +263,15 @@ def _render_md_table(lines: list[str]) -> str:
             segs = ["─" * widths[j] for j in range(col_count)]
             out.append("─┼─".join(segs))
         else:
-            segs = [escape(cell).ljust(widths[j]) for j, cell in enumerate(row)]
-            out.append(" │ ".join(segs))
-    return "<tt>" + "\n".join(out) + "</tt>"
+            wrapped = [_wrap_cell(cell, widths[j]) for j, cell in enumerate(row)]
+            n_disp = max(len(w) for w in wrapped)
+            for k in range(n_disp):
+                segs = [
+                    escape(wrapped[j][k] if k < len(wrapped[j]) else "").ljust(widths[j])
+                    for j in range(col_count)
+                ]
+                out.append(" │ ".join(segs))
+    return f'<span allow_breaks="false"><tt>{chr(10).join(out)}</tt></span>'
 
 
 def _md_to_pango(text: str) -> str:
@@ -574,9 +597,13 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._detected_label.set_wrap(True)
         self._detected_label.set_visible(False)
         self._detected_label.set_selectable(True)
-        # Selectable labels need can_focus=True so the layer-shell
-        # ON_DEMAND keyboard mode can deliver Ctrl+C to GtkLabel's
-        # native clipboard handler when the user clicks the pill.
+        # Default non-focusable: ON_DEMAND keyboard mode would otherwise
+        # let the compositor grant focus to the layer-shell as soon as
+        # we set ON_DEMAND, stealing keyboard focus from the user's
+        # focused window — which breaks the paste target. Focus is
+        # enabled on demand in `_on_result_clicked`, only after the
+        # user explicitly clicks the result pill.
+        self._detected_label.set_can_focus(False)
         self._detected_label.connect(
             "notify::has-selection", self._on_label_has_selection
         )
@@ -596,6 +623,7 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._llm_label.set_wrap(True)
         self._llm_label.set_visible(False)
         self._llm_label.set_selectable(True)
+        self._llm_label.set_can_focus(False)  # see _detected_label note
         self._llm_label.connect(
             "notify::has-selection", self._on_label_has_selection
         )
@@ -799,15 +827,43 @@ class OverlayWindow(Gtk.ApplicationWindow):
             except Exception:
                 log.exception("on_toggle_clipboard_context callback raised")
 
-    def _on_result_clicked(self, _gesture, _n_press, _x, _y) -> None:
-        """Clicking the result pill cancels the auto-dismiss so the overlay
-        stays open; the user can then decide to activate assistant mode via
-        the 💬 button. Wired in CAPTURE phase on the root box so it fires
-        for clicks on selectable labels too (which would otherwise eat the
-        click before any BUBBLE-phase gesture sees it)."""
-        if self._detected_label.get_visible():
-            log.info("result pill clicked — cancelling auto-dismiss")
-            self._cancel_linger()
+    def _on_result_clicked(self, _gesture, _n_press, x, y) -> None:
+        """Clicking the result pill cancels the auto-dismiss AND enables
+        keyboard interaction (so Ctrl+C copies the selected text). Wired
+        in CAPTURE phase on the root box so it fires for clicks on
+        selectable labels too — which would otherwise eat the click
+        before any BUBBLE-phase gesture sees it.
+
+        Focus-grant is deferred to this moment (rather than enabled when
+        the result first appears) so the layer-shell never steals
+        keyboard focus from the user's focused window before the user
+        deliberately interacts with the pill — that would break paste."""
+        if not self._detected_label.get_visible():
+            return
+        log.info("result pill clicked — enabling Ctrl+C and cancelling auto-dismiss")
+        self._cancel_linger()
+        Gtk4LayerShell.set_keyboard_mode(self, Gtk4LayerShell.KeyboardMode.ON_DEMAND)
+        self._detected_label.set_can_focus(True)
+        self._llm_label.set_can_focus(True)
+        # Grab focus on the label the user actually clicked, so Ctrl+C
+        # operates on its selection. Fall back to the LLM label (the
+        # paste-target body) if the click was on the empty pill area.
+        target = None
+        root = self.get_child()
+        if root is not None:
+            picked = root.pick(x, y, Gtk.PickFlags.DEFAULT)
+            while picked is not None and picked is not root:
+                if picked is self._detected_label or picked is self._llm_label:
+                    target = picked
+                    break
+                picked = picked.get_parent()
+        if target is None:
+            target = (
+                self._llm_label
+                if self._llm_label.get_visible()
+                else self._detected_label
+            )
+        target.grab_focus()
 
     def _on_label_has_selection(self, label: Gtk.Label, _pspec) -> None:
         """Selecting text in a label is itself a strong signal of user
@@ -890,9 +946,14 @@ class OverlayWindow(Gtk.ApplicationWindow):
     def _apply_detected_text(self, text: str, llm_pending: bool) -> bool:
         self._cancel_safety()
         self._dot_color_override = _DOT_RESULT
-        # Result is selectable — let layer-shell route Ctrl+C to us when the
-        # user clicks the pill (focus auto-releases when they click elsewhere).
-        Gtk4LayerShell.set_keyboard_mode(self, Gtk4LayerShell.KeyboardMode.ON_DEMAND)
+        # Stay at NONE keyboard mode + can_focus=False on labels until the
+        # user explicitly clicks the pill — otherwise the compositor would
+        # grant the layer-shell window focus the moment we present the
+        # result, stealing it from the user's focused window and breaking
+        # the paste target. The click handler enables ON_DEMAND + focus.
+        Gtk4LayerShell.set_keyboard_mode(self, Gtk4LayerShell.KeyboardMode.NONE)
+        self._detected_label.set_can_focus(False)
+        self._llm_label.set_can_focus(False)
 
         # Hide state label, show text fields above the bottom row.
         self._state_label.set_visible(False)
@@ -1008,8 +1069,11 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._error_active = True
         self._retry_cb = retry_cb
         self._dot_color_override = _DOT_ERROR
-        # Allow keyboard focus so the user can Ctrl+C the error message.
-        Gtk4LayerShell.set_keyboard_mode(self, Gtk4LayerShell.KeyboardMode.ON_DEMAND)
+        # Same focus-stealing avoidance as _apply_detected_text: stay at
+        # NONE until user explicitly clicks the pill.
+        Gtk4LayerShell.set_keyboard_mode(self, Gtk4LayerShell.KeyboardMode.NONE)
+        self._detected_label.set_can_focus(False)
+        self._llm_label.set_can_focus(False)
 
         # State label: "error: <stage>" in amber.
         self._state_label.remove_css_class("justsayit-overlay-label")

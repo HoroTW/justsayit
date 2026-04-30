@@ -7,6 +7,7 @@ attempting full table rendering inside Pango markup."""
 
 from __future__ import annotations
 
+import re
 from unittest.mock import MagicMock, call
 
 import gi
@@ -33,11 +34,18 @@ def test_simple_table_renders_as_tt_block():
     assert "─" in out  # header divider
 
 
+def _strip_table_wrappers(out: str) -> str:
+    """Strip the table's Pango wrapping (``<span allow_breaks="false">``
+    + ``<tt>``) so the inner aligned text can be inspected as plain
+    monospace lines."""
+    return re.sub(r"<[^>]+>", "", out)
+
+
 def test_table_columns_are_aligned():
     out = _md_to_pango(SIMPLE_TABLE)
     # Every data line must have the same display width.
     body_lines = [
-        ln for ln in out.replace("<tt>", "").replace("</tt>", "").split("\n")
+        ln for ln in _strip_table_wrappers(out).split("\n")
         if "│" in ln
     ]
     assert len(body_lines) >= 3, body_lines  # header + 2 body rows
@@ -50,7 +58,7 @@ def test_separator_aligns_with_data_rows():
     each ``┼`` sits exactly under a ``│`` in the data rows. Earlier code
     prepended/appended an extra ``─`` that shifted columns right by one."""
     out = _md_to_pango(SIMPLE_TABLE)
-    body = out.replace("<tt>", "").replace("</tt>", "")
+    body = _strip_table_wrappers(out)
     lines = [ln for ln in body.split("\n") if ln.strip()]
     # Find the separator row (contains ┼) and a data row (contains │ but not ┼).
     sep_lines = [ln for ln in lines if "┼" in ln]
@@ -187,3 +195,55 @@ def test_set_label_markup_safe_calls_set_markup_on_valid():
     _set_label_markup_safe(label, good_markup, "fallback")
     label.set_markup.assert_called_once_with(good_markup)
     label.set_text.assert_not_called()
+
+
+# ── Wide-cell wrapping ──────────────────────────────────────────────────────
+
+LONG_CELL = "This item is significantly longer than the others and takes up a lot of horizontal space."
+
+
+def test_wide_cells_wrap_to_multiple_lines():
+    """A cell longer than _MD_TABLE_MAX_COL_WIDTH must wrap onto multiple
+    display rows so the overlay doesn't grow horizontally past max_width."""
+    src = (
+        "| col1  | col2 |\n"
+        "|-------|------|\n"
+        f"| short | {LONG_CELL} |\n"
+        "| a     | b    |\n"
+    )
+    out = _md_to_pango(src)
+    body = _strip_table_wrappers(out)
+    # No single rendered line should be longer than ~50 chars (cap is 40
+    # per col, plus separators); originally this would be ~100+.
+    max_len = max(len(ln) for ln in body.split("\n"))
+    assert max_len < 60, f"row too wide: {max_len} chars"
+    # Every word from the long cell must still appear somewhere in the
+    # rendered body — wrapping shouldn't drop content.
+    for word in LONG_CELL.split():
+        assert word in body, f"word {word!r} missing after wrap"
+
+
+def test_wide_cells_preserve_alignment():
+    """When one cell wraps and others don't, the data rows that result
+    must still have aligned ``│`` columns."""
+    src = (
+        "| col1  | col2 |\n"
+        "|-------|------|\n"
+        f"| short | {LONG_CELL} |\n"
+    )
+    out = _md_to_pango(src)
+    body = _strip_table_wrappers(out)
+    data_lines = [ln for ln in body.split("\n") if "│" in ln and "┼" not in ln]
+    assert len(data_lines) >= 3, "expected wrap to produce extra data rows"
+    pipe_positions = {tuple(i for i, c in enumerate(ln) if c == "│") for ln in data_lines}
+    assert len(pipe_positions) == 1, f"misaligned after wrap: {pipe_positions}"
+
+
+def test_table_uses_allow_breaks_false():
+    """Pango must not be allowed to wrap inside the table on whitespace —
+    that would break the careful column alignment. We mark the whole
+    table with ``allow_breaks="false"``."""
+    out = _md_to_pango(SIMPLE_TABLE)
+    assert 'allow_breaks="false"' in out
+    # Pango must still parse it.
+    Pango.parse_markup(out, -1, "\0")

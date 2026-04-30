@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.22.3] - 2026-04-30
+
+### Fixed
+- Overlay no longer steals keyboard focus from the focused window when a result is shown — paste was breaking because layer-shell `ON_DEMAND` + focusable labels let the compositor grant the overlay focus before the user clicked. Labels now stay non-focusable until the user explicitly clicks the result pill, at which point focus is enabled and granted to the clicked label so Ctrl+C works.
+
+### Changed
+- Markdown tables now wrap cells longer than 40 chars onto multiple display rows instead of letting one wide cell stretch the overlay across the screen. The whole table is rendered with `allow_breaks="false"` so Pango doesn't re-break the carefully-aligned rows on whitespace.
+
 ## [0.22.2] - 2026-04-30
 
 ### Fixed
