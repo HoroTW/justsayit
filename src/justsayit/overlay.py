@@ -156,6 +156,22 @@ window.justsayit-overlay {
 .justsayit-retry-button:hover {
     color: rgba(255, 200, 90, 1.0);
 }
+.justsayit-redo-button {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    padding: 0 4px;
+    margin: 0;
+    min-height: 16px;
+    min-width: 16px;
+    color: rgba(160, 220, 255, 0.70);
+    font-family: "Inter", "Cantarell", "Noto Sans", sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+}
+.justsayit-redo-button:hover {
+    color: rgba(160, 220, 255, 1.0);
+}
 """
 
 
@@ -177,7 +193,14 @@ _DOT_RESULT = _DotColor(0.35, 0.85, 0.45)   # green during result / linger
 _DOT_ERROR = _DotColor(1.00, 0.78, 0.35)    # amber during error pill
 
 _SAFETY_MS = 30_000
-_LLM_WAITING = "Wait for LLM processing…"
+_LLM_WAITING_FRAMES = (
+    "LLM thinking",
+    "LLM thinking.",
+    "LLM thinking..",
+    "LLM thinking...",
+)
+_LLM_WAITING = _LLM_WAITING_FRAMES[0]   # initial frame; animator replaces it
+_LLM_WAITING_TICK_MS = 300
 _CHAR_WIDTH_PX = 6.5   # approximate for Inter 11px
 
 
@@ -427,6 +450,8 @@ class OverlayWindow(Gtk.ApplicationWindow):
         on_toggle_clipboard_context: Callable[[], None] | None = None,
         on_toggle_continue_window: Callable[[], None] | None = None,
         on_toggle_assistant_mode: Callable[[], None] | None = None,
+        on_redo_cleanup: Callable[[], None] | None = None,
+        on_redo_assistant: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(application=application)
         self._cfg = cfg
@@ -435,6 +460,8 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._on_toggle_clipboard_context = on_toggle_clipboard_context
         self._on_toggle_continue_window = on_toggle_continue_window
         self._on_toggle_assistant_mode = on_toggle_assistant_mode
+        self._on_redo_cleanup = on_redo_cleanup
+        self._on_redo_assistant = on_redo_assistant
 
         self._level = 0.0
         self._level_smoothed = 0.0
@@ -449,6 +476,8 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._dot_color_override: _DotColor | None = None
         self._linger_source: int | None = None
         self._safety_source: int | None = None
+        self._llm_waiting_source: int | None = None
+        self._llm_waiting_frame = 0
         # Set by ``_force_hide`` so a delayed engine-IDLE callback (× abort
         # while RECORDING/MANUAL, or transcribe-thread ``push_hide`` from
         # short-segment skip / empty transcription) cannot re-open the
@@ -575,6 +604,23 @@ class OverlayWindow(Gtk.ApplicationWindow):
         )
         self._assistant_button.connect("clicked", self._on_assistant_clicked)
         end_box.append(self._assistant_button)
+
+        # Redo-mode buttons — visible only in result-display state when a
+        # postprocessor ran. Only the OPPOSITE-mode button is shown (e.g.
+        # if the last run was assistant-mode, only 🧹 cleanup is shown).
+        self._redo_cleanup_button = Gtk.Button(label="🧹")
+        self._redo_cleanup_button.add_css_class("justsayit-redo-button")
+        self._redo_cleanup_button.set_tooltip_text("Re-run as cleanup (no assistant response)")
+        self._redo_cleanup_button.connect("clicked", self._on_redo_cleanup_clicked)
+        self._redo_cleanup_button.set_visible(False)
+        end_box.append(self._redo_cleanup_button)
+
+        self._redo_assistant_button = Gtk.Button(label="🤖")
+        self._redo_assistant_button.add_css_class("justsayit-redo-button")
+        self._redo_assistant_button.set_tooltip_text("Re-run as assistant (respond conversationally)")
+        self._redo_assistant_button.connect("clicked", self._on_redo_assistant_clicked)
+        self._redo_assistant_button.set_visible(False)
+        end_box.append(self._redo_assistant_button)
 
         # Retry button — only visible during the error pill, alongside ×.
         self._retry_button = Gtk.Button(label="🔁")
@@ -790,6 +836,15 @@ class OverlayWindow(Gtk.ApplicationWindow):
             priority=GLib.PRIORITY_DEFAULT,
         )
 
+    def push_redo_buttons(self, visible: bool, last_run_was_assistant: bool) -> None:
+        """Show or hide the redo-mode buttons. When *visible*, only the
+        OPPOSITE-mode button is shown (redo won't do anything useful if you
+        repeat the same mode). Thread-safe via GLib.idle_add."""
+        GLib.idle_add(
+            self._apply_redo_buttons, visible, last_run_was_assistant,
+            priority=GLib.PRIORITY_DEFAULT,
+        )
+
     # ── User actions ─────────────────────────────────────────────────────────
 
     def _on_cont_clicked(self, _button: Gtk.Button) -> None:
@@ -894,6 +949,22 @@ class OverlayWindow(Gtk.ApplicationWindow):
             log.info("abort button clicked outside recording — dismissing overlay")
             self._force_hide()
 
+    def _on_redo_cleanup_clicked(self, _button: Gtk.Button) -> None:
+        self._cancel_linger()
+        if self._on_redo_cleanup is not None:
+            try:
+                self._on_redo_cleanup()
+            except Exception:
+                log.exception("on_redo_cleanup callback raised")
+
+    def _on_redo_assistant_clicked(self, _button: Gtk.Button) -> None:
+        self._cancel_linger()
+        if self._on_redo_assistant is not None:
+            try:
+                self._on_redo_assistant()
+            except Exception:
+                log.exception("on_redo_assistant callback raised")
+
     # ── UI-thread handlers ───────────────────────────────────────────────────
 
     def _apply_state(self, state: State) -> bool:
@@ -965,10 +1036,11 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._detected_label.set_visible(True)
 
         if llm_pending:
-            self._llm_label.set_text(_LLM_WAITING)
             self._sep2.set_visible(True)
             self._llm_label.set_visible(True)
+            self._start_llm_waiting_anim()
         else:
+            self._stop_llm_waiting_anim()
             self._sep2.set_visible(False)
             self._llm_label.set_visible(False)
 
@@ -998,6 +1070,7 @@ class OverlayWindow(Gtk.ApplicationWindow):
         return False
 
     def _apply_llm_text(self, text: str, thought: str = "") -> bool:
+        self._stop_llm_waiting_anim()
         self._last_llm_text = text
         body_markup = _md_to_pango(text)
         if thought:
@@ -1060,6 +1133,16 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._profile_label.set_visible(True)
         return False
 
+    def _apply_redo_buttons(self, visible: bool, last_run_was_assistant: bool) -> bool:
+        if not visible:
+            self._redo_cleanup_button.set_visible(False)
+            self._redo_assistant_button.set_visible(False)
+        else:
+            # Show only the OPPOSITE mode button.
+            self._redo_cleanup_button.set_visible(last_run_was_assistant)
+            self._redo_assistant_button.set_visible(not last_run_was_assistant)
+        return False
+
     def _apply_error(
         self,
         stage: str,
@@ -1069,6 +1152,7 @@ class OverlayWindow(Gtk.ApplicationWindow):
         # Cancel any running timers — this is a fresh result/error display.
         self._cancel_safety()
         self._cancel_linger()
+        self._stop_llm_waiting_anim()
         self._error_active = True
         self._retry_cb = retry_cb
         self._dot_color_override = _DOT_ERROR
@@ -1142,6 +1226,7 @@ class OverlayWindow(Gtk.ApplicationWindow):
     def _force_hide(self) -> bool:
         self._cancel_linger()
         self._cancel_safety()
+        self._stop_llm_waiting_anim()
         self._dot_color_override = None
         self._hide_text_areas()
         self._collapse_window()
@@ -1165,6 +1250,8 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._llm_label.set_visible(False)
         self._sep_bottom.set_visible(False)
         self._copy_result_button.set_visible(False)
+        self._redo_cleanup_button.set_visible(False)
+        self._redo_assistant_button.set_visible(False)
         self._retry_button.set_visible(False)
         self._state_label.set_visible(True)
         # Restore the state label's normal styling — error pill swaps in
@@ -1218,6 +1305,28 @@ class OverlayWindow(Gtk.ApplicationWindow):
         if self._safety_source is not None:
             GLib.source_remove(self._safety_source)
             self._safety_source = None
+
+    def _start_llm_waiting_anim(self) -> None:
+        """Animate the "LLM thinking…" placeholder by cycling dots so the
+        user sees the wait is alive. Cancelled on llm_text / error / hide."""
+        self._stop_llm_waiting_anim()
+        self._llm_waiting_frame = 0
+        self._llm_label.set_text(_LLM_WAITING_FRAMES[0])
+        self._llm_waiting_source = GLib.timeout_add(
+            _LLM_WAITING_TICK_MS, self._tick_llm_waiting
+        )
+
+    def _tick_llm_waiting(self) -> bool:
+        self._llm_waiting_frame = (
+            (self._llm_waiting_frame + 1) % len(_LLM_WAITING_FRAMES)
+        )
+        self._llm_label.set_text(_LLM_WAITING_FRAMES[self._llm_waiting_frame])
+        return True
+
+    def _stop_llm_waiting_anim(self) -> None:
+        if self._llm_waiting_source is not None:
+            GLib.source_remove(self._llm_waiting_source)
+            self._llm_waiting_source = None
 
     # ── Tick / draw ──────────────────────────────────────────────────────────
 

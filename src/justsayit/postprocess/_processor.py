@@ -191,6 +191,7 @@ class PostprocessorBase:
         extra_image_provided: bool = False,
         history_text: str = "",
         assistant_mode: bool = False,
+        extra_system_prompt: str = "",
     ) -> tuple[str, str]:
         """Return ``(static, dynamic)`` parts of the system prompt.
 
@@ -241,6 +242,8 @@ class PostprocessorBase:
                 "(This always means you are in Assistant mode!)\n"
                 "Analyze or help with the image based on the spoken request."
             )
+        if extra_system_prompt.strip():
+            dynamic_parts.append(extra_system_prompt.strip())
         return prompt, "\n\n".join(dynamic_parts)
 
     def _build_messages(
@@ -252,6 +255,7 @@ class PostprocessorBase:
         extra_image_provided: bool = False,
         assistant_mode: bool = False,
         history_text: str = "",
+        extra_system_prompt: str = "",
     ) -> list[dict]:
         """Assemble the chat-completions message list.
 
@@ -259,12 +263,15 @@ class PostprocessorBase:
         message and the new user turn. ``history_text`` is folded into
         the system prompt's dynamic section instead — used by the local
         backend, which serializes prior turns as plain text.
+        ``extra_system_prompt`` is appended to the dynamic section last —
+        used for redo-override nudges.
         """
         static, dynamic = self._build_system_prompt_parts(
             extra_context,
             extra_image_provided=extra_image_provided,
             history_text=history_text,
             assistant_mode=assistant_mode,
+            extra_system_prompt=extra_system_prompt,
         )
         system_content = "\n\n".join(filter(None, [static, dynamic]))
         messages: list[dict] = [
@@ -340,6 +347,7 @@ class PostprocessorBase:
         tools: list | None = None,
         tool_caller=None,
         assistant_mode: bool = False,
+        extra_system_prompt: str = "",
     ) -> ProcessResult:
         raise NotImplementedError
 
@@ -354,6 +362,7 @@ class PostprocessorBase:
         tools: list | None = None,
         tool_caller=None,
         assistant_mode: bool = False,
+        extra_system_prompt: str = "",
     ) -> ProcessResult:
         """Run the LLM on *text* and return the result including any reasoning.
 
@@ -372,8 +381,10 @@ class PostprocessorBase:
         Both are optional — backends that don't support function calling ignore them.
         ``assistant_mode`` tells the model it is in interactive assistant mode
         rather than transcription-cleanup mode.
+        ``extra_system_prompt`` is appended to the dynamic system-prompt section;
+        used for redo-override nudges.
         """
-        result = self._run(text, extra_context, extra_image, extra_image_mime, previous_session, tools, tool_caller, assistant_mode)
+        result = self._run(text, extra_context, extra_image, extra_image_mime, previous_session, tools, tool_caller, assistant_mode, extra_system_prompt)
         if not result.text:
             result = ProcessResult(text=text, reasoning=result.reasoning, session_data=result.session_data)
         return result

@@ -142,14 +142,15 @@ class LocalBackend(PostprocessorBase):
 
         self._llm.chat_handler = _handler
 
-    def _run(self, text: str, extra_context: str = "", extra_image: bytes | None = None, extra_image_mime: str = "", previous_session: dict | None = None, tools: list | None = None, tool_caller=None, assistant_mode: bool = False) -> ProcessResult:
+    def _run(self, text: str, extra_context: str = "", extra_image: bytes | None = None, extra_image_mime: str = "", previous_session: dict | None = None, tools: list | None = None, tool_caller=None, assistant_mode: bool = False, extra_system_prompt: str = "") -> ProcessResult:
         import time
         prev_msgs: list[dict] = (previous_session.get("prev_messages") or []) if previous_session else []
         # Local models are text-only for inference; always use formatted history text.
         # Images in prev_msgs are preserved in session storage for cross-backend switches.
         history_text = self._format_history_text(prev_msgs) if prev_msgs else ""
         messages = self._build_messages(
-            text, extra_context, history_text=history_text, assistant_mode=assistant_mode
+            text, extra_context, history_text=history_text, assistant_mode=assistant_mode,
+            extra_system_prompt=extra_system_prompt,
         )
 
         use_tools = bool(tools and tool_caller and self.profile.use_tools)

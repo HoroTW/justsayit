@@ -834,6 +834,45 @@ class App:
         if self.overlay is not None:
             self.overlay.push_assistant_mode(self._assistant_mode)
 
+    def _overlay_redo_cleanup(self) -> None:
+        """Called from the overlay 🧹 button — redo with cleanup mode."""
+        if self.pipeline is None:
+            return
+        if self.overlay is not None:
+            self.overlay.push_redo_buttons(False, False)
+        threading.Thread(
+            target=self._run_redo,
+            args=(False,),
+            name="justsayit-redo",
+            daemon=True,
+        ).start()
+
+    def _overlay_redo_assistant(self) -> None:
+        """Called from the overlay 🤖 button — redo with assistant mode."""
+        if self.pipeline is None:
+            return
+        if self.overlay is not None:
+            self.overlay.push_redo_buttons(False, False)
+        threading.Thread(
+            target=self._run_redo,
+            args=(True,),
+            name="justsayit-redo",
+            daemon=True,
+        ).start()
+
+    def _run_redo(self, assistant_mode_override: bool) -> None:
+        """Worker thread for redo_with_override — keeps the UI thread free."""
+        assert self.pipeline is not None
+        try:
+            self.pipeline.redo_with_override(assistant_mode_override=assistant_mode_override)
+        except Exception:
+            log.exception("redo_with_override failed")
+            return
+        if self.overlay is not None:
+            self.overlay.push_redo_buttons(
+                True, self.pipeline.last_was_assistant_mode
+            )
+
     def _reset_continue_timer(self) -> None:
         if self._continue_timer_id is not None:
             GLib.source_remove(self._continue_timer_id)
@@ -1054,6 +1093,9 @@ class App:
         self.pipeline.handle(seg, consume_clipboard_fn=self._consume_clipboard_context, is_continue=is_continue)
         if is_continue and self._continue_window_active:
             GLib.idle_add(self._reset_continue_timer)
+        # Show redo buttons when a postprocessor ran on this segment.
+        if self.overlay is not None and self.pipeline.postprocessor is not None and self.pipeline._last_detected_text is not None:
+            self.overlay.push_redo_buttons(True, self.pipeline.last_was_assistant_mode)
 
     # --- GTK lifecycle -----------------------------------------------------
 
@@ -1129,6 +1171,8 @@ class App:
                 on_toggle_clipboard_context=self._toggle_clipboard_context,
                 on_toggle_continue_window=self._toggle_continue_window,
                 on_toggle_assistant_mode=self._toggle_assistant_mode,
+                on_redo_cleanup=self._overlay_redo_cleanup,
+                on_redo_assistant=self._overlay_redo_assistant,
             )
             # Explicitly hidden until the engine reports a non-idle state.
             self.overlay.set_visible(False)

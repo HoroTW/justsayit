@@ -75,6 +75,9 @@ class _StubOverlay:
     def push_tool_call(self, name: str, params: dict) -> None:
         pass
 
+    def push_redo_buttons(self, visible: bool, last_run_was_assistant: bool) -> None:
+        pass
+
 
 class _RaisingPostprocessor:
     def __init__(self, message: str = "remote exploded") -> None:

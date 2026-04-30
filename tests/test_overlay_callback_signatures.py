@@ -77,3 +77,21 @@ def test_label_has_selection_notify_handler_signature():
     )
 
 
+def test_redo_cleanup_button_handler_signature():
+    """``button.connect('clicked', cb)`` invokes ``cb(button)`` — 1 positional
+    arg plus self. The redo-cleanup handler must accept that shape."""
+    method = OverlayWindow._on_redo_cleanup_clicked
+    assert _positional_count(method) >= 1, (
+        "_on_redo_cleanup_clicked must accept (_button: Gtk.Button)"
+    )
+
+
+def test_redo_assistant_button_handler_signature():
+    """``button.connect('clicked', cb)`` invokes ``cb(button)`` — 1 positional
+    arg plus self. The redo-assistant handler must accept that shape."""
+    method = OverlayWindow._on_redo_assistant_clicked
+    assert _positional_count(method) >= 1, (
+        "_on_redo_assistant_clicked must accept (_button: Gtk.Button)"
+    )
+
+

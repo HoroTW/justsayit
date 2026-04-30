@@ -53,7 +53,7 @@ class ResponsesBackend(PostprocessorBase):
                 result.append({"role": "assistant", "content": items})
         return result
 
-    def _run(self, text: str, extra_context: str = "", extra_image: bytes | None = None, extra_image_mime: str = "", previous_session: dict | None = None, tools: list | None = None, tool_caller=None, assistant_mode: bool = False) -> ProcessResult:
+    def _run(self, text: str, extra_context: str = "", extra_image: bytes | None = None, extra_image_mime: str = "", previous_session: dict | None = None, tools: list | None = None, tool_caller=None, assistant_mode: bool = False, extra_system_prompt: str = "") -> ProcessResult:
         """OpenAI Responses API POST (/v1/responses).
 
         The static system prompt goes in ``instructions`` (cached prefix);
@@ -78,7 +78,8 @@ class ResponsesBackend(PostprocessorBase):
         img_b64 = base64.b64encode(extra_image).decode("ascii") if has_image else ""  # type: ignore[arg-type]
 
         static_prompt, dynamic_prompt = self._build_system_prompt_parts(
-            extra_context, extra_image_provided=has_image, assistant_mode=assistant_mode
+            extra_context, extra_image_provided=has_image, assistant_mode=assistant_mode,
+            extra_system_prompt=extra_system_prompt,
         )
         log.debug("assembled Responses API instructions (static/cached):\n%s", static_prompt)
         if dynamic_prompt:

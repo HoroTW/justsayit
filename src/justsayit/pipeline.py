@@ -74,6 +74,8 @@ class SegmentPipeline:
         self.on_error = on_error
         self.enqueue_segment = enqueue_segment
         self._last_transcription_time: float | None = None
+        self._last_detected_text: str | None = None
+        self.last_was_assistant_mode: bool = False
 
     def _build_retry_cb(self, seg: "Segment") -> Callable[[], None] | None:
         if self.enqueue_segment is None:
@@ -135,6 +137,10 @@ class SegmentPipeline:
             return
         if final != raw:
             log.info("filters changed output: %r -> %r", raw, final)
+
+        # Cache post-filter text and current mode for redo_with_override.
+        self._last_detected_text = final
+        self.last_was_assistant_mode = self.assistant_mode
 
         # Snapshot pp before the overlay update so we know whether to show the
         # LLM field immediately (as "Wait for LLM processing…").
@@ -334,5 +340,94 @@ class SegmentPipeline:
         finally:
             # Linger so the user can read the transcribed text regardless of
             # whether paste succeeded or failed.
+            if self.overlay is not None:
+                self.overlay.push_linger_start()
+
+    def redo_with_override(self, *, assistant_mode_override: bool) -> None:
+        """Re-run the last detected (post-filter) text through the LLM with
+        an explicit mode override.  Skips ASR and filters — those already ran.
+        No-op (with a warning) when no cached text is available."""
+        from justsayit.paste import PasteError
+
+        if self._last_detected_text is None:
+            log.warning("redo_with_override: no cached detected text; ignoring")
+            return
+
+        pp = self.postprocessor
+        if pp is None:
+            log.warning("redo_with_override: no postprocessor active; ignoring")
+            return
+
+        text = self._last_detected_text
+
+        if assistant_mode_override:
+            nudge = (
+                "REDO: respond as an assistant to the transcribed input. "
+                "DO NOT just clean up the transcription."
+            )
+        else:
+            nudge = (
+                "REDO: ONLY do cleanup of the transcription. "
+                "DO NOT respond conversationally / assistant-style."
+            )
+
+        # Switch overlay to LLM-thinking placeholder.
+        if self.overlay is not None:
+            self.overlay.push_detected_text(text, llm_pending=True)
+
+        llm_overlay_text = text
+        llm_overlay_thought = ""
+        paste_text = text
+        try:
+            result = pp.process_with_reasoning(
+                text,
+                extra_system_prompt=nudge,
+                assistant_mode=assistant_mode_override,
+            )
+            cleaned = result.text
+            log.info("redo LLM: %r -> %r", text, cleaned)
+            llm_overlay_text = cleaned
+            paste_text = cleaned
+        except Exception as exc:
+            log.exception("redo LLM postprocessor failed; using unprocessed text")
+            detail = (str(exc).strip().splitlines() or [exc.__class__.__name__])[0]
+            llm_overlay_text = f"LLM error: {detail or exc.__class__.__name__}"
+        else:
+            stripped = pp.strip_for_paste(paste_text)
+            if stripped != paste_text:
+                matches = [
+                    m.strip()
+                    for m in pp.find_strip_matches(paste_text)
+                    if m.strip()
+                ]
+                llm_overlay_thought = "\n".join(matches)
+            if result.reasoning:
+                llm_overlay_thought = result.reasoning
+            llm_overlay_text = stripped
+            paste_text = stripped
+
+        if self.overlay is not None:
+            self.overlay.push_llm_text(llm_overlay_text, thought=llm_overlay_thought)
+
+        self.last_was_assistant_mode = assistant_mode_override
+
+        if self.no_paste or not self.cfg.paste.enabled or assistant_mode_override:
+            print(paste_text, flush=True)
+            log.info("redo paste disabled — text only printed")
+            if self.overlay is not None:
+                self.overlay.push_linger_start()
+            return
+
+        if self.paster is None:
+            log.warning("redo: paster not ready; skipping paste")
+            if self.overlay is not None:
+                self.overlay.push_linger_start()
+            return
+        try:
+            log.info("redo pasting %d chars", len(paste_text))
+            self.paster.paste(paste_text)
+        except PasteError as e:
+            log.error("redo paste failed: %s", e)
+        finally:
             if self.overlay is not None:
                 self.overlay.push_linger_start()
