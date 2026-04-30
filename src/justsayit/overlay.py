@@ -1051,7 +1051,7 @@ class OverlayWindow(Gtk.ApplicationWindow):
 
     # ── Tick / draw ──────────────────────────────────────────────────────────
 
-    def _tick(self, _widget, frame_clock) -> bool:
+    def _tick(self, _widget, frame_clock, _user_data=None) -> bool:
         # Time-based animation: derive a per-frame scale from the frame
         # clock so behaviour matches the previous fixed-33ms cadence
         # regardless of the actual refresh rate. Original constants were

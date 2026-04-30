@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.21.1] - 2026-04-30
+
+### Fixed
+- Overlay crashed at runtime as soon as the meter ticked: `_tick` accepted 3 args but `add_tick_callback` calls it with 4 (widget, frame_clock, user_data). The mic-level indicator stopped updating because the first tick raised `TypeError` and silently killed the animation. Added regression tests that assert callback arity for `_tick`, the draw funcs, gesture handlers, and the selection-notify handler.
+
 ## [0.21.0] - 2026-04-30
 
 ### Added
