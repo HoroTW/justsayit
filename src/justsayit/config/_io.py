@@ -15,7 +15,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-import tomli_w
+import tomlkit
 
 from platformdirs import user_cache_dir, user_config_dir
 
@@ -264,7 +264,7 @@ def render_config_toml(cfg: Config | None = None, *, commented: bool = False) ->
             "\n"
         )
     cfg_dict, none_fields = _cfg_to_toml_dict(cfg)
-    body = tomli_w.dumps(cfg_dict)
+    body = tomlkit.dumps(cfg_dict)
     body = _inject_none_field_comments(body, none_fields)
     if commented:
         body = _comment_value_lines(body)
