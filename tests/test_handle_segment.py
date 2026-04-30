@@ -14,6 +14,7 @@ import pytest
 
 from justsayit.audio import Segment
 from justsayit.config import Config
+from justsayit.pipeline import SegmentPipeline
 from justsayit.postprocess import ProcessResult
 from justsayit.transcribe import TranscriberBase
 
@@ -122,6 +123,24 @@ def _app(cfg: Config) -> App:
     return app
 
 
+def _wire_pipeline(app: App) -> None:
+    """Build a SegmentPipeline from the current App state. Tests must call
+    this after setting ``app.transcriber`` (and any optional postprocessor /
+    overlay) — the production path goes through ``setup_transcriber`` which
+    builds the same wiring."""
+    assert app.transcriber is not None
+    app.pipeline = SegmentPipeline(
+        app.cfg,
+        app.transcriber,
+        app.filters,
+        app.paster,
+        no_paste=app.no_paste,
+        after_llm_filters=app.after_llm_filters,
+    )
+    app.pipeline.postprocessor = app.postprocessor
+    app.pipeline.overlay = app.overlay
+
+
 # ---------------------------------------------------------------------------
 # Basic output
 # ---------------------------------------------------------------------------
@@ -131,6 +150,7 @@ def test_handle_segment_prints_transcription(capsys):
     cfg = Config()
     app = _app(cfg)
     app.transcriber = _StubTranscriber("hello world")
+    _wire_pipeline(app)
     app._handle_segment(_make_seg())
     assert capsys.readouterr().out.strip() == "hello world"
 
@@ -139,6 +159,7 @@ def test_handle_segment_empty_transcription_prints_nothing(capsys):
     cfg = Config()
     app = _app(cfg)
     app.transcriber = _StubTranscriber("")
+    _wire_pipeline(app)
     app._handle_segment(_make_seg())
     assert capsys.readouterr().out == ""
 
@@ -147,17 +168,19 @@ def test_handle_segment_updates_last_transcription_time():
     cfg = Config()
     app = _app(cfg)
     app.transcriber = _StubTranscriber("hi")
-    assert app._last_transcription_time is None
+    _wire_pipeline(app)
+    assert app.pipeline._last_transcription_time is None
     app._handle_segment(_make_seg())
-    assert app._last_transcription_time is not None
+    assert app.pipeline._last_transcription_time is not None
 
 
 def test_handle_segment_empty_does_not_update_last_time():
     cfg = Config()
     app = _app(cfg)
     app.transcriber = _StubTranscriber("")
+    _wire_pipeline(app)
     app._handle_segment(_make_seg())
-    assert app._last_transcription_time is None
+    assert app.pipeline._last_transcription_time is None
 
 
 def test_handle_segment_skips_short_segments_before_transcription(capsys):
@@ -166,12 +189,13 @@ def test_handle_segment_skips_short_segments_before_transcription(capsys):
     app = _app(cfg)
     app.overlay = _StubOverlay()
     app.transcriber = _CountingTranscriber("hello")
+    _wire_pipeline(app)
 
     app._handle_segment(_make_seg(duration_s=0.25))
 
     assert app.transcriber.calls == 0
     assert app.overlay.hide_calls == 1
-    assert app._last_transcription_time is None
+    assert app.pipeline._last_transcription_time is None
     assert capsys.readouterr().out == ""
 
 
@@ -180,6 +204,7 @@ def test_handle_segment_does_not_skip_when_threshold_disabled(capsys):
     cfg.audio.skip_segments_below_seconds = 0.0
     app = _app(cfg)
     app.transcriber = _CountingTranscriber("hello")
+    _wire_pipeline(app)
 
     app._handle_segment(_make_seg(duration_s=0.25))
 
@@ -197,6 +222,7 @@ def test_trailing_space_appended(capsys):
     cfg.paste.append_trailing_space = True
     app = _app(cfg)
     app.transcriber = _StubTranscriber("hello")
+    _wire_pipeline(app)
     app._handle_segment(_make_seg())
     out = capsys.readouterr().out
     assert out == "hello \n"
@@ -206,6 +232,7 @@ def test_trailing_space_off_by_default(capsys):
     cfg = Config()
     app = _app(cfg)
     app.transcriber = _StubTranscriber("hello")
+    _wire_pipeline(app)
     app._handle_segment(_make_seg())
     out = capsys.readouterr().out
     assert out == "hello\n"
@@ -221,8 +248,9 @@ def test_auto_space_prepended_within_timeout(capsys):
     cfg.paste.auto_space_timeout_ms = 5000  # 5 s window
     app = _app(cfg)
     app.transcriber = _StubTranscriber("world")
+    _wire_pipeline(app)
     # Set last_transcription_time to just now → elapsed ≈ 0ms → within timeout.
-    app._last_transcription_time = time.monotonic()
+    app.pipeline._last_transcription_time = time.monotonic()
     app._handle_segment(_make_seg(duration_s=1.01))
     out = capsys.readouterr().out
     assert out == " world\n"
@@ -233,8 +261,9 @@ def test_auto_space_not_prepended_when_timeout_exceeded(capsys):
     cfg.paste.auto_space_timeout_ms = 1000  # 1 s window
     app = _app(cfg)
     app.transcriber = _StubTranscriber("world")
+    _wire_pipeline(app)
     # Set last_transcription_time to 100 s ago → elapsed >> timeout.
-    app._last_transcription_time = time.monotonic() - 100.0
+    app.pipeline._last_transcription_time = time.monotonic() - 100.0
     app._handle_segment(_make_seg(duration_s=1.01))
     out = capsys.readouterr().out
     assert out == "world\n"
@@ -246,7 +275,8 @@ def test_auto_space_not_prepended_on_first_transcription(capsys):
     cfg.paste.auto_space_timeout_ms = 5000
     app = _app(cfg)
     app.transcriber = _StubTranscriber("first")
-    assert app._last_transcription_time is None
+    _wire_pipeline(app)
+    assert app.pipeline._last_transcription_time is None
     app._handle_segment(_make_seg())
     out = capsys.readouterr().out
     assert out == "first\n"
@@ -257,7 +287,8 @@ def test_auto_space_disabled_when_zero(capsys):
     cfg.paste.auto_space_timeout_ms = 0  # disabled
     app = _app(cfg)
     app.transcriber = _StubTranscriber("word")
-    app._last_transcription_time = time.monotonic()
+    _wire_pipeline(app)
+    app.pipeline._last_transcription_time = time.monotonic()
     app._handle_segment(_make_seg())
     out = capsys.readouterr().out
     assert out == "word\n"
@@ -276,7 +307,8 @@ def test_trailing_space_takes_precedence_over_auto_space(capsys):
     cfg.paste.auto_space_timeout_ms = 5000
     app = _app(cfg)
     app.transcriber = _StubTranscriber("word")
-    app._last_transcription_time = time.monotonic()
+    _wire_pipeline(app)
+    app.pipeline._last_transcription_time = time.monotonic()
     app._handle_segment(_make_seg())
     out = capsys.readouterr().out
     # Trailing space appended, no leading space.
@@ -289,6 +321,7 @@ def test_llm_failure_shows_overlay_error_but_prints_original_text(capsys):
     app.overlay = _StubOverlay()
     app.transcriber = _StubTranscriber("hello world")
     app.postprocessor = _RaisingPostprocessor("HTTP 503: upstream timeout")
+    _wire_pipeline(app)
 
     app._handle_segment(_make_seg())
 
@@ -303,6 +336,7 @@ def test_llm_failure_does_not_strip_fallback_text(capsys):
     app.transcriber = _StubTranscriber("keep secret text")
     pp = _RaisingPostprocessor("boom")
     app.postprocessor = pp
+    _wire_pipeline(app)
 
     app._handle_segment(_make_seg())
 
@@ -321,6 +355,7 @@ def test_remote_reasoning_field_is_shown_in_overlay_thought(capsys):
         text="cleaned hello world",
         reasoning="model decided punctuation needed a comma",
     )
+    _wire_pipeline(app)
 
     app._handle_segment(_make_seg())
 
@@ -336,6 +371,7 @@ def test_no_reasoning_field_leaves_overlay_thought_empty(capsys):
     app.overlay = _StubOverlay()
     app.transcriber = _StubTranscriber("hello")
     app.postprocessor = _StubPostprocessor(text="cleaned hello", reasoning="")
+    _wire_pipeline(app)
 
     app._handle_segment(_make_seg())
 
@@ -352,6 +388,7 @@ def test_armed_clipboard_context_is_passed_to_postprocessor_and_disarms(
     app.transcriber = _StubTranscriber("hello")
     pp = _StubPostprocessor(text="cleaned hello")
     app.postprocessor = pp
+    _wire_pipeline(app)
     monkeypatch.setattr(
         "justsayit.cli.read_clipboard",
         lambda **_kw: "extra context from clipboard",
@@ -372,6 +409,7 @@ def test_unarmed_clipboard_context_does_not_read_clipboard(capsys, monkeypatch):
     app.transcriber = _StubTranscriber("hello")
     pp = _StubPostprocessor(text="cleaned hello")
     app.postprocessor = pp
+    _wire_pipeline(app)
     calls = []
 
     def _boom():
@@ -393,6 +431,7 @@ def test_armed_with_empty_clipboard_still_disarms(capsys, monkeypatch):
     app.transcriber = _StubTranscriber("hello")
     pp = _StubPostprocessor(text="cleaned hello")
     app.postprocessor = pp
+    _wire_pipeline(app)
     monkeypatch.setattr("justsayit.cli.read_clipboard", lambda **_kw: None)
     app._clipboard_context_armed = True
 
