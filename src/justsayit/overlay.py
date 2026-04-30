@@ -827,7 +827,7 @@ class OverlayWindow(Gtk.ApplicationWindow):
             except Exception:
                 log.exception("on_toggle_clipboard_context callback raised")
 
-    def _on_result_clicked(self, _gesture, _n_press, x, y) -> None:
+    def _on_result_clicked(self, _gesture, _n_press, _x, _y) -> None:
         """Clicking the result pill cancels the auto-dismiss AND enables
         keyboard interaction (so Ctrl+C copies the selected text). Wired
         in CAPTURE phase on the root box so it fires for clicks on
@@ -837,7 +837,17 @@ class OverlayWindow(Gtk.ApplicationWindow):
         Focus-grant is deferred to this moment (rather than enabled when
         the result first appears) so the layer-shell never steals
         keyboard focus from the user's focused window before the user
-        deliberately interacts with the pill — that would break paste."""
+        deliberately interacts with the pill — that would break paste.
+
+        We do NOT call ``grab_focus()`` here. CAPTURE phase fires before
+        the label's own press handler, so by the time the label sees the
+        event, ``can_focus`` is already True — GTK's natural click-to-
+        focus behavior moves focus to the actual clicked label as part
+        of the same press, and the drag-to-select sequence completes
+        normally. Calling ``grab_focus`` explicitly would (a) trigger
+        GTK's select-all-on-focus-gain on selectable labels and (b)
+        interrupt the in-flight press→drag→release sequence, turning
+        every drag-select into a single click."""
         if not self._detected_label.get_visible():
             return
         log.info("result pill clicked — enabling Ctrl+C and cancelling auto-dismiss")
@@ -845,25 +855,6 @@ class OverlayWindow(Gtk.ApplicationWindow):
         Gtk4LayerShell.set_keyboard_mode(self, Gtk4LayerShell.KeyboardMode.ON_DEMAND)
         self._detected_label.set_can_focus(True)
         self._llm_label.set_can_focus(True)
-        # Grab focus on the label the user actually clicked, so Ctrl+C
-        # operates on its selection. Fall back to the LLM label (the
-        # paste-target body) if the click was on the empty pill area.
-        target = None
-        root = self.get_child()
-        if root is not None:
-            picked = root.pick(x, y, Gtk.PickFlags.DEFAULT)
-            while picked is not None and picked is not root:
-                if picked is self._detected_label or picked is self._llm_label:
-                    target = picked
-                    break
-                picked = picked.get_parent()
-        if target is None:
-            target = (
-                self._llm_label
-                if self._llm_label.get_visible()
-                else self._detected_label
-            )
-        target.grab_focus()
 
     def _on_label_has_selection(self, label: Gtk.Label, _pspec) -> None:
         """Selecting text in a label is itself a strong signal of user

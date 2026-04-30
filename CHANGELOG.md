@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.22.4] - 2026-04-30
+
+### Fixed
+- A single click on the result pill no longer select-alls the text, and drag-to-select within a label works again. Both were caused by the explicit `grab_focus()` call added in 0.22.3 — `grab_focus()` on a selectable GtkLabel triggers GTK's select-all-on-focus-gain and also interrupts the in-flight press→drag sequence. Removed the explicit grab; GTK's natural click-to-focus handles it correctly because `can_focus=True` is set in CAPTURE phase before the label sees the event.
+
 ## [0.22.3] - 2026-04-30
 
 ### Fixed
