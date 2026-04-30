@@ -80,15 +80,19 @@ def test_ensure_vad_downloads_when_missing(tmp_path, monkeypatch):
     assert result.exists()
 
 
-def test_ensure_vad_raises_if_download_produced_nothing(tmp_path, monkeypatch):
+def test_ensure_vad_attempts_download_when_missing(tmp_path, monkeypatch):
+    """When the VAD file is absent, ensure_vad must call _download exactly
+    once. _download moves atomically (tmp.replace) so success implies
+    existence — ensure_vad trusts that contract."""
     monkeypatch.setattr("justsayit.model.models_dir", lambda: tmp_path)
+    download_calls: list[str] = []
 
-    def _broken_download(url, dest, **kw):
-        pass  # doesn't create the file
+    def _fake_download(url, dest, **kw):
+        download_calls.append(url)
 
-    monkeypatch.setattr("justsayit.model._download", _broken_download)
-    with pytest.raises(RuntimeError, match="VAD model still missing"):
-        ensure_vad(Config())
+    monkeypatch.setattr("justsayit.model._download", _fake_download)
+    ensure_vad(Config())
+    assert len(download_calls) == 1
 
 
 def test_ensure_vad_force_re_downloads_existing(tmp_path, monkeypatch):

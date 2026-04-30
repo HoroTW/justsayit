@@ -1,21 +1,19 @@
 """Transcription backends for justsayit.
 
 Provides ``TranscriberBase`` (the common interface used throughout the app)
-and ``make_transcriber(cfg, model_paths)`` which instantiates the right
-backend based on ``cfg.model.backend``.
+and ``make_transcriber(cfg)`` which instantiates the right backend based on
+``cfg.model.backend``.
 """
 
 from __future__ import annotations
 
 import re
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
 
 if TYPE_CHECKING:
     from justsayit.config import Config
-    from justsayit.model import ModelPaths
 
 # "Has words" heuristic for the 3-second validation window.
 _WORD_RE = re.compile(r"\w{2,}", re.UNICODE)
@@ -38,21 +36,13 @@ class TranscriberBase:
         return bool(_WORD_RE.search(self.transcribe(samples, sample_rate)))
 
 
-def make_transcriber(
-    cfg: "Config", model_paths: "ModelPaths | None" = None
-) -> TranscriberBase:
-    """Instantiate the transcriber for ``cfg.model.backend``.
-
-    ``model_paths`` is required when backend is ``"parakeet"`` and ignored
-    for ``"whisper"`` (faster-whisper handles its own model loading).
-    """
+def make_transcriber(cfg: "Config") -> TranscriberBase:
+    """Instantiate the transcriber for ``cfg.model.backend``."""
     backend = cfg.model.backend
     if backend == "parakeet":
         from justsayit.transcribe_parakeet import ParakeetTranscriber
 
-        if model_paths is None:
-            raise ValueError("model_paths is required for the parakeet backend")
-        return ParakeetTranscriber(cfg, model_paths)
+        return ParakeetTranscriber(cfg)
     if backend == "whisper":
         from justsayit.transcribe_whisper import WhisperTranscriber
 

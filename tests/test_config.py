@@ -232,6 +232,17 @@ def test_render_load_roundtrip_defaults(tmp_path):
     assert restored.vad.enabled == original.vad.enabled
 
 
+def test_render_load_roundtrip_string_with_double_quote(tmp_path):
+    """Strings containing a double-quote must round-trip through render +
+    load — the legacy hand-rolled renderer didn't escape them."""
+    cfg = Config()
+    cfg.shortcut.description = 'has a " quote in it'
+    p = tmp_path / "config.toml"
+    p.write_text(render_config_toml(cfg), encoding="utf-8")
+    restored = load_config(p)
+    assert restored.shortcut.description == 'has a " quote in it'
+
+
 def test_render_load_roundtrip_whisper(tmp_path):
     cfg = Config()
     cfg.model.backend = "whisper"

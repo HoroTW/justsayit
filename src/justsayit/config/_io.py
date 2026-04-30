@@ -10,11 +10,12 @@ import json
 import logging
 import os
 import re
-import shutil
-import sys
 import tomllib
+from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
+
+import tomlkit
 
 from platformdirs import user_cache_dir, user_config_dir
 
@@ -33,13 +34,6 @@ from ._schema import (
 )
 
 APP_NAME = "justsayit"
-
-# Distinctive header line written into commented-defaults files. Used as
-# a stable marker so ``ensure_config_file`` can tell "already in
-# commented form" apart from "still on the legacy fully-populated form"
-# without re-checking content equality (which would re-trigger every
-# time we ship a new default value).
-_COMMENTED_FORM_MARKER = "# justsayit configuration (commented-defaults form)."
 
 
 def config_dir() -> Path:
@@ -244,61 +238,103 @@ def render_config_toml(cfg: Config | None = None, *, commented: bool = False) ->
     Default mode emits every setting with its current value (good for
     ``show-defaults`` output and for inspecting a runtime config).
 
-    With ``commented=True`` every value line is prefixed with ``# ``,
-    leaving section headers uncommented. This is the "commented-defaults"
-    form shipped on fresh install: only knobs the user explicitly cares
-    about live in the file as uncommented lines, so future updates that
-    move a default never collide with their settings.
+    With ``commented=True`` every non-blank, non-section-header,
+    non-comment line is prefixed with ``# ``. This is the
+    "commented-defaults" form shipped on fresh install: only knobs the
+    user explicitly cares about live in the file as uncommented lines,
+    so future updates that move a default never collide with their
+    settings.
     """
-    from dataclasses import fields as dc_fields
     if cfg is None:
         cfg = Config()
     if commented:
-        lines = [
-            _COMMENTED_FORM_MARKER,
-            "# Every key below is the shipped default, commented out.",
-            "# Uncomment a line and change the value to override it.",
-            "# Lines you don't touch keep tracking the shipped defaults,",
-            "# so future updates that tweak a default just work.",
-            "",
-        ]
+        header = (
+            "# justsayit configuration (commented-defaults form).\n"
+            "# Every key below is the shipped default, commented out.\n"
+            "# Uncomment a line and change the value to override it.\n"
+            "# Lines you don't touch keep tracking the shipped defaults,\n"
+            "# so future updates that tweak a default just work.\n"
+            "\n"
+        )
     else:
-        lines = [
-            "# justsayit configuration. Every setting is listed with its",
-            "# current value. Delete or comment a line to fall back to the",
-            "# built-in default (the app will not rewrite unchanged sections).",
-            "",
-        ]
-    prefix = "# " if commented else ""
-    for section_name in (
-        "audio",
-        "vad",
-        "shortcut",
-        "paste",
-        "model",
-        "overlay",
-        "sound",
-        "log",
-        "postprocess",
-    ):
-        section = getattr(cfg, section_name)
-        lines.append(f"[{section_name}]")
-        for f in dc_fields(section):
-            val = getattr(section, f.name)
-            if val is None:
-                # Already commented (Optional/None default). No extra prefix.
-                lines.append(f'# {f.name} = ""')
-                continue
-            if isinstance(val, bool):
-                rendered = "true" if val else "false"
-            elif isinstance(val, str):
-                rendered = f'"{val}"'
-            else:
-                rendered = repr(val)
-            lines.append(f"{prefix}{f.name} = {rendered}")
-        lines.append("")
-    lines.append(f'{prefix}filters_path = "{cfg.filters_path}"')
-    return "\n".join(lines) + "\n"
+        header = (
+            "# justsayit configuration. Every setting is listed with its\n"
+            "# current value. Delete or comment a line to fall back to the\n"
+            "# built-in default (the app will not rewrite unchanged sections).\n"
+            "\n"
+        )
+    cfg_dict, none_fields = _cfg_to_toml_dict(cfg)
+    body = tomlkit.dumps(cfg_dict)
+    body = _inject_none_field_comments(body, none_fields)
+    if commented:
+        body = _comment_value_lines(body)
+    return header + body
+
+
+def _cfg_to_toml_dict(cfg: Config) -> tuple[dict[str, Any], dict[str, list[str]]]:
+    """asdict(cfg) but stripping None (TOML has no null) and stringifying
+    Paths. Returns ``(toml_dict, none_fields_per_section)``; the second
+    map carries field names whose value was None so the renderer can
+    emit ``# field = ""`` placeholder lines (kept for documentation,
+    matching the legacy renderer's behaviour).
+
+    Only ``filters_path`` is emitted as a top-level scalar to match the
+    legacy hand-rolled renderer (load_config doesn't read the other Path
+    fields back; they default at runtime)."""
+    raw = asdict(cfg)
+    out: dict[str, Any] = {"filters_path": str(cfg.filters_path)}
+    none_fields: dict[str, list[str]] = {}
+    for key, val in raw.items():
+        if not isinstance(val, dict):
+            continue
+        out[key] = {k: v for k, v in val.items() if v is not None}
+        nones = [k for k, v in val.items() if v is None]
+        if nones:
+            none_fields[key] = nones
+    return out, none_fields
+
+
+def _inject_none_field_comments(body: str, none_fields: dict[str, list[str]]) -> str:
+    """For each section listed in *none_fields*, append ``# field = ""``
+    placeholder lines after the section's last value line."""
+    if not none_fields:
+        return body
+    lines = body.splitlines()
+    out_lines: list[str] = []
+    current_section: str | None = None
+    pending: list[str] = []
+
+    def flush_pending(out: list[str]) -> None:
+        nonlocal pending
+        for name in pending:
+            out.append(f'# {name} = ""')
+        pending = []
+
+    for line in lines:
+        stripped = line.lstrip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            flush_pending(out_lines)
+            current_section = stripped[1:-1]
+            out_lines.append(line)
+            pending = list(none_fields.get(current_section, []))
+            continue
+        if not stripped and pending:
+            flush_pending(out_lines)
+        out_lines.append(line)
+    flush_pending(out_lines)
+    return "\n".join(out_lines) + ("\n" if body.endswith("\n") else "")
+
+
+def _comment_value_lines(toml_text: str) -> str:
+    """Prefix every non-blank, non-section-header, non-comment line with ``# ``."""
+    lines = []
+    for line in toml_text.splitlines():
+        stripped = line.lstrip()
+        if not stripped or stripped.startswith("[") or stripped.startswith("#"):
+            lines.append(line)
+        else:
+            lines.append("# " + line)
+    return "\n".join(lines) + ("\n" if toml_text.endswith("\n") else "")
 
 
 def default_config_toml() -> str:
@@ -323,94 +359,16 @@ def save_config(cfg: Config, path: Path | None = None) -> None:
     save_state(cfg, _state_path_for(path))
 
 
-def _has_uncommented_assignment(text: str) -> bool:
-    """True if *text* contains at least one ``key = value`` line that
-    isn't commented out — the heuristic for "still on legacy fully-
-    populated form"."""
-    for line in text.splitlines():
-        stripped = line.lstrip()
-        if not stripped or stripped.startswith("#") or stripped.startswith("["):
-            continue
-        if "=" in stripped:
-            return True
-    return False
-
-
-def ensure_commented_form_file(
-    path: Path,
-    commented: str,
-    marker: str,
-    *,
-    suffix: str = ".bak-pre-commented-form",
-    validator: Callable[[str], None] | None = None,
-) -> bool:
-    """Ensure *path* exists in commented-defaults form, migrating from
-    legacy fully-populated form once if necessary.
-
-    The marker is a stable header line embedded in *commented*; finding
-    it in the user file means migration already happened, so we leave
-    the file alone (the user may have uncommented overrides). For files
-    that lack the marker AND contain uncommented ``key = value`` lines
-    (legacy form), the existing file is backed up to
-    ``<path><suffix>`` (if no backup exists yet) and overwritten with
-    *commented*. Pure-comment / empty files get the commented template
-    written without backup.
-
-    If *validator* is given, it is called on the existing file content
-    even when the marker is present; raising any exception means "this
-    file is corrupt despite the marker" and triggers re-migration. This
-    rescues files written by an earlier buggy template that happened to
-    embed the marker.
-
-    Returns ``True`` if the file was just written / migrated, ``False``
-    if it was found already in commented form.
-    """
-    if not path.exists():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(commented, encoding="utf-8")
-        return True
-    try:
-        head = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return False
-    was_marked_but_corrupt = False
-    if marker in head[:8192]:
-        if validator is None:
-            return False
-        try:
-            validator(head)
-            return False
-        except Exception:
-            was_marked_but_corrupt = True
-    if was_marked_but_corrupt or _has_uncommented_assignment(head):
-        backup = path.with_name(path.name + suffix)
-        if not backup.exists():
-            try:
-                backup.write_bytes(path.read_bytes())
-            except OSError:
-                pass
-    try:
-        path.write_text(commented, encoding="utf-8")
-    except OSError:
-        pass
-    return True
-
-
 def ensure_config_file(path: Path | None = None) -> Path:
     """Write the commented-defaults ``config.toml`` if it doesn't
     exist yet, so the file is always available for inspection /
-    editing. Returns the resolved path.
-
-    One-shot migration: a pre-existing ``config.toml`` in the legacy
-    fully-populated form (every key uncommented) is backed up to
-    ``config.toml.bak-pre-commented-form`` and rewritten in the new
-    commented form. Files that are already in the new form (marker
-    present) or that have only commented content are left alone.
+    editing. Returns the resolved path. Existing files are left alone.
     """
     if path is None:
         path = config_dir() / "config.toml"
-    commented = render_config_toml(None, commented=True)
-    ensure_commented_form_file(path, commented, _COMMENTED_FORM_MARKER)
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(render_config_toml(None, commented=True), encoding="utf-8")
     return path
 
 

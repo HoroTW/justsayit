@@ -6,9 +6,9 @@ import logging
 import tomllib
 from dataclasses import dataclass, field, fields
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
-from justsayit.config import config_dir, ensure_commented_form_file, resolve_secret  # noqa: F401
+from justsayit.config import config_dir, resolve_secret  # noqa: F401
 
 log = logging.getLogger(__name__)
 
@@ -264,9 +264,82 @@ def _toml_validator(text: str) -> None:
     tomllib.loads(text)
 
 
+def _has_uncommented_assignment(text: str) -> bool:
+    """True if *text* contains at least one ``key = value`` line that
+    isn't commented out — the heuristic for "still on legacy fully-
+    populated form"."""
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if not stripped or stripped.startswith("#") or stripped.startswith("["):
+            continue
+        if "=" in stripped:
+            return True
+    return False
+
+
+def _ensure_commented_form_file(
+    path: Path,
+    commented: str,
+    marker: str,
+    *,
+    suffix: str = ".bak-pre-commented-form",
+    validator: Callable[[str], None] | None = None,
+) -> bool:
+    """Ensure *path* exists in commented-defaults form, migrating from
+    legacy fully-populated form once if necessary.
+
+    The marker is a stable header line embedded in *commented*; finding
+    it in the user file means migration already happened, so we leave
+    the file alone (the user may have uncommented overrides). For files
+    that lack the marker AND contain uncommented ``key = value`` lines
+    (legacy form), the existing file is backed up to
+    ``<path><suffix>`` (if no backup exists yet) and overwritten with
+    *commented*. Pure-comment / empty files get the commented template
+    written without backup.
+
+    If *validator* is given, it is called on the existing file content
+    even when the marker is present; raising any exception means "this
+    file is corrupt despite the marker" and triggers re-migration. This
+    rescues files written by an earlier buggy template that happened to
+    embed the marker.
+
+    Returns ``True`` if the file was just written / migrated, ``False``
+    if it was found already in commented form.
+    """
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(commented, encoding="utf-8")
+        return True
+    try:
+        head = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    was_marked_but_corrupt = False
+    if marker in head[:8192]:
+        if validator is None:
+            return False
+        try:
+            validator(head)
+            return False
+        except Exception:
+            was_marked_but_corrupt = True
+    if was_marked_but_corrupt or _has_uncommented_assignment(head):
+        backup = path.with_name(path.name + suffix)
+        if not backup.exists():
+            try:
+                backup.write_bytes(path.read_bytes())
+            except OSError:
+                pass
+    try:
+        path.write_text(commented, encoding="utf-8")
+    except OSError:
+        pass
+    return True
+
+
 def ensure_profile(content: str, path: Path) -> Path:
     """Write a profile in commented-defaults form to *path* if it is missing or stale."""
-    ensure_commented_form_file(
+    _ensure_commented_form_file(
         path, content, _PROFILE_COMMENTED_FORM_MARKER, validator=_toml_validator
     )
     return path

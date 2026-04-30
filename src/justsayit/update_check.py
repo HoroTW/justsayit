@@ -32,20 +32,11 @@ PYPROJECT_URL = "https://raw.githubusercontent.com/HoroTW/justsayit/main/pyproje
 RELEASE_PAGE_URL = "https://github.com/HoroTW/justsayit/releases"
 CHECK_INTERVAL_SECONDS = 3 * 60 * 60
 
-_SEMVER_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
-
 
 @dataclass(frozen=True)
 class UpdateInfo:
     current: str
     latest: str
-    url: str
-
-
-@dataclass(frozen=True)
-class LatestRelease:
-    tag: str
-    version: str
     url: str
 
 
@@ -80,62 +71,18 @@ def parse_version_from_pyproject(text: str) -> str | None:
     return m.group(1)
 
 
-def parse_release_version(tag: str) -> str | None:
-    """Normalize a GitHub release tag to bare ``X.Y.Z`` semver."""
-    # Strip optional leading 'v'
-    if tag.startswith("v"):
-        tag = tag[1:]
-    m = _SEMVER_RE.fullmatch(tag.strip())
-    if not m:
-        return None
-    return ".".join((m.group(1), m.group(2), m.group(3)))
-
-
-def parse_latest_release(body: str) -> LatestRelease | None:
-    """Extract the latest release tag/version from GitHub API JSON."""
-    try:
-        payload = json.loads(body)
-    except json.JSONDecodeError:
-        return None
-
-    if not isinstance(payload, dict):
-        return None
-
-    tag = payload.get("tag_name")
-    if not isinstance(tag, str) or not tag.strip():
-        return None
-    tag = tag.strip()
-
-    version = parse_release_version(tag)
-    if version is None:
-        return None
-
-    url = payload.get("html_url")
-    if not isinstance(url, str) or not url:
-        url = RELEASE_PAGE_URL
-
-    return LatestRelease(tag=tag, version=version, url=url)
-
-
-def _semver_tuple(v: str) -> tuple[int, int, int] | None:
-    normalized = parse_release_version(v)
-    if normalized is None:
-        return None
-    m = _SEMVER_RE.fullmatch(normalized)
-    if not m:
-        return None
-    return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
-
-
 def is_newer(latest: str, current: str) -> bool:
-    """True if *latest* is a strictly higher semver than *current*.
+    """True if *latest* is a strictly higher X.Y.Z semver than *current*.
 
     Returns False if either version is unparseable — we'd rather miss an
     update than nag about a bogus comparison.
     """
-    a = _semver_tuple(latest)
-    b = _semver_tuple(current)
-    if a is None or b is None:
+    try:
+        a = tuple(int(p) for p in latest.strip().split("."))
+        b = tuple(int(p) for p in current.strip().split("."))
+    except ValueError:
+        return False
+    if len(a) != 3 or len(b) != 3:
         return False
     return a > b
 
@@ -160,7 +107,9 @@ def _save_cache(path: Path, latest: str) -> None:
         log.debug("could not write update-check cache", exc_info=True)
 
 
-def _fetch_latest(timeout: float) -> LatestRelease | None:
+def _fetch_latest(timeout: float) -> str | None:
+    """Fetch the version from main-branch pyproject.toml. Returns the
+    bare version string, or None on any failure."""
     req = urllib.request.Request(
         PYPROJECT_URL,
         headers={"User-Agent": "justsayit/update-check"},
@@ -172,30 +121,13 @@ def _fetch_latest(timeout: float) -> LatestRelease | None:
         log.info("update check: pyproject.toml fetch failed: %s", exc)
         return None
 
-    # Try JSON first (for test compatibility), then fall back to TOML
-    latest = parse_latest_release(body)
-    if latest is not None:
-        log.info("update check: fetched version=%s from GitHub API", latest.version)
-        log.info(
-            "update check: latest release tag=%s version=%s", latest.tag, latest.version
-        )
-        return latest
-
     version = parse_version_from_pyproject(body)
     if version is None:
         log.info("update check: pyproject.toml missing a usable version")
         return None
 
-    # Determine tag: if version already has a 'v' prefix, keep as is; otherwise add 'v' for consistency
-    # but we'll store the bare version in LatestRelease.version and tag as 'vX.Y.Z' if missing v.
-    if version.startswith("v"):
-        tag = version
-    else:
-        tag = "v" + version
-
     log.info("update check: fetched version=%s from pyproject.toml", version)
-    log.debug("update check: fetched tag=%s version=%s", tag, version)
-    return LatestRelease(tag=tag, version=version, url=RELEASE_PAGE_URL)
+    return version
 
 
 def _check_for_update_with_status(
@@ -244,19 +176,19 @@ def _check_for_update_with_status(
         log.info("update check: decision=fetch-failed")
         return None, False
 
-    _save_cache(path, latest.version)
-    if is_newer(latest.version, current_version):
+    _save_cache(path, latest)
+    if is_newer(latest, current_version):
         log.info(
             "update check: decision=update source=network current=%s latest=%s",
             current_version,
-            latest.version,
+            latest,
         )
-        return UpdateInfo(current_version, latest.version, latest.url), True
+        return UpdateInfo(current_version, latest, RELEASE_PAGE_URL), True
 
     log.info(
         "update check: decision=no-update source=network current=%s latest=%s",
         current_version,
-        latest.version,
+        latest,
     )
     return None, True
 

@@ -12,52 +12,35 @@ import pytest
 from justsayit import __version__, update_check
 from justsayit.cli import App
 from justsayit.update_check import (
-    LatestRelease,
+    RELEASE_PAGE_URL,
     UpdateInfo,
     check_for_update,
     is_newer,
-    parse_latest_release,
-    parse_release_version,
+    parse_version_from_pyproject,
 )
 
 
 # --- pure helpers -----------------------------------------------------------
 
 
-def test_parse_release_version_supports_leading_v():
-    assert parse_release_version("v1.2.3") == "1.2.3"
-
-
-def test_parse_release_version_supports_bare_semver():
-    assert parse_release_version("1.2.3") == "1.2.3"
-
-
-def test_parse_release_version_rejects_malformed_tag():
-    assert parse_release_version("release-1.2.3") is None
-
-
-def test_parse_latest_release_supports_leading_v_tag():
-    body = '{"tag_name": "v1.2.3", "html_url": "https://example.com/release"}'
-    latest = parse_latest_release(body)
-
-    assert latest == LatestRelease(
-        tag="v1.2.3",
-        version="1.2.3",
-        url="https://example.com/release",
+def test_parse_version_from_pyproject_extracts_version():
+    body = (
+        '[project]\n'
+        'name = "justsayit"\n'
+        'version = "1.2.3"\n'
+        'description = "..."\n'
     )
+    assert parse_version_from_pyproject(body) == "1.2.3"
 
 
-def test_parse_latest_release_missing_or_malformed_tag_returns_none():
-    assert parse_latest_release('{"html_url": "https://example.com/release"}') is None
-    assert parse_latest_release('{"tag_name": "release-1.2.3"}') is None
-    assert parse_latest_release('["not", "an", "object"]') is None
+def test_parse_version_from_pyproject_returns_none_when_missing():
+    assert parse_version_from_pyproject('[project]\nname = "x"\n') is None
 
 
 @pytest.mark.parametrize(
     "latest,current,expected",
     [
         ("1.0.0", "0.9.0", True),
-        ("v1.0.0", "0.9.0", True),
         ("0.7.2", "0.7.1", True),
         ("1.0.0", "1.0.0", False),
         ("0.9.0", "1.0.0", False),
@@ -75,15 +58,12 @@ def test_is_newer(latest: str, current: str, expected: bool):
 
 def test_check_for_update_returns_info_when_newer(tmp_path: Path):
     cache = tmp_path / "cache.json"
-    with patch.object(
-        update_check,
-        "_fetch_latest",
-        return_value=LatestRelease("v1.0.0", "1.0.0", "https://example.com/v1.0.0"),
-    ):
+    with patch.object(update_check, "_fetch_latest", return_value="1.0.0"):
         info = check_for_update("0.7.2", cache_path=cache)
     assert isinstance(info, UpdateInfo)
     assert info.current == "0.7.2"
     assert info.latest == "1.0.0"
+    assert info.url == RELEASE_PAGE_URL
     # Cache must now exist with the latest version.
     assert cache.exists()
     cached = json.loads(cache.read_text())
@@ -92,11 +72,7 @@ def test_check_for_update_returns_info_when_newer(tmp_path: Path):
 
 def test_check_for_update_returns_none_when_same(tmp_path: Path):
     cache = tmp_path / "cache.json"
-    with patch.object(
-        update_check,
-        "_fetch_latest",
-        return_value=LatestRelease("v0.7.2", "0.7.2", "https://example.com/v0.7.2"),
-    ):
+    with patch.object(update_check, "_fetch_latest", return_value="0.7.2"):
         assert check_for_update("0.7.2", cache_path=cache) is None
 
 
@@ -109,7 +85,7 @@ def test_check_for_update_returns_none_on_fetch_failure(tmp_path: Path):
     assert not cache.exists()
 
 
-def test_fetch_latest_logs_remote_tag_and_version(caplog):
+def test_fetch_latest_returns_version_from_pyproject(caplog):
     class FakeResponse:
         def __enter__(self):
             return self
@@ -118,19 +94,19 @@ def test_fetch_latest_logs_remote_tag_and_version(caplog):
             return None
 
         def read(self):
-            return b'{"tag_name": "v1.2.3", "html_url": "https://example.com/v1.2.3"}'
+            return (
+                b'[project]\n'
+                b'name = "justsayit"\n'
+                b'version = "1.2.3"\n'
+            )
 
     caplog.set_level("DEBUG", logger="justsayit.update_check")
 
     with patch("urllib.request.urlopen", return_value=FakeResponse()):
         latest = update_check._fetch_latest(5.0)
 
-    assert latest == LatestRelease(
-        tag="v1.2.3",
-        version="1.2.3",
-        url="https://example.com/v1.2.3",
-    )
-    assert "update check: latest release tag=v1.2.3 version=1.2.3" in caplog.text
+    assert latest == "1.2.3"
+    assert "update check: fetched version=1.2.3 from pyproject.toml" in caplog.text
 
 
 def test_check_for_update_uses_cache_within_interval(tmp_path: Path):
@@ -167,11 +143,7 @@ def test_check_for_update_logs_cached_result(tmp_path: Path, caplog):
 def test_check_for_update_force_bypasses_cache(tmp_path: Path):
     cache = tmp_path / "cache.json"
     cache.write_text(json.dumps({"checked_at": int(time.time()), "latest": "0.7.2"}))
-    with patch.object(
-        update_check,
-        "_fetch_latest",
-        return_value=LatestRelease("v9.9.9", "9.9.9", "https://example.com/v9.9.9"),
-    ):
+    with patch.object(update_check, "_fetch_latest", return_value="9.9.9"):
         info = check_for_update("0.7.2", cache_path=cache, force=True)
     assert info is not None and info.latest == "9.9.9"
 
@@ -189,11 +161,7 @@ def test_check_for_update_expired_cache_refetches(tmp_path: Path):
             }
         )
     )
-    with patch.object(
-        update_check,
-        "_fetch_latest",
-        return_value=LatestRelease("v0.8.0", "0.8.0", "https://example.com/v0.8.0"),
-    ):
+    with patch.object(update_check, "_fetch_latest", return_value="0.8.0"):
         info = check_for_update("0.7.2", cache_path=cache)
     assert info is not None and info.latest == "0.8.0"
 
@@ -201,11 +169,7 @@ def test_check_for_update_expired_cache_refetches(tmp_path: Path):
 def test_check_for_update_corrupt_cache_is_ignored(tmp_path: Path):
     cache = tmp_path / "cache.json"
     cache.write_text("{not valid json")
-    with patch.object(
-        update_check,
-        "_fetch_latest",
-        return_value=LatestRelease("v1.0.0", "1.0.0", "https://example.com/v1.0.0"),
-    ):
+    with patch.object(update_check, "_fetch_latest", return_value="1.0.0"):
         info = check_for_update("0.7.2", cache_path=cache)
     assert info is not None and info.latest == "1.0.0"
 
@@ -214,11 +178,7 @@ def test_check_for_update_logs_fetched_release_and_no_update(tmp_path: Path, cap
     cache = tmp_path / "cache.json"
     caplog.set_level("DEBUG", logger="justsayit.update_check")
 
-    with patch.object(
-        update_check,
-        "_fetch_latest",
-        return_value=LatestRelease("v0.7.2", "0.7.2", "https://example.com/v0.7.2"),
-    ):
+    with patch.object(update_check, "_fetch_latest", return_value="0.7.2"):
         assert check_for_update("0.7.2", cache_path=cache) is None
 
     assert (
