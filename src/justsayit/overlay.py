@@ -366,13 +366,17 @@ def _md_to_pango(text: str, *, hr_chars: int = _HR_DEFAULT_CHARS) -> str:
 
     text = escape(text)
 
+    # HRs are emitted as a marker now and resized at the end of the pipeline
+    # so they can match the widest non-HR line in the rendered output (e.g.
+    # a wide table forces the overlay past its configured max_width — the
+    # HR should follow). The marker uses \x02 so it can't collide with the
+    # \x00MDn\x00 stash keys.
+    _HR_MARKER = "\x02HR\x02"
     out_lines: list[str] = []
     for line in text.split("\n"):
         m = _MD_HR_RE.match(line)
         if m:
-            out_lines.append(
-                f'<span allow_breaks="false">{"─" * hr_chars}</span>'
-            )
+            out_lines.append(_HR_MARKER)
             continue
         m = _MD_HEADING_RE.match(line)
         if m:
@@ -400,6 +404,25 @@ def _md_to_pango(text: str, *, hr_chars: int = _HR_DEFAULT_CHARS) -> str:
 
     for key, value in stash.items():
         text = text.replace(key, value)
+
+    # Resize HRs to match the actual rendered content width: max(hr_chars,
+    # widest non-HR line). This way a 12-column-table response gets an HR
+    # that visually spans the table instead of stopping at the configured
+    # max_width-derived stripe. Capped at 300 chars so a single very long
+    # paragraph (which Pango will wrap anyway) doesn't blow up the HR.
+    if _HR_MARKER in text:
+        non_hr_lines = [
+            ln for ln in text.split("\n") if _HR_MARKER not in ln
+        ]
+
+        def _visible_len(line: str) -> int:
+            # Strip Pango tags so the count reflects rendered chars, not markup.
+            return len(re.sub(r"<[^>]+>", "", line))
+
+        widest = max((_visible_len(ln) for ln in non_hr_lines), default=0)
+        actual_chars = max(hr_chars, min(widest, 300))
+        hr_markup = f'<span allow_breaks="false">{"─" * actual_chars}</span>'
+        text = text.replace(_HR_MARKER, hr_markup)
     return text
 
 

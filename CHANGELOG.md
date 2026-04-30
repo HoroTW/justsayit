@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.24.3] - 2026-04-30
+
+### Changed
+- Markdown horizontal rule (`---`) now scales with the widest rendered line in the response, not just `cfg.overlay.max_width`. When a wide table forces the overlay past its configured width, the HR grows to match. Capped at 300 chars so a single very long paragraph (which Pango will wrap on render anyway) doesn't produce a runaway HR. The configured `hr_chars` is the floor, the widest non-HR line is the ceiling (clamped at 300).
+
 ## [0.24.2] - 2026-04-30
 
 ### Changed
