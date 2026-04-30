@@ -76,7 +76,7 @@ window.justsayit-overlay {
     font-size: 11px;
     font-weight: 400;
 }
-.justsayit-abort-button {
+.justsayit-overlay-btn {
     background: transparent;
     border: none;
     box-shadow: none;
@@ -84,26 +84,13 @@ window.justsayit-overlay {
     margin: 0;
     min-height: 16px;
     min-width: 16px;
-    color: rgba(255, 255, 255, 0.55);
     font-family: "Inter", "Cantarell", "Noto Sans", sans-serif;
     font-size: 12px;
     font-weight: 600;
+    color: rgba(255, 255, 255, 0.55);
 }
 .justsayit-abort-button:hover {
     color: rgba(255, 120, 120, 0.95);
-}
-.justsayit-clip-button {
-    background: transparent;
-    border: none;
-    box-shadow: none;
-    padding: 0 4px;
-    margin: 0;
-    min-height: 16px;
-    min-width: 16px;
-    color: rgba(255, 255, 255, 0.55);
-    font-family: "Inter", "Cantarell", "Noto Sans", sans-serif;
-    font-size: 12px;
-    font-weight: 600;
 }
 .justsayit-clip-button:hover {
     color: rgba(180, 220, 255, 0.95);
@@ -114,19 +101,6 @@ window.justsayit-overlay {
 .justsayit-clip-button.armed:hover {
     color: rgba(255, 120, 120, 0.95);
 }
-.justsayit-cont-button {
-    background: transparent;
-    border: none;
-    box-shadow: none;
-    padding: 0 4px;
-    margin: 0;
-    min-height: 16px;
-    min-width: 16px;
-    color: rgba(255, 255, 255, 0.55);
-    font-family: "Inter", "Cantarell", "Noto Sans", sans-serif;
-    font-size: 12px;
-    font-weight: 600;
-}
 .justsayit-cont-button:hover {
     color: rgba(180, 255, 180, 0.95);
 }
@@ -135,19 +109,6 @@ window.justsayit-overlay {
 }
 .justsayit-cont-button.armed:hover {
     color: rgba(255, 120, 120, 0.95);
-}
-.justsayit-assistant-button {
-    background: transparent;
-    border: none;
-    box-shadow: none;
-    padding: 0 4px;
-    margin: 0;
-    min-height: 16px;
-    min-width: 16px;
-    color: rgba(255, 255, 255, 0.55);
-    font-family: "Inter", "Cantarell", "Noto Sans", sans-serif;
-    font-size: 12px;
-    font-weight: 600;
 }
 .justsayit-assistant-button:hover {
     color: rgba(200, 180, 255, 0.95);
@@ -159,17 +120,7 @@ window.justsayit-overlay {
     color: rgba(255, 120, 120, 0.95);
 }
 .justsayit-copy-result-button {
-    background: transparent;
-    border: none;
-    box-shadow: none;
-    padding: 0 4px;
-    margin: 0;
-    min-height: 16px;
-    min-width: 16px;
     color: rgba(180, 255, 200, 0.75);
-    font-family: "Inter", "Cantarell", "Noto Sans", sans-serif;
-    font-size: 12px;
-    font-weight: 600;
 }
 .justsayit-copy-result-button:hover {
     color: rgba(180, 255, 200, 1.0);
@@ -346,6 +297,7 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._level = 0.0
         self._level_smoothed = 0.0
         self._pulse = 0.0
+        self._last_tick_us = 0   # frame-clock timestamp from previous _tick
         self._assistant_mode = False
         self._last_llm_text = ""
 
@@ -425,6 +377,7 @@ class OverlayWindow(Gtk.ApplicationWindow):
         # Continue-session button. Arms a timed window during which each
         # recording continues the previous LLM conversation thread.
         self._cont_button = Gtk.Button(label="↩")
+        self._cont_button.add_css_class("justsayit-overlay-btn")
         self._cont_button.add_css_class("justsayit-cont-button")
         self._cont_button.set_tooltip_text(
             "Continue previous LLM session (starts 5 min window)"
@@ -439,6 +392,7 @@ class OverlayWindow(Gtk.ApplicationWindow):
         # before recording. The armed state has its own CSS class so it's
         # visually obvious whether the next transcription will be enriched.
         self._clip_button = Gtk.Button(label="📋")
+        self._clip_button.add_css_class("justsayit-overlay-btn")
         self._clip_button.add_css_class("justsayit-clip-button")
         self._clip_button.set_tooltip_text(
             "Use clipboard contents, as LLM context (just once for this recording)"
@@ -453,6 +407,7 @@ class OverlayWindow(Gtk.ApplicationWindow):
         # Copy-result button: copies the last LLM response to clipboard.
         # Visible only in assistant mode after a result is shown.
         self._copy_result_button = Gtk.Button(label="📄")
+        self._copy_result_button.add_css_class("justsayit-overlay-btn")
         self._copy_result_button.add_css_class("justsayit-copy-result-button")
         self._copy_result_button.set_tooltip_text("Copy response to clipboard")
         self._copy_result_button.connect("clicked", self._on_copy_result_clicked)
@@ -463,6 +418,7 @@ class OverlayWindow(Gtk.ApplicationWindow):
         # so it can be used as an interactive chat. Arms continue-session
         # automatically for every recording while active.
         self._assistant_button = Gtk.Button(label="💬")
+        self._assistant_button.add_css_class("justsayit-overlay-btn")
         self._assistant_button.add_css_class("justsayit-assistant-button")
         self._assistant_button.set_tooltip_text(
             "Toggle assistant mode — overlay stays open for interactive chat"
@@ -471,6 +427,7 @@ class OverlayWindow(Gtk.ApplicationWindow):
         end_box.append(self._assistant_button)
 
         self._abort_button = Gtk.Button(label="×")
+        self._abort_button.add_css_class("justsayit-overlay-btn")
         self._abort_button.add_css_class("justsayit-abort-button")
         self._abort_button.set_tooltip_text("Abort recording (discard, no paste)")
         self._abort_button.connect("clicked", self._on_abort_clicked)
@@ -555,7 +512,10 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self.set_child(root)
         _install_css_once()
 
-        GLib.timeout_add(33, self._tick)
+        # Drive the meter + dot pulse off the frame clock of the dot widget.
+        # Tick callbacks auto-pause when the widget is unmapped, so the
+        # animation loop doesn't run when the overlay is hidden.
+        self._dot.add_tick_callback(self._tick, None)
 
     # ── Thread-safe entry points ─────────────────────────────────────────────
 
@@ -836,28 +796,34 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._update_badge.set_visible(True)
         return False
 
-    def _apply_clipboard_armed(self, armed: bool) -> bool:
+    def _set_armed(
+        self, button: Gtk.Button, armed: bool, tip_off: str, tip_on: str
+    ) -> None:
         if armed:
-            self._clip_button.add_css_class("armed")
-            self._clip_button.set_tooltip_text(
-                "Use clipboard contents, as LLM context (just once for this recording) "
-                "recording — click to disarm"
-            )
+            button.add_css_class("armed")
+            button.set_tooltip_text(tip_on)
         else:
-            self._clip_button.remove_css_class("armed")
-            self._clip_button.set_tooltip_text(
-                "Use clipboard contents, as LLM context (just once for this recording) "
-                "recording"
-            )
+            button.remove_css_class("armed")
+            button.set_tooltip_text(tip_off)
+
+    def _apply_clipboard_armed(self, armed: bool) -> bool:
+        self._set_armed(
+            self._clip_button,
+            armed,
+            tip_off="Use clipboard contents, as LLM context (just once for this recording) "
+                    "recording",
+            tip_on="Use clipboard contents, as LLM context (just once for this recording) "
+                   "recording — click to disarm",
+        )
         return False
 
     def _apply_cont_armed(self, armed: bool) -> bool:
-        if armed:
-            self._cont_button.add_css_class("armed")
-            self._cont_button.set_tooltip_text("Continue window active — click to disarm")
-        else:
-            self._cont_button.remove_css_class("armed")
-            self._cont_button.set_tooltip_text("Continue previous LLM session (starts 5 min window)")
+        self._set_armed(
+            self._cont_button,
+            armed,
+            tip_off="Continue previous LLM session (starts 5 min window)",
+            tip_on="Continue window active — click to disarm",
+        )
         return False
 
     def _apply_profile_label(self, backend: str | None, name: str | None) -> bool:
@@ -870,16 +836,12 @@ class OverlayWindow(Gtk.ApplicationWindow):
 
     def _apply_assistant_mode(self, active: bool) -> bool:
         self._assistant_mode = active
-        if active:
-            self._assistant_button.add_css_class("armed")
-            self._assistant_button.set_tooltip_text(
-                "Assistant mode active — click to deactivate"
-            )
-        else:
-            self._assistant_button.remove_css_class("armed")
-            self._assistant_button.set_tooltip_text(
-                "Toggle assistant mode — overlay stays open for interactive chat"
-            )
+        self._set_armed(
+            self._assistant_button,
+            active,
+            tip_off="Toggle assistant mode — overlay stays open for interactive chat",
+            tip_on="Assistant mode active — click to deactivate",
+        )
         return False
 
     def _start_linger(self) -> bool:
@@ -970,23 +932,47 @@ class OverlayWindow(Gtk.ApplicationWindow):
 
     # ── Tick / draw ──────────────────────────────────────────────────────────
 
-    def _tick(self) -> bool:
+    def _tick(self, _widget, frame_clock) -> bool:
+        # Time-based animation: derive a per-frame scale from the frame
+        # clock so behaviour matches the previous fixed-33ms cadence
+        # regardless of the actual refresh rate. Original constants were
+        # tuned for ~33ms ticks.
+        now_us = frame_clock.get_frame_time()
+        if self._last_tick_us == 0:
+            dt_frames = 1.0
+        else:
+            dt_frames = max(0.0, (now_us - self._last_tick_us) / 33_000.0)
+        self._last_tick_us = now_us
+
+        active = self._state in (State.RECORDING, State.MANUAL, State.VALIDATING)
+        in_result = self._dot_color_override is not None
+
+        # Fast-path: truly idle — no recording, no result halo, meter and
+        # pulse already collapsed to zero. Skip queue_draw to stop the
+        # DrawingAreas from re-rendering every frame at idle.
+        if (
+            not active
+            and not in_result
+            and self._level_smoothed < 0.001
+            and abs(self._pulse) < 0.001
+        ):
+            return True
+
         sensitivity = self._cfg.overlay.visualizer_sensitivity
-        # Only animate the meter while actively recording / listening.
-        # In result / linger phase (state=IDLE, dot_color_override set) or
-        # while idle, decay the smoothed level to zero so the bar goes flat.
-        if self._state in (State.RECORDING, State.MANUAL, State.VALIDATING):
+        if active:
             target = min(1.0, self._level * 8.0 * sensitivity)
-            self._level_smoothed += (target - self._level_smoothed) * 0.25
-            self._pulse = (self._pulse + 0.08) % (2 * math.pi)
+            # First-order IIR; per-frame factor scaled by dt for stability.
+            alpha = min(1.0, 0.25 * dt_frames)
+            self._level_smoothed += (target - self._level_smoothed) * alpha
+            self._pulse = (self._pulse + 0.08 * dt_frames) % (2 * math.pi)
         else:
             # Decay to flat: meter goes quiet; pulse slows but keeps halo in
             # result phase via dot_color_override check in _draw_dot.
-            self._level_smoothed *= 0.85
-            if self._dot_color_override is not None:
-                self._pulse = (self._pulse + 0.04) % (2 * math.pi)
+            self._level_smoothed *= 0.85 ** dt_frames
+            if in_result:
+                self._pulse = (self._pulse + 0.04 * dt_frames) % (2 * math.pi)
             else:
-                self._pulse *= 0.9
+                self._pulse *= 0.9 ** dt_frames
         self._meter.queue_draw()
         self._dot.queue_draw()
         return True
