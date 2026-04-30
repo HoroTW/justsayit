@@ -14,7 +14,7 @@ _MAX_TOOL_ROUNDS = 10
 
 
 class RemoteBackend(PostprocessorBase):
-    def _run(self, text: str, extra_context: str = "", extra_image: bytes | None = None, extra_image_mime: str = "", previous_session: dict | None = None, tools: list | None = None, tool_caller=None, assistant_mode: bool = False) -> ProcessResult:
+    def _run(self, text: str, extra_context: str = "", extra_image: bytes | None = None, extra_image_mime: str = "", previous_session: dict | None = None, tools: list | None = None, tool_caller=None, assistant_mode: bool = False, extra_system_prompt: str = "") -> ProcessResult:
         """OpenAI-compatible /chat/completions POST."""
         api_key = self._require_api_key()
         if not self.profile.model:
@@ -42,6 +42,7 @@ class RemoteBackend(PostprocessorBase):
             prev_messages=prev_msgs,
             extra_image_provided=has_image,
             assistant_mode=assistant_mode,
+            extra_system_prompt=extra_system_prompt,
         )
 
         if has_image:
