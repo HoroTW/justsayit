@@ -203,6 +203,17 @@ class App:
         self.transcriber = make_transcriber(self.cfg)
         log.info("warming up %s recognizer…", self.cfg.model.backend)
         self.transcriber.warmup()
+
+        def _on_pipeline_error(stage: str, msg: str, retry_cb) -> None:
+            if self.overlay is not None:
+                self.overlay.push_error(stage, msg, retry_cb)
+
+        def _enqueue(seg: Segment) -> None:
+            try:
+                self._seg_q.put_nowait(seg)
+            except queue.Full:
+                log.warning("retry: transcription queue full; dropping segment")
+
         self.pipeline = SegmentPipeline(
             self.cfg,
             self.transcriber,
@@ -210,6 +221,8 @@ class App:
             self.paster,
             no_paste=self.no_paste,
             after_llm_filters=self.after_llm_filters,
+            on_error=_on_pipeline_error,
+            enqueue_segment=_enqueue,
         )
 
     def setup_postprocessor(self) -> None:

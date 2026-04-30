@@ -132,6 +132,28 @@ window.justsayit-overlay {
     font-weight: 600;
     padding: 0 4px;
 }
+.justsayit-error-label {
+    color: rgba(255, 200, 90, 1.0);
+    font-family: "Inter", "Cantarell", "Noto Sans", sans-serif;
+    font-size: 11px;
+    font-weight: 600;
+}
+.justsayit-retry-button {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    padding: 0 4px;
+    margin: 0;
+    min-height: 16px;
+    min-width: 16px;
+    color: rgba(255, 200, 90, 0.85);
+    font-family: "Inter", "Cantarell", "Noto Sans", sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+}
+.justsayit-retry-button:hover {
+    color: rgba(255, 200, 90, 1.0);
+}
 """
 
 
@@ -150,6 +172,7 @@ _STATE_STYLE = {
 }
 
 _DOT_RESULT = _DotColor(0.35, 0.85, 0.45)   # green during result / linger
+_DOT_ERROR = _DotColor(1.00, 0.78, 0.35)    # amber during error pill
 
 _SAFETY_MS = 30_000
 _LLM_WAITING = "Wait for LLM processing…"
@@ -300,6 +323,9 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._last_tick_us = 0   # frame-clock timestamp from previous _tick
         self._assistant_mode = False
         self._last_llm_text = ""
+        # Pending retry for the current error pill (or None).
+        self._retry_cb: Callable[[], None] | None = None
+        self._error_active: bool = False
 
         self._dot_color_override: _DotColor | None = None
         self._linger_source: int | None = None
@@ -425,6 +451,14 @@ class OverlayWindow(Gtk.ApplicationWindow):
         )
         self._assistant_button.connect("clicked", self._on_assistant_clicked)
         end_box.append(self._assistant_button)
+
+        # Retry button — only visible during the error pill, alongside ×.
+        self._retry_button = Gtk.Button(label="🔁")
+        self._retry_button.add_css_class("justsayit-retry-button")
+        self._retry_button.set_tooltip_text("Retry the failed step")
+        self._retry_button.connect("clicked", self._on_retry_clicked)
+        self._retry_button.set_visible(False)
+        end_box.append(self._retry_button)
 
         self._abort_button = Gtk.Button(label="×")
         self._abort_button.add_css_class("justsayit-overlay-btn")
@@ -597,6 +631,23 @@ class OverlayWindow(Gtk.ApplicationWindow):
             priority=GLib.PRIORITY_DEFAULT,
         )
 
+    def push_error(
+        self,
+        stage: str,
+        msg: str,
+        retry_cb: Callable[[], None] | None = None,
+    ) -> None:
+        """Show an amber error pill with *msg* and optional retry button.
+
+        Stays visible for ``result_linger_ms * 3`` (errors deserve more
+        reading time) before auto-dismissing. Clicking the pill cancels
+        the auto-close (reuses ``_on_result_clicked``).
+        """
+        GLib.idle_add(
+            self._apply_error, stage, msg, retry_cb,
+            priority=GLib.PRIORITY_DEFAULT,
+        )
+
     def push_llm_profile(self, backend: str | None, name: str | None) -> None:
         """Show or hide the tiny LLM profile label (e.g. 'local/gemma4-cleanup').
         Pass (None, None) to hide it when postprocessing is off."""
@@ -635,6 +686,17 @@ class OverlayWindow(Gtk.ApplicationWindow):
             log.info("copied LLM result to clipboard (%d chars)", len(self._last_llm_text))
         except Exception:
             log.exception("failed to copy result to clipboard")
+
+    def _on_retry_clicked(self, _button: Gtk.Button) -> None:
+        cb = self._retry_cb
+        # Hide the error pill immediately so the user sees the click
+        # take effect even if the retry takes a moment to start.
+        self._force_hide()
+        if cb is not None:
+            try:
+                cb()
+            except Exception:
+                log.exception("retry callback raised")
 
     def _on_clip_clicked(self, _button: Gtk.Button) -> None:
         if self._on_toggle_clipboard_context is not None:
@@ -834,6 +896,50 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._profile_label.set_visible(True)
         return False
 
+    def _apply_error(
+        self,
+        stage: str,
+        msg: str,
+        retry_cb: Callable[[], None] | None,
+    ) -> bool:
+        # Cancel any running timers — this is a fresh result/error display.
+        self._cancel_safety()
+        self._cancel_linger()
+        self._error_active = True
+        self._retry_cb = retry_cb
+        self._dot_color_override = _DOT_ERROR
+
+        # State label: "error: <stage>" in amber.
+        self._state_label.remove_css_class("justsayit-overlay-label")
+        self._state_label.add_css_class("justsayit-error-label")
+        self._state_label.set_label(f"error: {stage}")
+        self._state_label.set_visible(True)
+
+        # Body: plain-text message in the detected label (no markup).
+        self._detected_label.set_use_markup(False)
+        self._detected_label.set_text(msg or "(unknown error)")
+        self._sep1.set_visible(True)
+        self._detected_label.set_visible(True)
+
+        # Hide the LLM field — error has no second body.
+        self._sep2.set_visible(False)
+        self._llm_label.set_visible(False)
+        self._sep_bottom.set_visible(True)
+
+        self._retry_button.set_visible(retry_cb is not None)
+
+        self._expand_window(msg or "", two_fields=False)
+        self._dot.queue_draw()
+        if not self.get_visible():
+            self.set_visible(True)
+        self.present()
+
+        # Linger 3× the normal result time before auto-dismissing.
+        ms = self._cfg.overlay.result_linger_ms * 3
+        if ms > 0:
+            self._linger_source = GLib.timeout_add(ms, self._finish_linger)
+        return False
+
     def _apply_assistant_mode(self, active: bool) -> bool:
         self._assistant_mode = active
         self._set_armed(
@@ -847,6 +953,10 @@ class OverlayWindow(Gtk.ApplicationWindow):
     def _start_linger(self) -> bool:
         if self._assistant_mode:
             return False  # stay open until manually dismissed
+        if self._error_active:
+            # _apply_error already started a longer (3x) linger; don't
+            # let a happy-path push_linger_start shorten it.
+            return False
         self._cancel_linger()
         ms = self._cfg.overlay.result_linger_ms
         if ms > 0:
@@ -885,7 +995,16 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._llm_label.set_visible(False)
         self._sep_bottom.set_visible(False)
         self._copy_result_button.set_visible(False)
+        self._retry_button.set_visible(False)
         self._state_label.set_visible(True)
+        # Restore the state label's normal styling — error pill swaps in
+        # the amber CSS class which would otherwise persist into the
+        # next recording's "listening" / "recording" label.
+        if self._error_active:
+            self._state_label.remove_css_class("justsayit-error-label")
+            self._state_label.add_css_class("justsayit-overlay-label")
+            self._error_active = False
+            self._retry_cb = None
 
     def _collapse_window(self) -> None:
         self.set_default_size(self._cfg.overlay.width, self._cfg.overlay.height)
