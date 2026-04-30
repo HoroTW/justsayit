@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-## [0.22.1] - 2026-04-29
+## [0.22.1] - 2026-04-30
 
 ### Fixed
 - Overlay no longer hangs at "Wait for LLM processing…" when the LLM returns a fenced code block containing a markdown table. The fence pass now runs before the table pass so `|`-lines inside fences are never misdetected as tables.
