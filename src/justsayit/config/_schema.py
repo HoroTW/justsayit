@@ -210,11 +210,14 @@ class OverlayConfig:
     # the user can read the transcribed / LLM-cleaned text.
     # 0 = hide immediately after paste (original behaviour).
     result_linger_ms: int = 5_000
-    # Maximum width/height (px) the overlay may expand to when showing the
-    # result text fields.  The overlay always starts at width × height and
-    # grows to fit the content up to these limits.
+    # Maximum width (px) the overlay may expand to when showing the result
+    # text fields.
     max_width: int = 600
-    max_height: int = 400
+    # Maximum height (px) for the scrolled result content area.  When the
+    # combined text in the detected + LLM labels is taller than this, a
+    # vertical scrollbar appears instead of the overlay window growing past
+    # this cap.
+    max_height: int = 1000
 
 
 @dataclass

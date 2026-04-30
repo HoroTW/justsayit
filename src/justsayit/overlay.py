@@ -201,8 +201,6 @@ _LLM_WAITING_FRAMES = (
 )
 _LLM_WAITING = _LLM_WAITING_FRAMES[0]   # initial frame; animator replaces it
 _LLM_WAITING_TICK_MS = 300
-_CHAR_WIDTH_PX = 6.5   # approximate for Inter 11px
-
 
 # ── Markdown → Pango ────────────────────────────────────────────────────────
 # GtkLabel's set_markup() only understands Pango markup, not Markdown. The
@@ -222,6 +220,7 @@ _MD_ITALIC_RE = re.compile(r"(?<![*A-Za-z0-9])\*([^*\n]+?)\*(?![*A-Za-z0-9])")
 _MD_ITALIC_UNDER_RE = re.compile(r"(?<![A-Za-z0-9_])_([^_\n]+?)_(?![A-Za-z0-9_])")
 _MD_STRIKE_RE = re.compile(r"~~([^~\n]+?)~~")
 _MD_TABLE_SEP_RE = re.compile(r"^\|[-| :]+\|?\s*$")
+_MD_HR_RE = re.compile(r"^[ \t]*([-*_])\1{2,}[ \t]*$")
 _MD_TABLE_MAX_COL_WIDTH = 40   # cells longer than this wrap to multiple lines
 
 _HEADING_SIZES = {1: "x-large", 2: "large", 3: "large"}
@@ -364,6 +363,10 @@ def _md_to_pango(text: str) -> str:
 
     out_lines: list[str] = []
     for line in text.split("\n"):
+        m = _MD_HR_RE.match(line)
+        if m:
+            out_lines.append('<span allow_breaks="false">────────────────────────────────</span>')
+            continue
         m = _MD_HEADING_RE.match(line)
         if m:
             level = len(m.group(1))
@@ -641,12 +644,23 @@ class OverlayWindow(Gtk.ApplicationWindow):
 
         root.append(top_row)
 
-        # ── Text area (result mode only, hidden by default) ───────────────────
+        # ── Scrolled content area (result mode only, hidden by default) ──────
+        self._content_scroll = Gtk.ScrolledWindow()
+        self._content_scroll.set_hscrollbar_policy(Gtk.PolicyType.NEVER)
+        self._content_scroll.set_vscrollbar_policy(Gtk.PolicyType.AUTOMATIC)
+        self._content_scroll.set_propagate_natural_height(True)
+        self._content_scroll.set_max_content_height(cfg.overlay.max_height)
+        self._content_scroll.set_visible(False)
+        root.append(self._content_scroll)
+
+        _content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        self._content_scroll.set_child(_content_box)
+
         # Separator + top field
         self._sep1 = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
         self._sep1.set_margin_bottom(4)
         self._sep1.set_visible(False)
-        root.append(self._sep1)
+        _content_box.append(self._sep1)
 
         self._detected_label = Gtk.Label()
         self._detected_label.add_css_class("justsayit-detected-label")
@@ -665,14 +679,14 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._detected_label.connect(
             "notify::has-selection", self._on_label_has_selection
         )
-        root.append(self._detected_label)
+        _content_box.append(self._detected_label)
 
         # Separator + bottom (LLM) field
         self._sep2 = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
         self._sep2.set_margin_top(4)
         self._sep2.set_margin_bottom(4)
         self._sep2.set_visible(False)
-        root.append(self._sep2)
+        _content_box.append(self._sep2)
 
         self._llm_label = Gtk.Label()
         self._llm_label.add_css_class("justsayit-llm-label")
@@ -685,14 +699,14 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._llm_label.connect(
             "notify::has-selection", self._on_label_has_selection
         )
-        root.append(self._llm_label)
+        _content_box.append(self._llm_label)
 
         # Separator above bottom row (only shown in result mode)
         self._sep_bottom = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
         self._sep_bottom.set_margin_top(4)
         self._sep_bottom.set_margin_bottom(4)
         self._sep_bottom.set_visible(False)
-        root.append(self._sep_bottom)
+        _content_box.append(self._sep_bottom)
 
         # ── Bottom row: dot + meter (always visible) ──────────────────────────
         bottom_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
@@ -1045,9 +1059,9 @@ class OverlayWindow(Gtk.ApplicationWindow):
             self._llm_label.set_visible(False)
 
         self._sep_bottom.set_visible(True)
+        self._content_scroll.set_visible(True)
 
-        # Pre-size: height_for(text) × 2 + static, capped at max_height.
-        self._expand_window(text, two_fields=llm_pending)
+        self._expand_window()
 
         self._dot.queue_draw()
         if not self.get_visible():
@@ -1178,10 +1192,11 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._sep2.set_visible(False)
         self._llm_label.set_visible(False)
         self._sep_bottom.set_visible(True)
+        self._content_scroll.set_visible(True)
 
         self._retry_button.set_visible(retry_cb is not None)
 
-        self._expand_window(msg or "", two_fields=False)
+        self._expand_window()
         self._dot.queue_draw()
         if not self.get_visible():
             self.set_visible(True)
@@ -1244,6 +1259,7 @@ class OverlayWindow(Gtk.ApplicationWindow):
     # ── Layout helpers ───────────────────────────────────────────────────────
 
     def _hide_text_areas(self) -> None:
+        self._content_scroll.set_visible(False)
         self._sep1.set_visible(False)
         self._detected_label.set_visible(False)
         self._sep2.set_visible(False)
@@ -1266,23 +1282,10 @@ class OverlayWindow(Gtk.ApplicationWindow):
     def _collapse_window(self) -> None:
         self.set_default_size(self._cfg.overlay.width, self._cfg.overlay.height)
 
-    def _expand_window(self, text: str, two_fields: bool) -> None:
-        """Pre-size the window using: height_for(text) × 2 + static_height."""
-        max_w = self._cfg.overlay.max_width
-        max_h = self._cfg.overlay.max_height
-
-        # Usable text width: subtract padding (14 × 2) + dot (16) + spacing (10).
-        usable_w = max_w - 14 * 2 - 16 - 10
-        chars_per_line = max(1, int(usable_w / _CHAR_WIDTH_PX))
-        n_lines = max(1, math.ceil(len(text) / chars_per_line))
-        line_h = 16  # px
-        text_h = n_lines * line_h
-
-        # static = compact pill (state-label + bottom-row) + separators.
-        static_h = self._cfg.overlay.height + 3 * 12  # 3 separator rows
-        multiplier = 2 if two_fields else 1
-        estimated_h = min(max_h, static_h + text_h * multiplier + 8)
-        self.set_default_size(max_w, estimated_h)
+    def _expand_window(self) -> None:
+        """Set the window width to max_width; height is content-driven via the
+        ScrolledWindow's propagate_natural_height + max_content_height."""
+        self.set_default_size(self._cfg.overlay.max_width, -1)
 
     # ── Timers ───────────────────────────────────────────────────────────────
 

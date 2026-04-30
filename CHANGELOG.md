@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-04-30
+
+### Added
+- Overlay result area is now scrollable: detected and LLM labels live inside a `Gtk.ScrolledWindow` capped at `max_height` (default raised from 400 → 1000 px). Long LLM responses scroll instead of being clipped.
+- Markdown horizontal rules (`---` / `***` / `___`) now render as a row of box-drawing horizontals (`────────────────────────────────`) instead of raw text.
+
 ## [0.23.1] - 2026-04-30
 
 ### Fixed
