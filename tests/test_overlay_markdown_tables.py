@@ -7,12 +7,15 @@ attempting full table rendering inside Pango markup."""
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock, call
+
 import gi
 
 gi.require_version("Gtk", "4.0")
-from gi.repository import Gtk  # noqa: E402
+gi.require_version("Pango", "1.0")
+from gi.repository import GLib, Gtk, Pango  # noqa: E402
 
-from justsayit.overlay import _md_to_pango, _render_md_table
+from justsayit.overlay import _md_to_pango, _render_md_table, _set_label_markup_safe
 
 
 SIMPLE_TABLE = (
@@ -95,3 +98,68 @@ def test_table_with_empty_cells():
     out = _md_to_pango(src)
     label = Gtk.Label()
     label.set_markup(out)  # parse-validates
+
+
+# ── Bug regression: fence containing a markdown table ───────────────────────
+
+FENCE_WITH_TABLE_INPUT = (
+    "Sure — here's a simple Markdown table example:\n"
+    "\n"
+    "```markdown\n"
+    "| Name  | Age |\n"
+    "|-------|-----|\n"
+    "| Alice | 28  |\n"
+    "```\n"
+    "\n"
+    "Rendered, it looks like this:\n"
+    "\n"
+    "| Name  | Age |\n"
+    "|-------|-----|\n"
+    "| Alice | 28  |\n"
+)
+
+
+def test_fence_containing_table_parses_as_valid_pango():
+    """A fenced block that contains a markdown table must produce valid
+    Pango markup — previously the table pass ran before the fence pass,
+    turning ``|``-lines inside fences into stash keys that nested inside
+    the fence stash, leaving literal NUL bytes and unbalanced tags."""
+    out = _md_to_pango(FENCE_WITH_TABLE_INPUT)
+    # Pango.parse_markup raises GLib.Error on bad markup (unlike set_markup).
+    Pango.parse_markup(out, -1, "\0")
+
+
+def test_md_to_pango_no_nul_bytes():
+    """_md_to_pango output must never contain NUL bytes for any reasonable
+    input — stash keys use NUL as delimiters and must be fully resolved."""
+    inputs = [
+        FENCE_WITH_TABLE_INPUT,
+        SIMPLE_TABLE,
+        "plain text with **bold** and `code`",
+        "```python\nprint('hello')\n```",
+        "| a | b |\n|---|---|\n| 1 | 2 |\n",
+        "",
+    ]
+    for src in inputs:
+        out = _md_to_pango(src)
+        assert "\x00" not in out, f"NUL byte in output for input: {src!r}"
+
+
+def test_set_label_markup_safe_falls_back_on_invalid_markup():
+    """When markup is invalid, _set_label_markup_safe must call set_text
+    with the fallback rather than leaving set_markup to silently fail."""
+    label = MagicMock(spec=Gtk.Label)
+    bad_markup = "<b>unclosed bold"
+    fallback = "unclosed bold"
+    _set_label_markup_safe(label, bad_markup, fallback)
+    label.set_markup.assert_not_called()
+    label.set_text.assert_called_once_with(fallback)
+
+
+def test_set_label_markup_safe_calls_set_markup_on_valid():
+    """When markup is valid, _set_label_markup_safe must call set_markup."""
+    label = MagicMock(spec=Gtk.Label)
+    good_markup = "Hello <b>world</b>"
+    _set_label_markup_safe(label, good_markup, "fallback")
+    label.set_markup.assert_called_once_with(good_markup)
+    label.set_text.assert_not_called()
