@@ -18,7 +18,8 @@ filters.json
 result
 result-*
 
-# Claude Code user-local settings
+# Claude Code user-local settings + worktrees
 .claude/settings.local.json
+.claude/worktrees/
 
 *.local

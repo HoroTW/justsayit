@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-04-30
+
+### Added
+- Soft-failure error pill in the overlay — ASR/LLM exceptions now surface as an amber pill with a 🔁 retry button instead of vanishing silently.
+- Window-class clipboard policy — `[window_clipboard_policy]` config section auto-arms or blocks clipboard-context based on the focused window's class (e.g. block in password managers, auto-arm in chat apps).
+
+### Changed
+- Overlay tick loop uses `add_tick_callback` and auto-pauses while hidden — saves CPU when no recording is active.
+- Overlay button CSS deduped via a single `.justsayit-overlay-btn` base class.
+- Postprocess profile defaults: dropped the parallel `*-defaults.toml` overlay; the dataclass is the single source of truth (TOML files remain as user-facing reference).
+- `update_profile_model` / `apply_profile_overrides` now use `tomlkit` for round-trip-safe profile edits.
+- `render_config_toml` uses `tomlkit.dumps` (proper string escaping).
+- Profile system-prompt assembly: `_build_messages` now handles fresh and continuation cases via `prev_messages=`.
+
+### Removed
+- Dead one-shot helpers `paste_text` and `send_paste_shortcut` from `paste.py`.
+- `_handle_segment` "transient pipeline" fallback — production path always uses the constructed `SegmentPipeline`.
+- Legacy fully-populated-form config migration (`ensure_commented_form_file`).
+- Dual JSON+TOML parsing in `update_check.py` — only the production TOML path remains.
+- Redundant post-download existence checks in `model.py`.
+- `make_transcriber`'s `model_paths` parameter — Parakeet resolves its own paths.
+
 ## [0.20.0] - 2026-04-29
 
 ### Added
