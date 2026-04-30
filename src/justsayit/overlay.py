@@ -201,38 +201,6 @@ window.justsayit-overlay {
 .justsayit-retry-button:hover {
     color: rgba(255, 200, 90, 1.0);
 }
-.justsayit-undo-button {
-    background: transparent;
-    border: none;
-    box-shadow: none;
-    padding: 0 4px;
-    margin: 0;
-    min-height: 16px;
-    min-width: 16px;
-    color: rgba(255, 255, 255, 0.65);
-    font-family: "Inter", "Cantarell", "Noto Sans", sans-serif;
-    font-size: 12px;
-    font-weight: 600;
-}
-.justsayit-undo-button:hover {
-    color: rgba(255, 180, 180, 0.95);
-}
-.justsayit-repaste-button {
-    background: transparent;
-    border: none;
-    box-shadow: none;
-    padding: 0 4px;
-    margin: 0;
-    min-height: 16px;
-    min-width: 16px;
-    color: rgba(180, 220, 255, 0.75);
-    font-family: "Inter", "Cantarell", "Noto Sans", sans-serif;
-    font-size: 12px;
-    font-weight: 600;
-}
-.justsayit-repaste-button:hover {
-    color: rgba(180, 220, 255, 1.0);
-}
 """
 
 
@@ -287,8 +255,6 @@ class OverlayWindow(Gtk.ApplicationWindow):
         on_toggle_clipboard_context: Callable[[], None] | None = None,
         on_toggle_continue_window: Callable[[], None] | None = None,
         on_toggle_assistant_mode: Callable[[], None] | None = None,
-        on_undo: Callable[[], None] | None = None,
-        on_repaste: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(application=application)
         self._cfg = cfg
@@ -297,8 +263,6 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._on_toggle_clipboard_context = on_toggle_clipboard_context
         self._on_toggle_continue_window = on_toggle_continue_window
         self._on_toggle_assistant_mode = on_toggle_assistant_mode
-        self._on_undo = on_undo
-        self._on_repaste = on_repaste
 
         self._level = 0.0
         self._level_smoothed = 0.0
@@ -429,23 +393,6 @@ class OverlayWindow(Gtk.ApplicationWindow):
         )
         self._assistant_button.connect("clicked", self._on_assistant_clicked)
         end_box.append(self._assistant_button)
-
-        # Undo button — sends Ctrl+Z to the focused window. Visible only
-        # while a recent paste's text is still cached in the pipeline.
-        self._undo_button = Gtk.Button(label="↶")
-        self._undo_button.add_css_class("justsayit-undo-button")
-        self._undo_button.set_tooltip_text("Undo last paste (Ctrl+Z)")
-        self._undo_button.connect("clicked", self._on_undo_clicked)
-        self._undo_button.set_visible(False)
-        end_box.append(self._undo_button)
-
-        # Re-paste button — pastes the cached last result again.
-        self._repaste_button = Gtk.Button(label="📤")
-        self._repaste_button.add_css_class("justsayit-repaste-button")
-        self._repaste_button.set_tooltip_text("Paste the previous transcript again")
-        self._repaste_button.connect("clicked", self._on_repaste_clicked)
-        self._repaste_button.set_visible(False)
-        end_box.append(self._repaste_button)
 
         # Retry button — only visible during the error pill, alongside ×.
         self._retry_button = Gtk.Button(label="🔁")
@@ -629,20 +576,6 @@ class OverlayWindow(Gtk.ApplicationWindow):
             priority=GLib.PRIORITY_DEFAULT,
         )
 
-    def push_undo_available(self, available: bool) -> None:
-        """Show or hide the undo (↶) button. Thread-safe."""
-        GLib.idle_add(
-            self._apply_undo_available, available,
-            priority=GLib.PRIORITY_DEFAULT,
-        )
-
-    def push_repaste_available(self, available: bool) -> None:
-        """Show or hide the re-paste (📤) button. Thread-safe."""
-        GLib.idle_add(
-            self._apply_repaste_available, available,
-            priority=GLib.PRIORITY_DEFAULT,
-        )
-
     def push_llm_profile(self, backend: str | None, name: str | None) -> None:
         """Show or hide the tiny LLM profile label (e.g. 'local/gemma4-cleanup').
         Pass (None, None) to hide it when postprocessing is off."""
@@ -681,20 +614,6 @@ class OverlayWindow(Gtk.ApplicationWindow):
             log.info("copied LLM result to clipboard (%d chars)", len(self._last_llm_text))
         except Exception:
             log.exception("failed to copy result to clipboard")
-
-    def _on_undo_clicked(self, _button: Gtk.Button) -> None:
-        if self._on_undo is not None:
-            try:
-                self._on_undo()
-            except Exception:
-                log.exception("on_undo callback raised")
-
-    def _on_repaste_clicked(self, _button: Gtk.Button) -> None:
-        if self._on_repaste is not None:
-            try:
-                self._on_repaste()
-            except Exception:
-                log.exception("on_repaste callback raised")
 
     def _on_retry_clicked(self, _button: Gtk.Button) -> None:
         cb = self._retry_cb
@@ -937,14 +856,6 @@ class OverlayWindow(Gtk.ApplicationWindow):
             self._linger_source = GLib.timeout_add(ms, self._finish_linger)
         return False
 
-    def _apply_undo_available(self, available: bool) -> bool:
-        self._undo_button.set_visible(bool(available))
-        return False
-
-    def _apply_repaste_available(self, available: bool) -> bool:
-        self._repaste_button.set_visible(bool(available))
-        return False
-
     def _apply_assistant_mode(self, active: bool) -> bool:
         self._assistant_mode = active
         if active:
@@ -1005,8 +916,6 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._sep_bottom.set_visible(False)
         self._copy_result_button.set_visible(False)
         self._retry_button.set_visible(False)
-        self._undo_button.set_visible(False)
-        self._repaste_button.set_visible(False)
         self._state_label.set_visible(True)
         # Restore the state label's normal styling — error pill swaps in
         # the amber CSS class which would otherwise persist into the

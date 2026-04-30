@@ -52,8 +52,6 @@ class _StubOverlay:
         self.linger_calls = 0
         self.clip_armed_calls: list[bool] = []
         self.errors: list[tuple[str, str, object]] = []
-        self.undo_avail: list[bool] = []
-        self.repaste_avail: list[bool] = []
 
     def push_hide(self) -> None:
         self.hide_calls += 1
@@ -72,12 +70,6 @@ class _StubOverlay:
 
     def push_error(self, stage: str, msg: str, retry_cb=None) -> None:
         self.errors.append((stage, msg, retry_cb))
-
-    def push_undo_available(self, available: bool) -> None:
-        self.undo_avail.append(available)
-
-    def push_repaste_available(self, available: bool) -> None:
-        self.repaste_avail.append(available)
 
 
 class _RaisingPostprocessor:
@@ -503,65 +495,3 @@ def test_pipeline_llm_failure_also_emits_on_error(capsys):
     ]
 
 
-def test_pipeline_last_result_is_none_without_paste():
-    """No paster + no_paste means last_result() stays None."""
-    from justsayit.pipeline import SegmentPipeline
-
-    cfg = Config()
-    pipe = SegmentPipeline(
-        cfg,
-        _StubTranscriber("hello"),
-        filters=[],
-        paster=None,
-        no_paste=True,
-    )
-    pipe.handle(_make_seg())
-    assert pipe.last_result() is None
-
-
-def test_pipeline_last_result_set_after_successful_paste():
-    """A successful paster.paste() call records the text in last_result()."""
-    from justsayit.pipeline import SegmentPipeline
-
-    pasted: list[str] = []
-
-    class _StubPaster:
-        def paste(self, text: str) -> None:
-            pasted.append(text)
-
-    cfg = Config()
-    cfg.paste.enabled = True
-    pipe = SegmentPipeline(
-        cfg,
-        _StubTranscriber("hello"),
-        filters=[],
-        paster=_StubPaster(),  # type: ignore[arg-type]
-        no_paste=False,
-    )
-    pipe.handle(_make_seg())
-    assert pasted == ["hello"]
-    assert pipe.last_result() == "hello"
-
-
-def test_pipeline_last_result_expires_after_ttl(monkeypatch):
-    """last_result() returns None once the 60s TTL is past."""
-    from justsayit.pipeline import SegmentPipeline
-
-    class _StubPaster:
-        def paste(self, text: str) -> None:
-            pass
-
-    cfg = Config()
-    cfg.paste.enabled = True
-    pipe = SegmentPipeline(
-        cfg,
-        _StubTranscriber("hi"),
-        filters=[],
-        paster=_StubPaster(),  # type: ignore[arg-type]
-        no_paste=False,
-    )
-    pipe.handle(_make_seg())
-    assert pipe.last_result() == "hi"
-    # Pretend the TTL has passed.
-    pipe._last_result_at = (pipe._last_result_at or 0) - 1000.0
-    assert pipe.last_result() is None

@@ -20,10 +20,6 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-# How long after a successful paste the pipeline remembers the result
-# for the overlay's undo / re-paste buttons.
-_LAST_RESULT_TTL_S = 60.0
-
 
 def _session_path() -> Path:
     from justsayit.config import cache_dir
@@ -78,18 +74,6 @@ class SegmentPipeline:
         self.on_error = on_error
         self.enqueue_segment = enqueue_segment
         self._last_transcription_time: float | None = None
-        # Last successful paste content + when it landed; surfaced via
-        # last_result() for the overlay's undo / re-paste buttons.
-        self._last_result: str | None = None
-        self._last_result_at: float | None = None
-
-    def last_result(self) -> str | None:
-        """Return the last pasted text if it's still within the TTL window."""
-        if self._last_result is None or self._last_result_at is None:
-            return None
-        if time.monotonic() - self._last_result_at > _LAST_RESULT_TTL_S:
-            return None
-        return self._last_result
 
     def _build_retry_cb(self, seg: "Segment") -> Callable[[], None] | None:
         if self.enqueue_segment is None:
@@ -334,8 +318,6 @@ class SegmentPipeline:
             t_paste0 = time.monotonic()
             self.paster.paste(final)
             log.debug("paste call returned after %.0fms", (time.monotonic() - t_paste0) * 1000)
-            self._last_result = final
-            self._last_result_at = time.monotonic()
         except PasteError as e:
             log.error("paste failed: %s", e)
         finally:

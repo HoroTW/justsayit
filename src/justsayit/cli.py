@@ -836,43 +836,6 @@ class App:
         if self.overlay is not None:
             self.overlay.push_assistant_mode(self._assistant_mode)
 
-    def _overlay_undo(self) -> None:
-        """Overlay ↶ button → fire Ctrl+Z to the focused window."""
-        if self.paster is None:
-            log.warning("undo clicked but paster is not ready")
-            return
-        try:
-            self.paster.send_undo()
-            log.info("undo: sent Ctrl+Z")
-        except PasteError as e:
-            log.error("undo failed: %s", e)
-
-    def _overlay_repaste(self) -> None:
-        """Overlay 📤 button → re-paste the cached last result."""
-        if self.pipeline is None or self.paster is None:
-            log.warning("repaste clicked but pipeline/paster not ready")
-            return
-        text = self.pipeline.last_result()
-        if not text:
-            log.info("repaste clicked but no recent result cached")
-            if self.overlay is not None:
-                self.overlay.push_repaste_available(False)
-                self.overlay.push_undo_available(False)
-            return
-        try:
-            self.paster.paste(text)
-            log.info("repaste: %d chars", len(text))
-        except PasteError as e:
-            log.error("repaste failed: %s", e)
-
-    def _sync_undo_repaste_buttons(self) -> None:
-        """Reflect pipeline.last_result() availability on the overlay."""
-        if self.overlay is None or self.pipeline is None:
-            return
-        available = self.pipeline.last_result() is not None
-        self.overlay.push_undo_available(available)
-        self.overlay.push_repaste_available(available)
-
     def _reset_continue_timer(self) -> None:
         if self._continue_timer_id is not None:
             GLib.source_remove(self._continue_timer_id)
@@ -1054,7 +1017,6 @@ class App:
             self._last_transcription_time = self.pipeline._last_transcription_time
             if is_continue and self._continue_window_active:
                 GLib.idle_add(self._reset_continue_timer)
-            self._sync_undo_repaste_buttons()
             return
         # Fallback: build a transient pipeline from App state (tests / no-setup path).
         assert self.transcriber is not None
@@ -1148,8 +1110,6 @@ class App:
                 on_toggle_clipboard_context=self._toggle_clipboard_context,
                 on_toggle_continue_window=self._toggle_continue_window,
                 on_toggle_assistant_mode=self._toggle_assistant_mode,
-                on_undo=self._overlay_undo,
-                on_repaste=self._overlay_repaste,
             )
             # Explicitly hidden until the engine reports a non-idle state.
             self.overlay.set_visible(False)
