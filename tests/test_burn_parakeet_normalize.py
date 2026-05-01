@@ -24,15 +24,20 @@ pytestmark = pytest.mark.burn
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "audio"
 
-# (fixture_basename, preset, expected_substring_or_empty_for_empty_result)
+# (fixture_basename, normalize_preset, trim_rms, expected_substring_or_empty_for_empty_result)
 CASES = [
-    # Preset "off" baseline — failed file MUST be empty (locks in the regression).
-    ("failed_quiet_gpt_attack", "off", ""),
-    # Preset "A" (default): all 4 files must transcribe correctly.
-    ("quiet_silent_label_a",    "A", "silent"),
-    ("quiet_silent_label_b",    "A", "silent"),
-    ("varianz_de",              "A", "leiser"),
-    ("failed_quiet_gpt_attack", "A", "near zero overlap"),
+    # Raw baselines — locks in that without ANY of our fixes, the failing files are empty.
+    ("failed_quiet_gpt_attack",   "off", 0.0,    ""),
+    ("failed_long_silence_tail",  "off", 0.0,    ""),
+    # New file is NOT fixed by normalize alone (any preset) — needs trim.
+    ("failed_long_silence_tail",  "A",   0.0,    ""),
+    ("failed_long_silence_tail",  "B",   0.0,    ""),
+    # Default config (normalize="A", trim=0.005) must transcribe everything correctly.
+    ("quiet_silent_label_a",      "A",   0.005, "silent"),
+    ("quiet_silent_label_b",      "A",   0.005, "silent"),
+    ("varianz_de",                "A",   0.005, "leiser"),
+    ("failed_quiet_gpt_attack",   "A",   0.005, "near zero overlap"),
+    ("failed_long_silence_tail",  "A",   0.005, "level three attack"),
 ]
 
 
@@ -54,39 +59,41 @@ def _load_wav(path: Path) -> tuple[np.ndarray, int]:
 
 @pytest.fixture(scope="module")
 def _transcriber_cache():
-    """Cache one transcriber per preset to avoid reloading for each case."""
+    """Cache one transcriber per (preset, trim_rms) pair to avoid reloading for each case."""
     return {}
 
 
-def _get_transcriber(preset: str, cache: dict) -> ParakeetTranscriber:
-    if preset not in cache:
+def _get_transcriber(preset: str, trim_rms: float, cache: dict) -> ParakeetTranscriber:
+    key = (preset, trim_rms)
+    if key not in cache:
         cfg = Config()
         cfg.model.backend = "parakeet"
         cfg.model.parakeet_normalize = preset
+        cfg.model.parakeet_trim_silence_rms = trim_rms
         t = ParakeetTranscriber(cfg)
         # Check model files exist before attempting warmup
         if not t.paths.encoder.exists():
             pytest.skip(f"Parakeet model not downloaded (missing {t.paths.encoder})")
         t.warmup()
-        cache[preset] = t
-    return cache[preset]
+        cache[key] = t
+    return cache[key]
 
 
-@pytest.mark.parametrize("basename,preset,expected", CASES, ids=[
-    f"{b}-{p}" for b, p, _ in CASES
+@pytest.mark.parametrize("basename,preset,trim_rms,expected", CASES, ids=[
+    f"{b}-{p}-trim{t}" for b, p, t, _ in CASES
 ])
-def test_normalize_preset(basename, preset, expected, _transcriber_cache):
+def test_normalize_preset(basename, preset, trim_rms, expected, _transcriber_cache):
     wav_path = FIXTURES_DIR / f"{basename}.wav"
     if not wav_path.exists():
         pytest.skip(f"fixture WAV not present: {wav_path}")
 
     samples, sr = _load_wav(wav_path)
-    transcriber = _get_transcriber(preset, _transcriber_cache)
+    transcriber = _get_transcriber(preset, trim_rms, _transcriber_cache)
     out = transcriber.transcribe(samples, sr).strip()
 
     if expected == "":
-        assert out == "", f"expected empty output (preset={preset!r}), got: {out!r}"
+        assert out == "", f"expected empty output (preset={preset!r}, trim_rms={trim_rms}), got: {out!r}"
     else:
         assert expected.lower() in out.lower(), (
-            f"expected {expected!r} in output (preset={preset!r}), got: {out!r}"
+            f"expected {expected!r} in output (preset={preset!r}, trim_rms={trim_rms}), got: {out!r}"
         )

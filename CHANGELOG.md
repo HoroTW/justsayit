@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.24.6] - 2026-05-01
+
+- transcribe: optional `model.parakeet_trim_silence_rms` (default 0.005) strips leading/trailing silence below the threshold before Parakeet inference — closes the same blind spot as `parakeet_normalize` from the speech-fraction side. Safety floor `parakeet_trim_min_keep_seconds` (default 1.0) prevents the trim from accidentally emptying a quiet recording.
+
 ## [0.24.5] - 2026-05-01
 
 ### Added

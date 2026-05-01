@@ -194,6 +194,17 @@ class ModelConfig:
     #   "C"   - boost up to peak 0.30, max 4x gain (can break very-quiet
     #            clean audio — kept for parity, not recommended)
     parakeet_normalize: str = "A"
+    # Strip leading/trailing windows below this RMS before Parakeet sees the
+    # buffer. Complements parakeet_normalize: trim raises the speech-to-silence
+    # *fraction*, normalize raises speech *energy*. Some segments need one,
+    # some need the other, some need both. Threshold 0.005 sits above typical
+    # ambient/noise-floor RMS while leaving quiet-but-clear speech untouched.
+    # Set to 0.0 to disable trimming entirely.
+    parakeet_trim_silence_rms: float = 0.005
+    # Safety floor: if the trimmed buffer would be shorter than this, skip
+    # the trim and pass the original. Guarantees we never accidentally
+    # delete a quiet recording even if the threshold misjudges a future file.
+    parakeet_trim_min_keep_seconds: float = 1.0
 
     # --- Shared ---------------------------------------------------------------
     # Silero VAD ONNX (tiny file, downloaded directly).

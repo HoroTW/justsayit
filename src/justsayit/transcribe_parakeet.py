@@ -22,6 +22,38 @@ _NORMALIZE_PRESETS: dict[str, tuple[float, float]] = {
 }
 
 
+def _trim_silence(
+    samples: np.ndarray,
+    sample_rate: int,
+    threshold_rms: float,
+    min_keep_seconds: float,
+    window_ms: int = 50,
+) -> tuple[np.ndarray, float, float]:
+    """Strip leading/trailing 50-ms windows whose RMS is below threshold.
+
+    Returns ``(samples, head_seconds_trimmed, tail_seconds_trimmed)``. If
+    the trim would shrink the buffer below ``min_keep_seconds``, returns
+    the original buffer untouched (and (0.0, 0.0)).
+    """
+    if threshold_rms <= 0.0:
+        return samples, 0.0, 0.0
+    win = max(1, int(window_ms / 1000.0 * sample_rate))
+    n = len(samples)
+    if n == 0:
+        return samples, 0.0, 0.0
+    rms = lambda c: float(np.sqrt(np.mean(np.square(c, dtype=np.float64))))
+    start = 0
+    while start + win <= n and rms(samples[start:start + win]) < threshold_rms:
+        start += win
+    end = n
+    while end - win >= start and rms(samples[end - win:end]) < threshold_rms:
+        end -= win
+    kept_seconds = (end - start) / float(sample_rate)
+    if kept_seconds < min_keep_seconds:
+        return samples, 0.0, 0.0
+    return samples[start:end], start / float(sample_rate), (n - end) / float(sample_rate)
+
+
 def _normalize(samples: np.ndarray, preset: str) -> tuple[np.ndarray, float]:
     """Boost ``samples`` toward the preset's min_peak, capped by max_gain.
     Returns (samples, gain). Unknown presets fall back to "A"."""
@@ -73,6 +105,17 @@ class ParakeetTranscriber(TranscriberBase):
         with self._lock:
             if self._recog is None:
                 self._recog = self._build()
+            samples, head_s, tail_s = _trim_silence(
+                samples,
+                int(sample_rate),
+                self.cfg.model.parakeet_trim_silence_rms,
+                self.cfg.model.parakeet_trim_min_keep_seconds,
+            )
+            if head_s > 0.0 or tail_s > 0.0:
+                log.info(
+                    "parakeet trim-silence: cut %.2fs head + %.2fs tail (kept %.2fs)",
+                    head_s, tail_s, len(samples) / float(sample_rate),
+                )
             samples, gain = _normalize(samples, self.cfg.model.parakeet_normalize)
             if gain != 1.0:
                 log.info(
