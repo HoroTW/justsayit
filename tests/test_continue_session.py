@@ -175,8 +175,26 @@ def test_pipeline_passes_none_when_not_continue():
     assert pp.calls[0]["previous_session"] is None
 
 
+def test_pipeline_clears_session_at_start_when_not_continue(tmp_path):
+    """handle(is_continue=False) must wipe any stale session.json before running,
+    covering failure paths (empty transcription, LLM error) so stale history
+    cannot be silently picked up by the next continue call."""
+    cfg = Config()
+    pp = _RecordingPostprocessor()
+    pl = _make_pipeline(cfg, "hello", pp)
+
+    fake_path = tmp_path / "session.json"
+    fake_path.write_text('{"backend": "remote", "prev_messages": [{"role": "user", "content": "stale"}]}', encoding="utf-8")
+
+    with patch("justsayit.pipeline._session_path", return_value=fake_path), \
+         patch("justsayit.pipeline._save_session"):
+        pl.handle(_make_seg(), is_continue=False)
+
+    assert not fake_path.exists()
+
+
 def test_pipeline_does_not_save_on_llm_exception():
-    """If the LLM fails the session is left unchanged — don't save, don't clear."""
+    """If the LLM fails: session is cleared at start (defensive wipe), but not saved."""
     cfg = Config()
 
     class _RaisingPP:
@@ -196,7 +214,7 @@ def test_pipeline_does_not_save_on_llm_exception():
         pl.handle(_make_seg(), is_continue=False)
 
     mock_save.assert_not_called()
-    mock_clear.assert_not_called()
+    mock_clear.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

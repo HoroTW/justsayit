@@ -271,6 +271,12 @@ class PostprocessConfig:
     )
     # How long (minutes) the continue window stays open after being armed.
     continue_window_minutes: int = 5
+    # When True, toggling assistant mode ON also arms the continue window
+    # (so the user visibly sees both buttons light up — no invisible state).
+    # Toggling assistant mode OFF never affects the continue window. The
+    # user is expected to use the continue button independently to manage
+    # multi-turn sessions if they want a different coupling.
+    assistant_auto_arm_continue: bool = True
 
 
 @dataclass

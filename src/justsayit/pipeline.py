@@ -101,6 +101,9 @@ class SegmentPipeline:
         """Process one audio segment end-to-end."""
         from justsayit.paste import PasteError
 
+        if not is_continue:
+            _clear_session()
+
         assert self.transcriber is not None
         duration = len(seg.samples) / seg.sample_rate
         min_duration = self.cfg.audio.skip_segments_below_seconds

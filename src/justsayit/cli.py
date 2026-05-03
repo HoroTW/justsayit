@@ -135,11 +135,8 @@ class App:
         # losing the arm to the stale-defense disarm.
         self._clipboard_context_arm_next: bool = False
         # Continue-session state. _continue_window_active means the timer
-        # is running; _continue_this_recording is snapshotted per segment
-        # at the IDLE→MANUAL/VALIDATING edge so the transcribe thread can
-        # read it without racing the timer callback.
+        # is running; it is read live at segment-emit time (not snapshotted).
         self._continue_window_active: bool = False
-        self._continue_this_recording: bool = False
         self._continue_timer_id: int | None = None
         # Assistant mode: overlay stays open after results; every recording
         # continues the previous LLM session (is_continue always True).
@@ -357,7 +354,6 @@ class App:
             prev = prev_state[0]
             prev_state[0] = state
             if prev is State.IDLE and state in (State.VALIDATING, State.MANUAL):
-                self._continue_this_recording = self._continue_window_active or self._assistant_mode
                 if self._clipboard_context_arm_next:
                     # CLI asked to arm *this* recording. Promote the
                     # pending flag to _armed here, where we're
@@ -804,7 +800,6 @@ class App:
 
     def _activate_continue_window(self) -> None:
         self._continue_window_active = True
-        self._continue_this_recording = True
         self._reset_continue_timer()
         log.info("continue window → armed (%d min)", self.cfg.postprocess.continue_window_minutes or 5)
         if self.overlay is not None:
@@ -812,7 +807,6 @@ class App:
 
     def _deactivate_continue_window(self) -> None:
         self._continue_window_active = False
-        self._continue_this_recording = False
         if self._continue_timer_id is not None:
             GLib.source_remove(self._continue_timer_id)
             self._continue_timer_id = None
@@ -833,6 +827,8 @@ class App:
             self.pipeline.assistant_mode = self._assistant_mode
         if self.overlay is not None:
             self.overlay.push_assistant_mode(self._assistant_mode)
+        if self._assistant_mode and self.cfg.postprocess.assistant_auto_arm_continue:
+            self._activate_continue_window()
 
     def _overlay_redo_cleanup(self) -> None:
         """Called from the overlay 🧹 button — redo with cleanup mode."""
@@ -1089,7 +1085,7 @@ class App:
     def _handle_segment(self, seg: Segment) -> None:
         """Process one audio segment via the configured SegmentPipeline."""
         assert self.pipeline is not None, "_handle_segment called before setup_transcriber"
-        is_continue = self._continue_this_recording
+        is_continue = self._continue_window_active
         self.pipeline.handle(seg, consume_clipboard_fn=self._consume_clipboard_context, is_continue=is_continue)
         if is_continue and self._continue_window_active:
             GLib.idle_add(self._reset_continue_timer)
@@ -1140,6 +1136,13 @@ class App:
                 arm_clip,
                 arm_continue,
             )
+            if self.engine is not None and self.engine.state is not State.IDLE:
+                log.info(
+                    "toggle-ex during recording (state=%s) — ignoring opts; this toggle will stop",
+                    self.engine.state.value,
+                )
+                self.toggle()
+                return
             if isinstance(profile, str) and profile:
                 # "off" disables postprocessing — same effect as the
                 # tray's "Off" radio item. Case-insensitive because
