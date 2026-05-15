@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.24.9] - 2026-05-16
+
+- transcribe: model is primed (touched with a tiny silence buffer) when recording starts so its memory pages stay warm — defends against OS-swap latency on the first transcribe call after long idle periods.
+- audio,pipeline: long recordings now stream — partial chunks are emitted at silence troughs during capture (target 22s, force 30s) so they transcribe in parallel with continued recording. Filter/LLM/paste still run once at stop on the concatenated raw text. Cuts perceived stop→result latency on 60s+ recordings.
+
 ## [0.24.8] - 2026-05-16
 
 - transcribe: Parakeet now auto-chunks segments longer than 25s at silence troughs before inference — fixes the content-collapse on long recordings. NVIDIA documents Parakeet TDT v3 as supporting up to 24 min on A100 GPU with full attention, but our CPU/INT8/sherpa-onnx deployment empirically collapses past ~35s and community guidance is ~30s buffers for non-GPU paths.

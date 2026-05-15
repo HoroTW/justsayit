@@ -158,6 +158,19 @@ class ParakeetTranscriber(TranscriberBase):
             if self._recog is None:
                 self._recog = self._build()
 
+    def prime(self) -> None:
+        """Force a forward pass with a tiny silence buffer to page the
+        model weights into RAM. Skips trim/normalize/chunk — pure model touch."""
+        with self._lock:
+            if self._recog is None:
+                self._recog = self._build()
+            sr = int(self.cfg.audio.sample_rate)
+            # 100ms of silence is enough to traverse the encoder weights.
+            dummy = np.zeros(int(0.1 * sr), dtype=np.float32)
+            stream = self._recog.create_stream()
+            stream.accept_waveform(sr, dummy)
+            self._recog.decode_stream(stream)
+
     def transcribe(self, samples: np.ndarray, sample_rate: int) -> str:
         with self._lock:
             if self._recog is None:

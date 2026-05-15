@@ -354,6 +354,12 @@ class App:
             prev = prev_state[0]
             prev_state[0] = state
             if prev is State.IDLE and state in (State.VALIDATING, State.MANUAL):
+                if self.transcriber is not None:
+                    threading.Thread(
+                        target=self.transcriber.prime,
+                        name="justsayit-prime",
+                        daemon=True,
+                    ).start()
                 if self._clipboard_context_arm_next:
                     # CLI asked to arm *this* recording. Promote the
                     # pending flag to _armed here, where we're
@@ -1085,6 +1091,11 @@ class App:
     def _handle_segment(self, seg: Segment) -> None:
         """Process one audio segment via the configured SegmentPipeline."""
         assert self.pipeline is not None, "_handle_segment called before setup_transcriber"
+        if not seg.is_final:
+            # Partial stream-chunk: pipeline only transcribes and accumulates.
+            # No clipboard, no continue, no LLM, no paste.
+            self.pipeline.handle(seg, consume_clipboard_fn=None, is_continue=False)
+            return
         is_continue = self._continue_window_active
         self.pipeline.handle(seg, consume_clipboard_fn=self._consume_clipboard_context, is_continue=is_continue)
         if is_continue and self._continue_window_active:
@@ -1166,6 +1177,8 @@ class App:
             def _on_overlay_abort() -> None:
                 if self.engine is not None:
                     self.engine.abort()
+                if self.pipeline is not None:
+                    self.pipeline.clear_partials()
 
             self.overlay = OverlayWindow(
                 app,

@@ -25,6 +25,13 @@ class TranscriberBase:
     def warmup(self) -> None:
         """Eagerly load the model so the first real transcription isn't slow."""
 
+    def prime(self) -> None:
+        """Touch the model with a tiny silence buffer so its memory pages
+        are warm before the next real transcribe call. Default no-op for
+        backends where this doesn't apply (OpenAI HTTP, etc.). Safe to
+        call repeatedly and from any thread."""
+        pass
+
     def transcribe(self, samples: np.ndarray, sample_rate: int) -> str:
         """Synchronous single-shot transcription. Returns stripped text."""
         raise NotImplementedError

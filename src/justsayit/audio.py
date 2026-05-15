@@ -36,6 +36,12 @@ from justsayit.config import Config
 
 log = logging.getLogger(__name__)
 
+_STREAM_CHUNK_TARGET_SECONDS = 22.0    # try to emit a partial after this much
+_STREAM_CHUNK_FORCE_SECONDS = 30.0     # force-emit even without silence at this
+_STREAM_CHUNK_MIN_SECONDS = 15.0       # don't emit a chunk shorter than this
+_STREAM_SILENCE_RMS = 0.005            # below this counts as silence
+_STREAM_SILENCE_WINDOW_MS = 250        # silence window length
+
 
 def _write_wav(path: Path, samples: np.ndarray, sample_rate: int) -> None:
     """Write mono float32 *samples* to *path* as a 16-bit PCM WAV file."""
@@ -59,12 +65,31 @@ class State(enum.Enum):
 class Segment:
     samples: np.ndarray  # float32 mono @ cfg.audio.sample_rate
     sample_rate: int
-    reason: str  # "vad", "manual", "max-length", "shutdown"
+    reason: str  # "vad", "manual", "max-length", "shutdown", "stream-chunk"
     # ``time.monotonic()`` timestamp of the hotkey-stop that caused this
     # segment to be emitted. ``None`` for non-manual segments. Consumers
     # use it to delay the paste until the user has plausibly released
     # the hotkey modifier keys.
     stop_requested_at: float | None = None
+    is_final: bool = True   # False for partial stream chunks; True for the closing segment
+
+
+def _find_silence_split(samples: np.ndarray, sr: int, min_samples: int, max_samples: int) -> int | None:
+    """Return the midpoint of the LAST silence window in [min, max], or None."""
+    win = int(_STREAM_SILENCE_WINDOW_MS / 1000.0 * sr)
+    if max_samples > len(samples):
+        max_samples = len(samples)
+    if min_samples >= max_samples - win:
+        return None
+    last_split = None
+    i = min_samples
+    while i + win <= max_samples:
+        chunk = samples[i:i + win]
+        rms = float(np.sqrt(np.mean(np.square(chunk, dtype=np.float64))))
+        if rms < _STREAM_SILENCE_RMS:
+            last_split = i + win // 2
+        i += win // 2  # half-overlap for finer detection
+    return last_split
 
 
 ValidateFn = Callable[[np.ndarray, int], bool]
@@ -359,6 +384,17 @@ class AudioEngine:
         self._buffer_samples = 0
         return out
 
+    def _split_buffer_at(self, split_samples: int) -> np.ndarray:
+        """Pop the first `split_samples` from the buffer; tail stays in self._buffer."""
+        if split_samples >= self._buffer_samples:
+            return self._flush()
+        all_samples = np.concatenate(self._buffer)
+        head = all_samples[:split_samples]
+        tail = all_samples[split_samples:]
+        self._buffer = [tail]
+        self._buffer_samples = len(tail)
+        return head
+
     def _update_lookback(self, chunk: np.ndarray) -> None:
         """Push ``chunk`` onto the lookback ring and drop old chunks
         while the total exceeds ``_lookback_target``."""
@@ -405,6 +441,7 @@ class AudioEngine:
             sample_rate=self.cfg.audio.sample_rate,
             reason=reason,
             stop_requested_at=stop_at,
+            is_final=True,
         )
         log.info("emitting segment: %.2fs reason=%s", secs, reason)
         if self.cfg.audio.debug_dump_dir is not None:
@@ -597,6 +634,42 @@ class AudioEngine:
 
             elif self._state is State.MANUAL:
                 self._append(chunk)
+
+            # Streaming: emit partial chunks during recording so the transcribe
+            # thread can start work in parallel with continued capture.
+            if (
+                self._state in (State.MANUAL, State.RECORDING)
+                and not external_stop  # let stop_manual handle the final emission
+                and not external_abort
+                and self._buffer_samples >= int(_STREAM_CHUNK_TARGET_SECONDS * sr)
+            ):
+                all_samples = np.concatenate(self._buffer)
+                split = _find_silence_split(
+                    all_samples, sr,
+                    int(_STREAM_CHUNK_MIN_SECONDS * sr),
+                    int(_STREAM_CHUNK_TARGET_SECONDS * sr),
+                )
+                if split is None and self._buffer_samples >= int(_STREAM_CHUNK_FORCE_SECONDS * sr):
+                    # No silence found within target window — force-split at target
+                    split = int(_STREAM_CHUNK_TARGET_SECONDS * sr)
+                if split is not None:
+                    head = self._split_buffer_at(split)
+                    partial = Segment(
+                        samples=head,
+                        sample_rate=sr,
+                        reason="stream-chunk",
+                        stop_requested_at=None,
+                        is_final=False,
+                    )
+                    log.info(
+                        "emitting stream-chunk segment: %.2fs (buffer remaining: %.2fs)",
+                        len(head) / float(sr),
+                        self._buffer_samples / float(sr),
+                    )
+                    try:
+                        self.on_segment(partial)
+                    except Exception:
+                        log.exception("on_segment callback raised (stream-chunk)")
 
             if external_stop:
                 self._external_stop.clear()

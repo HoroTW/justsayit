@@ -76,6 +76,7 @@ class SegmentPipeline:
         self._last_transcription_time: float | None = None
         self._last_detected_text: str | None = None
         self.last_was_assistant_mode: bool = False
+        self._partial_raws: list[str] = []
 
     def _build_retry_cb(self, seg: "Segment") -> Callable[[], None] | None:
         if self.enqueue_segment is None:
@@ -97,9 +98,43 @@ class SegmentPipeline:
         except Exception:
             log.exception("on_error callback raised")
 
+    def clear_partials(self) -> None:
+        """Discard accumulated stream-chunk transcriptions. Called when a
+        recording is aborted or otherwise discarded without a final segment."""
+        if self._partial_raws:
+            log.info("clearing %d accumulated stream-chunk transcriptions", len(self._partial_raws))
+            self._partial_raws.clear()
+
     def handle(self, seg: "Segment", *, consume_clipboard_fn=None, is_continue: bool = False) -> None:
         """Process one audio segment end-to-end."""
         from justsayit.paste import PasteError
+
+        # Partial stream-chunks: transcribe only, accumulate raw text, no paste.
+        if not seg.is_final:
+            duration = len(seg.samples) / seg.sample_rate
+            min_duration = self.cfg.audio.skip_segments_below_seconds
+            if min_duration > 0 and duration < min_duration:
+                log.info(
+                    "skipping short partial segment: %.2fs < %.2fs",
+                    duration, min_duration,
+                )
+                return
+            log.info("transcribing partial %.2fs (reason=%s)", duration, seg.reason)
+            t0 = time.monotonic()
+            try:
+                raw = self.transcriber.transcribe(seg.samples, seg.sample_rate)
+            except Exception as exc:
+                log.exception("partial transcription failed; skipping chunk")
+                return
+            dt = time.monotonic() - t0
+            log.info("partial transcription done in %.2fs: raw=%r", dt, raw)
+            if raw:
+                self._partial_raws.append(raw)
+            if self.overlay is not None:
+                accumulated = " ".join(self._partial_raws).strip()
+                if accumulated:
+                    self.overlay.push_detected_text(accumulated, llm_pending=True)
+            return
 
         if not is_continue:
             _clear_session()
@@ -107,7 +142,11 @@ class SegmentPipeline:
         assert self.transcriber is not None
         duration = len(seg.samples) / seg.sample_rate
         min_duration = self.cfg.audio.skip_segments_below_seconds
-        if min_duration > 0 and duration < min_duration:
+
+        # Duration skip: apply only when there are no accumulated partials —
+        # if we have partials, we always want to transcribe and emit the combined
+        # text even when the final tail segment is short.
+        if not self._partial_raws and min_duration > 0 and duration < min_duration:
             log.info(
                 "skipping short segment: %.2fs < %.2fs (reason=%s)",
                 duration,
@@ -117,16 +156,24 @@ class SegmentPipeline:
             if self.overlay is not None:
                 self.overlay.push_hide()
             return
+
+        # Transcribe the final segment first, then combine with accumulated partials.
         log.info("transcribing %.2fs (reason=%s)", duration, seg.reason)
         t0 = time.monotonic()
         try:
-            raw = self.transcriber.transcribe(seg.samples, seg.sample_rate)
+            final_raw = self.transcriber.transcribe(seg.samples, seg.sample_rate)
         except Exception as exc:
             log.exception("transcription failed")
+            self._partial_raws.clear()
             self._emit_error("transcribe", exc, seg)
             return
         dt = time.monotonic() - t0
-        log.info("transcription done in %.2fs: raw=%r", dt, raw)
+        log.info("transcription done in %.2fs: raw=%r", dt, final_raw)
+
+        # Combine accumulated partials with this final segment's transcription.
+        raw = " ".join([*self._partial_raws, final_raw]).strip() if self._partial_raws else final_raw
+        self._partial_raws.clear()
+
         if not raw:
             log.info("empty transcription; nothing to paste")
             if self.overlay is not None:

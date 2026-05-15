@@ -543,3 +543,68 @@ def test_pipeline_llm_failure_also_emits_on_error(capsys):
     ]
 
 
+# ---------------------------------------------------------------------------
+# Streaming partial-chunk accumulation
+# ---------------------------------------------------------------------------
+
+
+class _SequenceTranscriber(TranscriberBase):
+    """Returns successive strings from a list on each transcribe() call."""
+
+    def __init__(self, texts: list[str]) -> None:
+        self._texts = list(texts)
+        self._idx = 0
+
+    def transcribe(self, samples: np.ndarray, sample_rate: int) -> str:
+        if self._idx < len(self._texts):
+            text = self._texts[self._idx]
+            self._idx += 1
+            return text
+        return ""
+
+
+def _make_partial_seg(duration_s: float = 22.5) -> Segment:
+    sr = 16_000
+    samples = np.zeros(int(sr * duration_s), dtype=np.float32)
+    return Segment(samples=samples, sample_rate=sr, reason="stream-chunk", is_final=False)
+
+
+def _make_pipeline(texts: list[str]) -> "SegmentPipeline":
+    from justsayit.pipeline import SegmentPipeline
+    cfg = Config()
+    return SegmentPipeline(
+        cfg,
+        _SequenceTranscriber(texts),
+        filters=[],
+        paster=None,
+        no_paste=True,
+    )
+
+
+def test_streaming_partials_accumulate_and_paste_combined(capsys):
+    """Two partial chunks + a final segment: paste sees concatenated raw text."""
+    pipe = _make_pipeline(["first", "second", "final"])
+
+    pipe.handle(_make_partial_seg(), is_continue=False)
+    pipe.handle(_make_partial_seg(), is_continue=False)
+    pipe.handle(_make_seg(), is_continue=False)  # is_final=True by default
+
+    out = capsys.readouterr().out.strip()
+    assert out == "first second final"
+    assert pipe._partial_raws == []
+
+
+def test_clear_partials_prevents_leaking_into_next_final(capsys):
+    """After clear_partials(), the next final segment gets only its own text."""
+    pipe = _make_pipeline(["leaked1", "leaked2", "alone"])
+
+    pipe.handle(_make_partial_seg(), is_continue=False)
+    pipe.handle(_make_partial_seg(), is_continue=False)
+    pipe.clear_partials()
+    pipe.handle(_make_seg(), is_continue=False)
+
+    out = capsys.readouterr().out.strip()
+    assert out == "alone"
+    assert pipe._partial_raws == []
+
+
