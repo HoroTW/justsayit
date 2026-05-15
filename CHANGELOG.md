@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.24.8] - 2026-05-16
+
+- transcribe: Parakeet now auto-chunks segments longer than 25s at silence troughs before inference — fixes the content-collapse on long recordings. NVIDIA documents Parakeet TDT v3 as supporting up to 24 min on A100 GPU with full attention, but our CPU/INT8/sherpa-onnx deployment empirically collapses past ~35s and community guidance is ~30s buffers for non-GPU paths.
+
 ## [0.24.7] - 2026-05-03
 
 - cli: assistant-mode toggle no longer captures continue/auto-continue at recording-start — all settings are live-read at segment-emit time, so toggling assistant off (or any UI button) mid-recording takes effect on the segment about to be processed.

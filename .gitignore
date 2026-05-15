@@ -14,6 +14,11 @@ htmlcov/
 config.toml
 filters.json
 
+# Local-only burn-test audio fixture (contains private operational content;
+# referenced by tests/test_burn_parakeet_normalize.py which skips gracefully
+# when absent on fresh clones)
+tests/fixtures/audio/long_42s_chunking.wav
+
 # Nix build output symlink
 result
 result-*

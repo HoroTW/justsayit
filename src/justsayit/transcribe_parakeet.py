@@ -21,6 +21,63 @@ _NORMALIZE_PRESETS: dict[str, tuple[float, float]] = {
     "C":   (0.30, 4.0),
 }
 
+_CHUNK_MAX_SECONDS = 25.0        # safe upper bound (margin from 35s breakpoint)
+_CHUNK_MIN_SECONDS = 5.0         # don't produce micro-chunks
+_CHUNK_SILENCE_RMS = 0.005       # same threshold as the existing trim default
+_CHUNK_SILENCE_WINDOW_MS = 250   # silence must be >= this to count as a sentence boundary
+
+
+def _chunk_at_silence(samples: np.ndarray, sample_rate: int) -> list[tuple[int, int]]:
+    """Return (start, end) sample-index pairs covering ``samples``.
+
+    If the total duration is <= _CHUNK_MAX_SECONDS, returns a single chunk.
+    Otherwise, walks forward greedily: for each chunk, scan the window
+    [start + _CHUNK_MIN_SECONDS, start + _CHUNK_MAX_SECONDS] for the LAST
+    silence trough (RMS below _CHUNK_SILENCE_RMS over _CHUNK_SILENCE_WINDOW_MS).
+    Splits at the middle of that silence window; if none found, force-splits
+    at start + _CHUNK_MAX_SECONDS.
+    """
+    total = len(samples) / float(sample_rate)
+    if total <= _CHUNK_MAX_SECONDS:
+        return [(0, len(samples))]
+
+    win = max(1, int(_CHUNK_SILENCE_WINDOW_MS / 1000.0 * sample_rate))
+    max_samples = int(_CHUNK_MAX_SECONDS * sample_rate)
+    min_samples = int(_CHUNK_MIN_SECONDS * sample_rate)
+
+    chunks: list[tuple[int, int]] = []
+    start = 0
+    n = len(samples)
+
+    while start < n:
+        remaining = n - start
+        if remaining <= max_samples:
+            chunks.append((start, n))
+            break
+
+        # Scan [start+min, start+max] for the last silence trough
+        scan_start = start + min_samples
+        scan_end = start + max_samples
+
+        last_silence_mid: int | None = None
+        pos = scan_start
+        while pos + win <= scan_end:
+            window = samples[pos:pos + win]
+            rms = float(np.sqrt(np.mean(np.square(window, dtype=np.float64))))
+            if rms < _CHUNK_SILENCE_RMS:
+                last_silence_mid = pos + win // 2
+            pos += win // 2  # half-overlap for finer detection
+
+        if last_silence_mid is not None:
+            split = last_silence_mid
+        else:
+            split = start + max_samples
+
+        chunks.append((start, split))
+        start = split
+
+    return chunks
+
 
 def _trim_silence(
     samples: np.ndarray,
@@ -124,8 +181,24 @@ class ParakeetTranscriber(TranscriberBase):
                     float(np.abs(samples).max()) / gain,
                     float(np.abs(samples).max()),
                 )
-            stream = self._recog.create_stream()
-            stream.accept_waveform(int(sample_rate), samples.astype(np.float32, copy=False))
-            self._recog.decode_stream(stream)
-            text = stream.result.text or ""
-        return text.strip()
+            chunks = _chunk_at_silence(samples, int(sample_rate))
+            if len(chunks) > 1:
+                total_s = len(samples) / float(sample_rate)
+                log.info(
+                    "parakeet auto-chunk: split %.2fs into %d pieces", total_s, len(chunks)
+                )
+                for i, (cs, ce) in enumerate(chunks):
+                    log.debug(
+                        "  chunk %d: %.2fs–%.2fs",
+                        i, cs / float(sample_rate), ce / float(sample_rate),
+                    )
+            parts: list[str] = []
+            for cs, ce in chunks:
+                chunk_samples = samples[cs:ce].astype(np.float32, copy=False)
+                stream = self._recog.create_stream()
+                stream.accept_waveform(int(sample_rate), chunk_samples)
+                self._recog.decode_stream(stream)
+                t = (stream.result.text or "").strip()
+                if t:
+                    parts.append(t)
+        return " ".join(parts)
