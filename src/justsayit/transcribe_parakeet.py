@@ -21,29 +21,80 @@ _NORMALIZE_PRESETS: dict[str, tuple[float, float]] = {
     "C":   (0.30, 4.0),
 }
 
-_CHUNK_MAX_SECONDS = 25.0        # safe upper bound (margin from 35s breakpoint)
+_CHUNK_TARGET_SECONDS = 25.0     # start looking for a natural split here
+_CHUNK_FORCE_SECONDS = 45.0      # hard split only if no silence is found by here
 _CHUNK_MIN_SECONDS = 5.0         # don't produce micro-chunks
-_CHUNK_SILENCE_RMS = 0.005       # same threshold as the existing trim default
-_CHUNK_SILENCE_WINDOW_MS = 250   # silence must be >= this to count as a sentence boundary
+_CHUNK_SILENCE_RMS = 0.005       # absolute floor; adaptive scan handles noisy rooms
+_CHUNK_SILENCE_RMS_CAP = 0.020   # don't treat quiet speech as a split point
+_CHUNK_SILENCE_NOISE_MULT = 1.35 # allow pauses above the absolute floor
+_CHUNK_SILENCE_WINDOW_MS = (250, 200, 150, 100)
+_CHUNK_TARGET_LOOKBACK_SECONDS = 2.0
+
+
+def _adaptive_silence_rms(window_rms: list[float]) -> float:
+    """Return a local silence threshold for the current scan window."""
+    if not window_rms:
+        return _CHUNK_SILENCE_RMS
+    low_rms = float(np.percentile(window_rms, 10))
+    return max(
+        _CHUNK_SILENCE_RMS,
+        min(_CHUNK_SILENCE_RMS_CAP, low_rms * _CHUNK_SILENCE_NOISE_MULT),
+    )
+
+
+def _find_silence_split(
+    samples: np.ndarray,
+    scan_start: int,
+    scan_end: int,
+    sample_rate: int,
+) -> int | None:
+    """Return the first silence split in ``[scan_start, scan_end]``.
+
+    The search starts with conservative 250-ms pauses and relaxes down to
+    100-ms pauses before the caller falls back to a hard split.
+    """
+    for window_ms in _CHUNK_SILENCE_WINDOW_MS:
+        win = max(1, int(window_ms / 1000.0 * sample_rate))
+        if scan_start + win > scan_end:
+            continue
+
+        rms_windows: list[tuple[int, float]] = []
+        pos = scan_start
+        while pos + win <= scan_end:
+            window = samples[pos:pos + win]
+            rms = float(np.sqrt(np.mean(np.square(window, dtype=np.float64))))
+            rms_windows.append((pos + win // 2, rms))
+            pos += max(1, win // 2)  # half-overlap for finer detection
+
+        if not rms_windows:
+            continue
+
+        # Real mic captures often have a room-noise floor above the fixed
+        # 0.005 threshold. Estimate the local floor from the scan window,
+        # but cap it so low-energy speech is not treated as silence.
+        silence_rms = _adaptive_silence_rms([rms for _, rms in rms_windows])
+
+        for mid, rms in rms_windows:
+            if rms < silence_rms:
+                return mid
+
+    return None
 
 
 def _chunk_at_silence(samples: np.ndarray, sample_rate: int) -> list[tuple[int, int]]:
     """Return (start, end) sample-index pairs covering ``samples``.
 
-    If the total duration is <= _CHUNK_MAX_SECONDS, returns a single chunk.
-    Otherwise, walks forward greedily: for each chunk, scan the window
-    [start + _CHUNK_MIN_SECONDS, start + _CHUNK_MAX_SECONDS] for the LAST
-    silence trough (RMS below _CHUNK_SILENCE_RMS over _CHUNK_SILENCE_WINDOW_MS).
-    Splits at the middle of that silence window; if none found, force-splits
-    at start + _CHUNK_MAX_SECONDS.
+    Chunks aim to split on natural pauses after _CHUNK_TARGET_SECONDS. If no
+    pause appears by _CHUNK_FORCE_SECONDS, the chunk is hard-split there.
     """
     total = len(samples) / float(sample_rate)
-    if total <= _CHUNK_MAX_SECONDS:
+    if total <= _CHUNK_TARGET_SECONDS:
         return [(0, len(samples))]
 
-    win = max(1, int(_CHUNK_SILENCE_WINDOW_MS / 1000.0 * sample_rate))
-    max_samples = int(_CHUNK_MAX_SECONDS * sample_rate)
+    target_samples = int(_CHUNK_TARGET_SECONDS * sample_rate)
+    force_samples = int(_CHUNK_FORCE_SECONDS * sample_rate)
     min_samples = int(_CHUNK_MIN_SECONDS * sample_rate)
+    target_lookback_samples = int(_CHUNK_TARGET_LOOKBACK_SECONDS * sample_rate)
 
     chunks: list[tuple[int, int]] = []
     start = 0
@@ -51,27 +102,21 @@ def _chunk_at_silence(samples: np.ndarray, sample_rate: int) -> list[tuple[int, 
 
     while start < n:
         remaining = n - start
-        if remaining <= max_samples:
+        if remaining <= target_samples:
             chunks.append((start, n))
             break
 
-        # Scan [start+min, start+max] for the last silence trough
-        scan_start = start + min_samples
-        scan_end = start + max_samples
+        scan_start = start + max(min_samples, target_samples - target_lookback_samples)
+        scan_end = min(n, start + force_samples)
 
-        last_silence_mid: int | None = None
-        pos = scan_start
-        while pos + win <= scan_end:
-            window = samples[pos:pos + win]
-            rms = float(np.sqrt(np.mean(np.square(window, dtype=np.float64))))
-            if rms < _CHUNK_SILENCE_RMS:
-                last_silence_mid = pos + win // 2
-            pos += win // 2  # half-overlap for finer detection
-
-        if last_silence_mid is not None:
-            split = last_silence_mid
+        split = _find_silence_split(samples, scan_start, scan_end, sample_rate)
+        if split is not None:
+            split = max(start + min_samples, min(split, scan_end))
+        elif remaining > force_samples:
+            split = start + force_samples
         else:
-            split = start + max_samples
+            chunks.append((start, n))
+            break
 
         chunks.append((start, split))
         start = split
@@ -186,6 +231,7 @@ class ParakeetTranscriber(TranscriberBase):
                     "parakeet trim-silence: cut %.2fs head + %.2fs tail (kept %.2fs)",
                     head_s, tail_s, len(samples) / float(sample_rate),
                 )
+            chunks = _chunk_at_silence(samples, int(sample_rate))
             samples, gain = _normalize(samples, self.cfg.model.parakeet_normalize)
             if gain != 1.0:
                 log.info(
@@ -194,7 +240,6 @@ class ParakeetTranscriber(TranscriberBase):
                     float(np.abs(samples).max()) / gain,
                     float(np.abs(samples).max()),
                 )
-            chunks = _chunk_at_silence(samples, int(sample_rate))
             if len(chunks) > 1:
                 total_s = len(samples) / float(sample_rate)
                 log.info(

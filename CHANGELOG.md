@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.24.13] - 2026-05-16
+
+- transcribe: Parakeet long-recording chunking now starts looking for a natural pause around 25s, relaxes silence windows down to 100ms, and only hard-splits around 45s. Silence detection runs before Parakeet gain normalization and adapts to the local room-noise floor, preserving the tail of long recordings when pauses sit above the old fixed RMS threshold.
+
 ## [0.24.12] - 2026-05-16
 
 - audio: debug WAV dumps for stream-chunked recordings now write the original full recording once at final emit time. Previously streaming partials removed earlier samples from the live buffer, so the dump for a long recording contained only the final tail.
