@@ -29,10 +29,11 @@ class AudioConfig:
     # Segments shorter than this are dropped before transcription,
     # regex filters, and LLM cleanup.  Set to 0 to disable.
     skip_segments_below_seconds: float = 1.0
-    # When set, every emitted segment AND every VAD validation snapshot is
-    # written to this directory as a WAV file. Used for diagnosing missing
-    # words / empty transcriptions. Off by default — turn on only while
-    # debugging because it grows unboundedly.
+    # When set, every final recording and every VAD validation snapshot is
+    # written to this directory as a WAV file. Stream-chunked recordings are
+    # dumped as the original full recording, not as per-chunk tail buffers,
+    # so the file can be used to tune split settings. Off by default — turn
+    # on only while debugging because it grows unboundedly.
     debug_dump_dir: str | None = None
 
 

@@ -34,3 +34,27 @@ def test_emit_writes_wav(tmp_path):
         assert w.getframerate() == 16_000
         assert w.getnchannels() == 1
         assert w.getnframes() == 8000
+
+
+def test_emit_after_stream_split_dumps_full_recording(tmp_path):
+    emitted = []
+    engine = _make_engine(tmp_path)
+    engine.on_segment = emitted.append
+
+    engine._append(np.zeros(16_000, dtype=np.float32))
+    head = engine._split_buffer_at(10_000)
+    assert len(head) == 10_000
+
+    engine._append(np.zeros(8_000, dtype=np.float32))
+    engine._emit("manual")
+
+    assert len(emitted) == 1
+    assert len(emitted[0].samples) == 14_000
+
+    wav_files = list(tmp_path.glob("*.wav"))
+    assert len(wav_files) == 1, f"expected 1 WAV, got {wav_files}"
+
+    with wave.open(str(wav_files[0]), "rb") as w:
+        assert w.getframerate() == 16_000
+        assert w.getnchannels() == 1
+        assert w.getnframes() == 24_000

@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.24.12] - 2026-05-16
+
+- audio: debug WAV dumps for stream-chunked recordings now write the original full recording once at final emit time. Previously streaming partials removed earlier samples from the live buffer, so the dump for a long recording contained only the final tail.
+
 ## [0.24.11] - 2026-05-16
 
 - overlay: stream-chunk partial transcriptions now appear on a separate text line WITHOUT hiding the "recording…" state indicator. Previously the partial path called `push_detected_text` which is wired for finished results (hides state label, expands the LLM area); partials get their own `push_partial_text` that keeps the state indicator visible and the LLM area hidden until the final segment.

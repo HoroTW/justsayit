@@ -119,6 +119,7 @@ class AudioEngine:
         self._state = State.IDLE
         self._buffer: list[np.ndarray] = []
         self._buffer_samples = 0
+        self._debug_dump_buffer: list[np.ndarray] = []
         self._validation_deadline = 0.0
 
         self._q: queue.Queue[np.ndarray | None] = queue.Queue(maxsize=256)
@@ -375,6 +376,8 @@ class AudioEngine:
     def _append(self, samples: np.ndarray) -> None:
         self._buffer.append(samples)
         self._buffer_samples += len(samples)
+        if self.cfg.audio.debug_dump_dir is not None:
+            self._debug_dump_buffer.append(samples)
 
     def _flush(self) -> np.ndarray:
         if not self._buffer:
@@ -383,6 +386,39 @@ class AudioEngine:
         self._buffer.clear()
         self._buffer_samples = 0
         return out
+
+    def _flush_debug_dump_buffer(self) -> np.ndarray:
+        if not self._debug_dump_buffer:
+            return np.empty(0, dtype=np.float32)
+        out = np.concatenate(self._debug_dump_buffer)
+        self._debug_dump_buffer.clear()
+        return out
+
+    def _reset_debug_dump_buffer(self) -> None:
+        self._debug_dump_buffer.clear()
+
+    def _dump_debug_wav(
+        self,
+        samples: np.ndarray,
+        reason: str,
+        sample_rate: int,
+    ) -> None:
+        if self.cfg.audio.debug_dump_dir is None:
+            return
+        try:
+            dump_dir = Path(self.cfg.audio.debug_dump_dir).expanduser()
+            ts = (
+                datetime.datetime.now()
+                .isoformat(timespec="milliseconds")
+                .replace(":", "-")
+            )
+            dur_ms = int(len(samples) / sample_rate * 1000)
+            fname = f"{ts}_{reason}_{dur_ms}ms.wav"
+            path = dump_dir / fname
+            _write_wav(path, samples, sample_rate)
+            log.info("dumped %s audio to %s", reason, path)
+        except Exception:
+            log.exception("debug WAV dump failed")
 
     def _split_buffer_at(self, split_samples: int) -> np.ndarray:
         """Pop the first `split_samples` from the buffer; tail stays in self._buffer."""
@@ -445,16 +481,14 @@ class AudioEngine:
         )
         log.info("emitting segment: %.2fs reason=%s", secs, reason)
         if self.cfg.audio.debug_dump_dir is not None:
-            try:
-                dump_dir = Path(self.cfg.audio.debug_dump_dir).expanduser()
-                ts = datetime.datetime.now().isoformat(timespec="milliseconds").replace(":", "-")
-                dur_ms = int(len(samples) / self.cfg.audio.sample_rate * 1000)
-                fname = f"{ts}_{reason}_{dur_ms}ms.wav"
-                path = dump_dir / fname
-                _write_wav(path, samples, self.cfg.audio.sample_rate)
-                log.info("dumped segment audio to %s", path)
-            except Exception:
-                log.exception("debug WAV dump failed")
+            dump_samples = self._flush_debug_dump_buffer()
+            if len(dump_samples) == 0:
+                dump_samples = samples
+            self._dump_debug_wav(
+                dump_samples,
+                reason,
+                self.cfg.audio.sample_rate,
+            )
         try:
             self.on_segment(seg)
         except Exception:  # pragma: no cover
@@ -536,6 +570,7 @@ class AudioEngine:
                     except Exception:
                         pass
                 prev_speech = False
+                self._reset_debug_dump_buffer()
                 self._set_state(State.IDLE)
                 continue
 
@@ -572,16 +607,7 @@ class AudioEngine:
                         trigger,
                     )
                     if self.cfg.audio.debug_dump_dir is not None:
-                        try:
-                            dump_dir = Path(self.cfg.audio.debug_dump_dir).expanduser()
-                            ts = datetime.datetime.now().isoformat(timespec="milliseconds").replace(":", "-")
-                            dur_ms = int(len(snapshot) / sr * 1000)
-                            fname = f"{ts}_validation-{trigger}_{dur_ms}ms.wav"
-                            path = dump_dir / fname
-                            _write_wav(path, snapshot, sr)
-                            log.info("dumped validation audio to %s", path)
-                        except Exception:
-                            log.exception("debug WAV dump failed")
+                        self._dump_debug_wav(snapshot, f"validation-{trigger}", sr)
                     try:
                         ok = bool(self.validate_words(snapshot, sr))
                     except Exception:
@@ -599,6 +625,7 @@ class AudioEngine:
                             except Exception:
                                 pass
                         prev_speech = False
+                        self._reset_debug_dump_buffer()
                         self._set_state(State.IDLE)
                     elif speech_already_ended:
                         # Short utterance: the whole sentence is in the
