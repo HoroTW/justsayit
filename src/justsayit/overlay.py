@@ -191,6 +191,8 @@ _STATE_STYLE = {
 
 _DOT_RESULT = _DotColor(0.35, 0.85, 0.45)   # green during result / linger
 _DOT_ERROR = _DotColor(1.00, 0.78, 0.35)    # amber during error pill
+_CHUNK_PREVIEW_TEXT_COLOR = "#9aa3ad"
+_WORD_PREVIEW_TEXT_COLOR = "#6f7782"
 
 _SAFETY_MS = 30_000
 _LLM_WAITING_FRAMES = (
@@ -797,6 +799,35 @@ class OverlayWindow(Gtk.ApplicationWindow):
             priority=GLib.PRIORITY_DEFAULT,
         )
 
+    def push_word_preview_text(
+        self,
+        finalized_text: str,
+        chunk_preview_text: str,
+        word_preview_text: str,
+    ) -> None:
+        """Show very provisional word-preview text."""
+        GLib.idle_add(
+            self._apply_word_preview_text,
+            finalized_text,
+            chunk_preview_text,
+            word_preview_text,
+            priority=GLib.PRIORITY_DEFAULT,
+        )
+
+    def push_chunk_preview_text(self, committed_text: str, preview_text: str) -> None:
+        """Show the better rolling preview for the current ASR chunk."""
+        GLib.idle_add(
+            self._apply_chunk_preview_text, committed_text, preview_text,
+            priority=GLib.PRIORITY_DEFAULT,
+        )
+
+    def push_finalized_chunk_text(self, text: str) -> None:
+        """Show committed ASR chunk text while recording continues."""
+        GLib.idle_add(
+            self._apply_finalized_chunk_text, text,
+            priority=GLib.PRIORITY_DEFAULT,
+        )
+
     def push_detected_text(self, text: str, llm_pending: bool = False) -> None:
         """Show regex-filtered text in the top field.
 
@@ -1075,19 +1106,14 @@ class OverlayWindow(Gtk.ApplicationWindow):
             self.present()
         return False
 
-    def _apply_partial_text(self, text: str) -> bool:
-        """Show accumulated partial transcription. Keeps the state label
-        visible (still recording) and the LLM area hidden (no LLM has
-        been called yet). Mirror image of _apply_detected_text which
-        swaps in the final result and hides the state label."""
+    def _show_recording_text_area(self) -> None:
         self._cancel_safety()
         self._detected_label.set_can_focus(False)
         # Keep state label visible — still recording.
         self._state_label.set_visible(True)
-        self._detected_label.set_text(text)
         self._sep1.set_visible(True)
         self._detected_label.set_visible(True)
-        # No LLM running yet on partials.
+        # No LLM running yet on partials/previews.
         self._stop_llm_waiting_anim()
         self._sep2.set_visible(False)
         self._llm_label.set_visible(False)
@@ -1096,6 +1122,91 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._expand_window()
         if not self.get_visible():
             self.set_visible(True)
+
+    def _recording_text_markup(
+        self,
+        *,
+        finalized_text: str = "",
+        chunk_preview_text: str = "",
+        word_preview_text: str = "",
+    ) -> tuple[str, str]:
+        parts: list[str] = []
+        fallback_parts: list[str] = []
+
+        finalized = (finalized_text or "").strip()
+        if finalized:
+            parts.append(escape(finalized))
+            fallback_parts.append(finalized)
+
+        chunk_preview = (chunk_preview_text or "").strip()
+        if chunk_preview:
+            parts.append(
+                f'<span foreground="{_CHUNK_PREVIEW_TEXT_COLOR}">'
+                f"{escape(chunk_preview)}</span>"
+            )
+            fallback_parts.append(chunk_preview)
+
+        word_preview = (word_preview_text or "").strip()
+        if word_preview:
+            parts.append(
+                f'<span foreground="{_WORD_PREVIEW_TEXT_COLOR}">'
+                f"<u>{escape(word_preview)}</u></span>"
+            )
+            fallback_parts.append(word_preview)
+
+        return " ".join(parts), " ".join(fallback_parts)
+
+    def _apply_word_preview_text(
+        self,
+        finalized_text: str,
+        chunk_preview_text: str,
+        word_preview_text: str,
+    ) -> bool:
+        markup, fallback = self._recording_text_markup(
+            finalized_text=finalized_text,
+            chunk_preview_text=chunk_preview_text,
+            word_preview_text=word_preview_text,
+        )
+        if not fallback:
+            return False
+
+        self._detected_label.set_opacity(1.0)
+        _set_label_markup_safe(self._detected_label, markup, fallback)
+        self._show_recording_text_area()
+        return False
+
+    def _apply_chunk_preview_text(self, committed_text: str, preview_text: str) -> bool:
+        markup, fallback = self._recording_text_markup(
+            finalized_text=committed_text,
+            chunk_preview_text=preview_text,
+        )
+        if not fallback:
+            return False
+        self._detected_label.set_opacity(1.0)
+        _set_label_markup_safe(self._detected_label, markup, fallback)
+        self._show_recording_text_area()
+        return False
+
+    def _apply_finalized_chunk_text(self, text: str) -> bool:
+        if not (text or "").strip():
+            return False
+        self._detected_label.set_opacity(1.0)
+        self._detected_label.set_use_markup(False)
+        self._detected_label.set_text(text)
+        self._show_recording_text_area()
+        return False
+
+    def _apply_partial_text(self, text: str) -> bool:
+        """Show accumulated partial transcription. Keeps the state label
+        visible (still recording) and the LLM area hidden (no LLM has
+        been called yet). Mirror image of _apply_detected_text which
+        swaps in the final result and hides the state label."""
+        markup, fallback = self._recording_text_markup(chunk_preview_text=text)
+        if not fallback:
+            return False
+        self._detected_label.set_opacity(1.0)
+        _set_label_markup_safe(self._detected_label, markup, fallback)
+        self._show_recording_text_area()
         return False
 
     def _apply_detected_text(self, text: str, llm_pending: bool) -> bool:
@@ -1112,6 +1223,8 @@ class OverlayWindow(Gtk.ApplicationWindow):
 
         # Hide state label, show text fields above the bottom row.
         self._state_label.set_visible(False)
+        self._detected_label.set_opacity(1.0)
+        self._detected_label.set_use_markup(False)
         self._detected_label.set_text(text)
         self._sep1.set_visible(True)
         self._detected_label.set_visible(True)
@@ -1257,6 +1370,7 @@ class OverlayWindow(Gtk.ApplicationWindow):
 
         # Body: plain-text message in the detected label (no markup).
         self._detected_label.set_use_markup(False)
+        self._detected_label.set_opacity(1.0)
         self._detected_label.set_text(msg or "(unknown error)")
         self._sep1.set_visible(True)
         self._detected_label.set_visible(True)
@@ -1334,6 +1448,7 @@ class OverlayWindow(Gtk.ApplicationWindow):
     def _hide_text_areas(self) -> None:
         self._content_scroll.set_visible(False)
         self._sep1.set_visible(False)
+        self._detected_label.set_opacity(1.0)
         self._detected_label.set_visible(False)
         self._sep2.set_visible(False)
         self._llm_label.set_visible(False)

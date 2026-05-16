@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
-from justsayit.audio import AudioEngine
+from justsayit.audio import AudioEngine, State
 from justsayit.config import Config, AudioConfig
 
 
@@ -36,7 +36,7 @@ def test_emit_writes_wav(tmp_path):
         assert w.getnframes() == 8000
 
 
-def test_emit_after_stream_split_dumps_full_recording(tmp_path):
+def test_emit_after_stream_split_emits_tail_and_dumps_full_recording(tmp_path):
     emitted = []
     engine = _make_engine(tmp_path)
     engine.on_segment = emitted.append
@@ -58,3 +58,69 @@ def test_emit_after_stream_split_dumps_full_recording(tmp_path):
         assert w.getframerate() == 16_000
         assert w.getnchannels() == 1
         assert w.getnframes() == 24_000
+
+
+def test_stream_preview_splits_on_250ms_pause_and_final_emits_tail(tmp_path):
+    emitted = []
+    engine = _make_engine(tmp_path)
+    engine.on_segment = emitted.append
+    engine._state = State.MANUAL
+
+    sr = engine.cfg.audio.sample_rate
+    speech_a = np.full(int(4.0 * sr), 0.1, dtype=np.float32)
+    pause = np.zeros(int(0.25 * sr), dtype=np.float32)
+    speech_b = np.full(int(3.0 * sr), 0.1, dtype=np.float32)
+    samples = np.concatenate([speech_a, pause, speech_b])
+
+    engine._append(samples)
+    engine._maybe_emit_stream_chunk(sr)
+
+    assert len(emitted) == 1
+    assert not emitted[0].is_final
+    assert emitted[0].reason == "stream-chunk"
+    assert len(emitted[0].samples) == pytest.approx(int(4.125 * sr), abs=int(0.15 * sr))
+
+    engine._emit("manual")
+
+    assert len(emitted) == 2
+    assert emitted[1].is_final
+    assert len(emitted[1].samples) == len(samples) - len(emitted[0].samples)
+
+
+def test_stream_preview_force_splits_without_silence_and_final_emits_tail(tmp_path):
+    emitted = []
+    engine = _make_engine(tmp_path)
+    engine.on_segment = emitted.append
+    engine._state = State.MANUAL
+
+    sr = engine.cfg.audio.sample_rate
+    samples = np.full(int(5.0 * sr), 0.1, dtype=np.float32)
+
+    engine._append(samples)
+    engine._maybe_emit_stream_chunk(sr)
+
+    assert len(emitted) == 1
+    assert not emitted[0].is_final
+    assert len(emitted[0].samples) == pytest.approx(int(1.2 * sr))
+
+    engine._emit("manual")
+
+    assert len(emitted) == 2
+    assert emitted[1].is_final
+    assert len(emitted[1].samples) == pytest.approx(int(3.8 * sr))
+
+
+def test_stream_preview_drops_silence_only_chunks(tmp_path):
+    emitted = []
+    engine = _make_engine(tmp_path)
+    engine.on_segment = emitted.append
+    engine._state = State.MANUAL
+
+    sr = engine.cfg.audio.sample_rate
+    samples = np.zeros(int(3.25 * sr), dtype=np.float32)
+
+    engine._append(samples)
+    engine._maybe_emit_stream_chunk(sr)
+
+    assert emitted == []
+    assert engine._buffer_samples < int(0.5 * sr)

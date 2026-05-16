@@ -36,6 +36,10 @@ class TranscriberBase:
         """Synchronous single-shot transcription. Returns stripped text."""
         raise NotImplementedError
 
+    def transcribe_preview(self, samples: np.ndarray, sample_rate: int) -> str:
+        """Lower-latency provisional transcription. Backends may override."""
+        return self.transcribe(samples, sample_rate)
+
     def has_words(self, samples: np.ndarray, sample_rate: int) -> bool:
         """Validation hook: True iff transcription produced ≥1 word token."""
         if len(samples) == 0:

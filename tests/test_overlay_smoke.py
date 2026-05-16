@@ -91,6 +91,9 @@ def test_overlay_methods_exist():
         "push_level",
         "push_detected_text",
         "push_partial_text",
+        "push_word_preview_text",
+        "push_chunk_preview_text",
+        "push_finalized_chunk_text",
         "push_llm_text",
         "push_tool_call",
         "push_linger_start",
@@ -106,3 +109,50 @@ def test_overlay_methods_exist():
         assert callable(getattr(overlay, name, None)), (
             f"OverlayWindow.{name} missing or not callable"
         )
+
+
+def test_partial_text_uses_uncertain_opacity_until_final_result():
+    overlay = _construct_overlay()
+    assert isinstance(overlay, OverlayWindow), overlay
+
+    overlay._apply_partial_text("rough preview")
+    assert overlay._detected_label.get_opacity() == 1.0
+    assert overlay._detected_label.get_use_markup()
+
+    overlay._apply_detected_text("final text", llm_pending=False)
+    assert overlay._detected_label.get_opacity() == 1.0
+    assert not overlay._detected_label.get_use_markup()
+
+
+def test_word_preview_is_more_uncertain_and_underlined():
+    overlay = _construct_overlay()
+    assert isinstance(overlay, OverlayWindow), overlay
+
+    overlay._apply_word_preview_text("finalized", "better chunk", "rough word")
+    assert overlay._detected_label.get_opacity() == 1.0
+    assert overlay._detected_label.get_use_markup()
+    markup = overlay._detected_label.get_label()
+    assert "finalized" in markup
+    assert markup.startswith("finalized ")
+    assert "better chunk" in markup
+    assert "rough word" in markup
+    assert "foreground=\"#9aa3ad\"" in markup
+    assert "foreground=\"#6f7782\"" in markup
+    assert "<u>rough word</u>" in markup
+
+    overlay._apply_chunk_preview_text("finalized", "better current chunk")
+    assert overlay._detected_label.get_opacity() == 1.0
+    assert overlay._detected_label.get_use_markup()
+    markup = overlay._detected_label.get_label()
+    assert "finalized" in markup
+    assert markup.startswith("finalized ")
+    assert "better current chunk" in markup
+    assert "foreground=\"#9aa3ad\"" in markup
+    assert "foreground=\"#6f7782\"" not in markup
+
+    overlay._apply_finalized_chunk_text("committed finalized chunk")
+    assert overlay._detected_label.get_opacity() == 1.0
+    assert not overlay._detected_label.get_use_markup()
+
+    overlay._apply_detected_text("final text", llm_pending=False)
+    assert overlay._detected_label.get_opacity() == 1.0

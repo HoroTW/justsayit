@@ -7,6 +7,8 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
+import numpy as np
+
 from justsayit.filters import apply_filters
 
 if TYPE_CHECKING:
@@ -19,6 +21,22 @@ if TYPE_CHECKING:
     from justsayit.tools import ToolDefinition
 
 log = logging.getLogger(__name__)
+
+_CHUNK_PREVIEW_MIN_SECONDS = 3.0
+_CHUNK_PREVIEW_INTERVAL_SECONDS = 3.0
+_FINALIZE_MIN_TAIL_SECONDS = 8.0
+
+
+def _lowercase_preview_start(text: str) -> str:
+    """Preview snippets do not know whether they start a sentence.
+
+    If the first two characters look like a normal capitalized word, make the
+    first character lowercase. Preserve acronyms such as "PDF" where the next
+    character is uppercase.
+    """
+    if len(text) < 2 or not text[1].islower():
+        return text
+    return text[0].lower() + text[1:]
 
 
 def _session_path() -> Path:
@@ -77,6 +95,12 @@ class SegmentPipeline:
         self._last_detected_text: str | None = None
         self.last_was_assistant_mode: bool = False
         self._partial_raws: list[str] = []
+        self._stream_final_raws: list[str] = []
+        self._stream_pending_audio: list[np.ndarray] = []
+        self._stream_pending_samples = 0
+        self._stream_sample_rate: int | None = None
+        self._stream_chunk_preview_raw = ""
+        self._stream_chunk_preview_samples = 0
 
     def _build_retry_cb(self, seg: "Segment") -> Callable[[], None] | None:
         if self.enqueue_segment is None:
@@ -104,12 +128,122 @@ class SegmentPipeline:
         if self._partial_raws:
             log.info("clearing %d accumulated stream-chunk transcriptions", len(self._partial_raws))
             self._partial_raws.clear()
+        self._clear_stream_final_state()
+
+    def _clear_stream_final_state(self) -> None:
+        self._stream_final_raws.clear()
+        self._stream_pending_audio.clear()
+        self._stream_pending_samples = 0
+        self._stream_sample_rate = None
+        self._stream_chunk_preview_raw = ""
+        self._stream_chunk_preview_samples = 0
+
+    def _append_stream_audio(self, samples: np.ndarray, sample_rate: int) -> None:
+        if len(samples) == 0:
+            return
+        if self._stream_sample_rate is None:
+            self._stream_sample_rate = int(sample_rate)
+        elif self._stream_sample_rate != int(sample_rate):
+            log.warning(
+                "stream sample rate changed from %s to %s; clearing incremental ASR state",
+                self._stream_sample_rate,
+                sample_rate,
+            )
+            self._clear_stream_final_state()
+            self._stream_sample_rate = int(sample_rate)
+        self._stream_pending_audio.append(samples)
+        self._stream_pending_samples += len(samples)
+
+    def _pop_stream_pending(self, n_samples: int) -> np.ndarray:
+        all_samples = np.concatenate(self._stream_pending_audio)
+        head = all_samples[:n_samples]
+        tail = all_samples[n_samples:]
+        self._stream_pending_audio = [tail] if len(tail) else []
+        self._stream_pending_samples = len(tail)
+        return head
+
+    def _finalize_stream_ready_chunks(self, sample_rate: int) -> None:
+        """Transcribe completed quality chunks while recording continues.
+
+        Low-latency stream chunks are only a preview. This method keeps a
+        separate pending audio buffer and finalizes all but the last smart
+        Parakeet chunk, so stop only has to process the remaining tail.
+        """
+        if self._stream_pending_samples == 0:
+            return
+        from justsayit.transcribe_parakeet import _chunk_at_silence
+
+        while self._stream_pending_samples > 0:
+            pending = np.concatenate(self._stream_pending_audio)
+            chunks = _chunk_at_silence(pending, int(sample_rate))
+            if len(chunks) <= 1:
+                return
+
+            start, end = chunks[0]
+            if start != 0:
+                log.warning("unexpected non-contiguous stream chunk start=%d", start)
+                return
+            if self._stream_pending_samples - end < int(_FINALIZE_MIN_TAIL_SECONDS * sample_rate):
+                return
+            chunk = pending[:end]
+            duration = len(chunk) / float(sample_rate)
+            log.info("transcribing finalized stream chunk %.2fs", duration)
+            t0 = time.monotonic()
+            try:
+                raw = self.transcriber.transcribe(chunk, sample_rate).strip()
+            except Exception:
+                log.exception("finalized stream chunk transcription failed; keeping audio for final tail")
+                return
+            dt = time.monotonic() - t0
+            log.info("finalized stream chunk done in %.2fs: raw=%r", dt, raw)
+            self._pop_stream_pending(end)
+            if raw:
+                self._stream_final_raws.append(raw)
+                self._partial_raws.clear()
+                self._stream_chunk_preview_raw = ""
+                self._stream_chunk_preview_samples = 0
+                if self.overlay is not None:
+                    self.overlay.push_finalized_chunk_text(" ".join(self._stream_final_raws).strip())
+
+    def _update_stream_chunk_preview(self, sample_rate: int) -> None:
+        if self.overlay is None:
+            return
+        if self._stream_pending_samples == 0:
+            return
+        min_samples = int(_CHUNK_PREVIEW_MIN_SECONDS * sample_rate)
+        interval_samples = int(_CHUNK_PREVIEW_INTERVAL_SECONDS * sample_rate)
+        if self._stream_pending_samples < min_samples:
+            return
+        if self._stream_pending_samples - self._stream_chunk_preview_samples < interval_samples:
+            return
+
+        pending = np.concatenate(self._stream_pending_audio)
+        duration = len(pending) / float(sample_rate)
+        log.info("transcribing rolling stream chunk preview %.2fs", duration)
+        t0 = time.monotonic()
+        try:
+            raw = self.transcriber.transcribe(pending, sample_rate).strip()
+        except Exception:
+            log.exception("rolling stream chunk preview failed")
+            return
+        dt = time.monotonic() - t0
+        log.info("rolling stream chunk preview done in %.2fs: raw=%r", dt, raw)
+        self._stream_chunk_preview_samples = self._stream_pending_samples
+        self._stream_chunk_preview_raw = _lowercase_preview_start(raw)
+        self._partial_raws.clear()
+        if self._stream_chunk_preview_raw and self.overlay is not None:
+            self.overlay.push_chunk_preview_text(
+                " ".join(self._stream_final_raws).strip(),
+                self._stream_chunk_preview_raw,
+            )
 
     def handle(self, seg: "Segment", *, consume_clipboard_fn=None, is_continue: bool = False) -> None:
         """Process one audio segment end-to-end."""
         from justsayit.paste import PasteError
 
-        # Partial stream-chunks: transcribe only, accumulate raw text, no paste.
+        # Partial stream-chunks: transcribe for preview, and separately
+        # finalize longer quality chunks while recording continues. The
+        # final stop only transcribes the remaining tail.
         if not seg.is_final:
             duration = len(seg.samples) / seg.sample_rate
             min_duration = self.cfg.audio.skip_segments_below_seconds
@@ -119,24 +253,30 @@ class SegmentPipeline:
                     duration, min_duration,
                 )
                 return
+            self._append_stream_audio(seg.samples, seg.sample_rate)
             log.info("transcribing partial %.2fs (reason=%s)", duration, seg.reason)
             t0 = time.monotonic()
             try:
-                raw = self.transcriber.transcribe(seg.samples, seg.sample_rate)
+                raw = self.transcriber.transcribe_preview(seg.samples, seg.sample_rate)
             except Exception as exc:
                 log.exception("partial transcription failed; skipping chunk")
-                return
-            dt = time.monotonic() - t0
-            log.info("partial transcription done in %.2fs: raw=%r", dt, raw)
+                raw = ""
+                dt = time.monotonic() - t0
+            else:
+                dt = time.monotonic() - t0
+                log.info("partial transcription done in %.2fs: raw=%r", dt, raw)
             if raw:
-                self._partial_raws.append(raw)
+                self._partial_raws.append(_lowercase_preview_start(raw.strip()))
             if self.overlay is not None:
-                accumulated = " ".join(self._partial_raws).strip()
-                if accumulated:
-                    # Partial path: keep the "recording…" indicator visible
-                    # and don't show the LLM placeholder (the LLM only runs
-                    # on the final segment).
-                    self.overlay.push_partial_text(accumulated)
+                preview = " ".join(self._partial_raws).strip()
+                if preview:
+                    self.overlay.push_word_preview_text(
+                        " ".join(self._stream_final_raws).strip(),
+                        self._stream_chunk_preview_raw,
+                        preview,
+                    )
+            self._finalize_stream_ready_chunks(seg.sample_rate)
+            self._update_stream_chunk_preview(seg.sample_rate)
             return
 
         if not is_continue:
@@ -145,37 +285,53 @@ class SegmentPipeline:
         assert self.transcriber is not None
         duration = len(seg.samples) / seg.sample_rate
         min_duration = self.cfg.audio.skip_segments_below_seconds
+        had_stream_audio = bool(self._stream_final_raws or self._stream_pending_audio)
+        self._append_stream_audio(seg.samples, seg.sample_rate)
 
-        # Duration skip: apply only when there are no accumulated partials —
-        # if we have partials, we always want to transcribe and emit the combined
-        # text even when the final tail segment is short.
-        if not self._partial_raws and min_duration > 0 and duration < min_duration:
+        if not had_stream_audio and min_duration > 0 and duration < min_duration:
             log.info(
                 "skipping short segment: %.2fs < %.2fs (reason=%s)",
                 duration,
                 min_duration,
                 seg.reason,
             )
+            self._partial_raws.clear()
+            self._clear_stream_final_state()
             if self.overlay is not None:
                 self.overlay.push_hide()
             return
 
-        # Transcribe the final segment first, then combine with accumulated partials.
-        log.info("transcribing %.2fs (reason=%s)", duration, seg.reason)
+        pending_samples = (
+            np.concatenate(self._stream_pending_audio)
+            if self._stream_pending_audio
+            else np.empty(0, dtype=np.float32)
+        )
+        pending_duration = len(pending_samples) / seg.sample_rate
+        log.info(
+            "transcribing final tail %.2fs (reason=%s, finalized_chunks=%d)",
+            pending_duration,
+            seg.reason,
+            len(self._stream_final_raws),
+        )
         t0 = time.monotonic()
         try:
-            final_raw = self.transcriber.transcribe(seg.samples, seg.sample_rate)
+            final_raw = (
+                self.transcriber.transcribe(pending_samples, seg.sample_rate).strip()
+                if len(pending_samples)
+                else ""
+            )
         except Exception as exc:
             log.exception("transcription failed")
             self._partial_raws.clear()
+            self._clear_stream_final_state()
             self._emit_error("transcribe", exc, seg)
             return
         dt = time.monotonic() - t0
-        log.info("transcription done in %.2fs: raw=%r", dt, final_raw)
+        log.info("final tail transcription done in %.2fs: raw=%r", dt, final_raw)
 
-        # Combine accumulated partials with this final segment's transcription.
-        raw = " ".join([*self._partial_raws, final_raw]).strip() if self._partial_raws else final_raw
+        raw = " ".join([*self._stream_final_raws, final_raw]).strip()
         self._partial_raws.clear()
+        self._clear_stream_final_state()
 
         if not raw:
             log.info("empty transcription; nothing to paste")

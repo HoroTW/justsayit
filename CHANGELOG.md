@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.24.14] - 2026-05-16
+
+- audio,pipeline,overlay: stream-chunk transcriptions are now preview-only. Word-preview chunks emit around every 1.2s, split on 250ms silence when available, drop silence-only preview chunks, use more aggressive preview-only silence cleanup, and render underlined in a darker preview color to show uncertainty. Preview snippets lowercase a leading sentence-style capital while preserving acronyms such as `PDF`, because previews do not know sentence boundaries yet. The current unfinalized ASR chunk is periodically reprocessed as a better rolling preview, and completed ASR-quality chunks become solid finalized text while recording continues. Chunk finalization waits for trailing context so moving silence boundaries do not commit sentence breaks too early. Stop only transcribes the remaining tail and then replaces the preview text before filters, LLM, and paste.
+- transcribe: Parakeet final chunking now picks the quietest valid pause in the scan window, relaxes down to 100ms pauses when longer pauses would leave a tiny tail, and keeps a small context pad after trimming leading/trailing silence.
+- tests: add Parakeet fixtures for mid-sentence preview artifacts, noisy pause chunking, long continuous-ish dictation, clipped mic input, variable gain/noise-floor input, awkward continuous-speech boundaries, a long-pause preview hallucination regression, and a real German chunk-boundary sentence-break regression. The burn suite also tracks preview+final ASR speed.
+
 ## [0.24.13] - 2026-05-16
 
 - transcribe: Parakeet long-recording chunking now starts looking for a natural pause around 25s, relaxes silence windows down to 100ms, and only hard-splits around 45s. Silence detection runs before Parakeet gain normalization and adapts to the local room-noise floor, preserving the tail of long recordings when pauses sit above the old fixed RMS threshold.

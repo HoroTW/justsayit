@@ -14,7 +14,7 @@ import pytest
 
 from justsayit.audio import Segment
 from justsayit.config import Config
-from justsayit.pipeline import SegmentPipeline
+from justsayit.pipeline import SegmentPipeline, _lowercase_preview_start
 from justsayit.postprocess import ProcessResult
 from justsayit.transcribe import TranscriberBase
 
@@ -50,6 +50,9 @@ class _StubOverlay:
         self.hide_calls = 0
         self.detected = []
         self.partials: list[str] = []
+        self.word_previews: list[tuple[str, str, str]] = []
+        self.chunk_previews: list[tuple[str, str]] = []
+        self.finalized_chunks: list[str] = []
         self.llm = []
         self.linger_calls = 0
         self.clip_armed_calls: list[bool] = []
@@ -63,6 +66,20 @@ class _StubOverlay:
 
     def push_partial_text(self, text: str) -> None:
         self.partials.append(text)
+
+    def push_word_preview_text(
+        self,
+        finalized_text: str,
+        chunk_preview_text: str,
+        word_preview_text: str,
+    ) -> None:
+        self.word_previews.append((finalized_text, chunk_preview_text, word_preview_text))
+
+    def push_chunk_preview_text(self, committed_text: str, preview_text: str) -> None:
+        self.chunk_previews.append((committed_text, preview_text))
+
+    def push_finalized_chunk_text(self, text: str) -> None:
+        self.finalized_chunks.append(text)
 
     def push_llm_text(self, text: str, thought: str = "") -> None:
         self.llm.append((text, thought))
@@ -548,7 +565,7 @@ def test_pipeline_llm_failure_also_emits_on_error(capsys):
 
 
 # ---------------------------------------------------------------------------
-# Streaming partial-chunk accumulation
+# Streaming partial previews
 # ---------------------------------------------------------------------------
 
 
@@ -565,6 +582,32 @@ class _SequenceTranscriber(TranscriberBase):
             self._idx += 1
             return text
         return ""
+
+
+class _RecordingSequenceTranscriber(_SequenceTranscriber):
+    def __init__(self, texts: list[str]) -> None:
+        super().__init__(texts)
+        self.durations: list[float] = []
+
+    def transcribe(self, samples: np.ndarray, sample_rate: int) -> str:
+        self.durations.append(len(samples) / float(sample_rate))
+        return super().transcribe(samples, sample_rate)
+
+
+class _DurationLabelTranscriber(TranscriberBase):
+    def __init__(self) -> None:
+        self.durations: list[float] = []
+        self.finalized_count = 0
+
+    def transcribe(self, samples: np.ndarray, sample_rate: int) -> str:
+        duration = len(samples) / float(sample_rate)
+        self.durations.append(duration)
+        if duration <= 4.0:
+            return "rough preview"
+        if 20.0 <= duration <= 30.0:
+            self.finalized_count += 1
+            return f"finalized {self.finalized_count}"
+        return "tail"
 
 
 def _make_partial_seg(duration_s: float = 22.5) -> Segment:
@@ -585,30 +628,171 @@ def _make_pipeline(texts: list[str]) -> "SegmentPipeline":
     )
 
 
-def test_streaming_partials_accumulate_and_paste_combined(capsys):
-    """Two partial chunks + a final segment: paste sees concatenated raw text."""
-    pipe = _make_pipeline(["first", "second", "final"])
+def _make_pipeline_with_transcriber(transcriber: TranscriberBase) -> "SegmentPipeline":
+    from justsayit.pipeline import SegmentPipeline
+    cfg = Config()
+    return SegmentPipeline(
+        cfg,
+        transcriber,
+        filters=[],
+        paster=None,
+        no_paste=True,
+    )
 
-    pipe.handle(_make_partial_seg(), is_continue=False)
-    pipe.handle(_make_partial_seg(), is_continue=False)
+
+def test_streaming_partials_are_replaced_by_final_transcription(capsys):
+    """Preview chunks update the UI, but final paste uses the final ASR pass."""
+    pipe = _make_pipeline(["rough first", "rough second", "final corrected"])
+
+    pipe.handle(_make_partial_seg(5.0), is_continue=False)
+    pipe.handle(_make_partial_seg(5.0), is_continue=False)
     pipe.handle(_make_seg(), is_continue=False)  # is_final=True by default
 
     out = capsys.readouterr().out.strip()
-    assert out == "first second final"
+    assert out == "final corrected"
     assert pipe._partial_raws == []
+
+
+def test_mid_sentence_preview_artifacts_do_not_reach_final_text(capsys):
+    """Partial ASR can invent sentence boundaries; final text must replace it."""
+    pipe = _make_pipeline([
+        "Please send this message.",
+        "To the home channel.",
+        "Please send this message to the home channel.",
+    ])
+
+    pipe.handle(_make_partial_seg(5.0), is_continue=False)
+    pipe.handle(_make_partial_seg(5.0), is_continue=False)
+    pipe.handle(_make_seg(), is_continue=False)
+
+    out = capsys.readouterr().out.strip()
+    assert out == "Please send this message to the home channel."
+    assert "message. To" not in out
+
+
+def test_preview_text_starts_lowercase_when_it_looks_like_a_word():
+    assert _lowercase_preview_start("Weil ja") == "weil ja"
+    assert _lowercase_preview_start("Ärgerlich") == "ärgerlich"
+    assert _lowercase_preview_start("PDF export") == "PDF export"
+    assert _lowercase_preview_start("I/O") == "I/O"
+
+
+def test_streaming_word_and_chunk_previews_start_lowercase():
+    pipe = _make_pipeline([
+        "Weil ja",
+        "Maybe this is better",
+        "Final output",
+    ])
+    overlay = _StubOverlay()
+    pipe.overlay = overlay
+
+    pipe.handle(_make_partial_seg(5.0), is_continue=False)
+    pipe.handle(_make_partial_seg(5.0), is_continue=False)
+
+    assert overlay.word_previews[0][2] == "weil ja"
+    assert overlay.chunk_previews[0][1] == "maybe this is better"
+
+
+def test_preview_start_lowercase_keeps_acronyms_uppercase():
+    pipe = _make_pipeline(["PDF", "PDF export preview", "Final output"])
+    overlay = _StubOverlay()
+    pipe.overlay = overlay
+
+    pipe.handle(_make_partial_seg(5.0), is_continue=False)
+    pipe.handle(_make_partial_seg(5.0), is_continue=False)
+
+    assert overlay.word_previews[0][2] == "PDF"
+    assert overlay.chunk_previews[0][1] == "PDF export preview"
+
+
+def test_streaming_word_preview_is_replaced_by_quality_chunk_preview():
+    transcriber = _DurationLabelTranscriber()
+    pipe = _make_pipeline_with_transcriber(transcriber)
+    overlay = _StubOverlay()
+    pipe.overlay = overlay
+
+    for _ in range(11):
+        pipe.handle(_make_partial_seg(3.0), is_continue=False)
+
+    assert overlay.word_previews
+    assert overlay.chunk_previews
+    assert overlay.finalized_chunks[-1].startswith("finalized")
+
+
+def test_streaming_finalization_waits_for_stable_tail_context():
+    transcriber = _DurationLabelTranscriber()
+    pipe = _make_pipeline_with_transcriber(transcriber)
+    overlay = _StubOverlay()
+    pipe.overlay = overlay
+
+    for _ in range(10):
+        pipe.handle(_make_partial_seg(3.0), is_continue=False)
+
+    assert not overlay.finalized_chunks
+
+    pipe.handle(_make_partial_seg(3.0), is_continue=False)
+
+    assert overlay.finalized_chunks[-1].startswith("finalized")
+
+
+def test_word_preview_keeps_rolling_chunk_preview_as_committed_text():
+    transcriber = _DurationLabelTranscriber()
+    pipe = _make_pipeline_with_transcriber(transcriber)
+    overlay = _StubOverlay()
+    pipe.overlay = overlay
+
+    for _ in range(7):
+        pipe.handle(_make_partial_seg(3.0), is_continue=False)
+    assert overlay.chunk_previews[-1][1] == "finalized 1"
+
+    pipe.handle(_make_partial_seg(3.0), is_continue=False)
+
+    assert overlay.word_previews[-1][0] == ""
+    assert overlay.word_previews[-1][1] == "finalized 1"
+    assert overlay.word_previews[-1][2] == "rough preview"
+
+
+def test_streaming_final_stop_transcribes_only_tail_after_finalized_chunks(capsys):
+    transcriber = _DurationLabelTranscriber()
+    pipe = _make_pipeline_with_transcriber(transcriber)
+
+    for _ in range(11):
+        pipe.handle(_make_partial_seg(3.0), is_continue=False)
+    pipe.handle(_make_seg(duration_s=2.0), is_continue=False)
+
+    out = capsys.readouterr().out.strip()
+    assert out == "finalized 1 tail"
+    assert len(transcriber.durations) == 13
+    assert sum(1 for d in transcriber.durations if d == pytest.approx(3.0)) == 11
+    assert sum(1 for d in transcriber.durations if 20.0 <= d <= 30.0) == 1
+    assert transcriber.durations[-1] <= 10.0
+
+
+def test_streaming_finalizer_drains_multiple_ready_chunks_before_stop(capsys):
+    transcriber = _DurationLabelTranscriber()
+    pipe = _make_pipeline_with_transcriber(transcriber)
+
+    pipe.handle(_make_partial_seg(60.0), is_continue=False)
+    pipe.handle(_make_seg(duration_s=2.0), is_continue=False)
+
+    out = capsys.readouterr().out.strip()
+    assert out == "finalized 1 finalized 2 tail"
+    assert len(transcriber.durations) == 4
+    assert transcriber.durations[0] == pytest.approx(60.0)
+    assert 20.0 <= transcriber.durations[1] <= 30.0
+    assert 20.0 <= transcriber.durations[2] <= 30.0
+    assert transcriber.durations[3] <= 12.0
 
 
 def test_clear_partials_prevents_leaking_into_next_final(capsys):
     """After clear_partials(), the next final segment gets only its own text."""
     pipe = _make_pipeline(["leaked1", "leaked2", "alone"])
 
-    pipe.handle(_make_partial_seg(), is_continue=False)
-    pipe.handle(_make_partial_seg(), is_continue=False)
+    pipe.handle(_make_partial_seg(5.0), is_continue=False)
+    pipe.handle(_make_partial_seg(5.0), is_continue=False)
     pipe.clear_partials()
     pipe.handle(_make_seg(), is_continue=False)
 
     out = capsys.readouterr().out.strip()
     assert out == "alone"
     assert pipe._partial_raws == []
-
-

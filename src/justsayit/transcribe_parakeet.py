@@ -29,6 +29,8 @@ _CHUNK_SILENCE_RMS_CAP = 0.020   # don't treat quiet speech as a split point
 _CHUNK_SILENCE_NOISE_MULT = 1.35 # allow pauses above the absolute floor
 _CHUNK_SILENCE_WINDOW_MS = (250, 200, 150, 100)
 _CHUNK_TARGET_LOOKBACK_SECONDS = 2.0
+_PREVIEW_TRIM_MIN_KEEP_SECONDS = 0.3
+_PREVIEW_MAX_INTERNAL_SILENCE_SECONDS = 0.8
 
 
 def _adaptive_silence_rms(window_rms: list[float]) -> float:
@@ -47,11 +49,15 @@ def _find_silence_split(
     scan_start: int,
     scan_end: int,
     sample_rate: int,
+    preferred_after: int | None = None,
+    max_split: int | None = None,
 ) -> int | None:
-    """Return the first silence split in ``[scan_start, scan_end]``.
+    """Return the best silence split in ``[scan_start, scan_end]``.
 
     The search starts with conservative 250-ms pauses and relaxes down to
-    100-ms pauses before the caller falls back to a hard split.
+    100-ms pauses before the caller falls back to a hard split. Within the
+    first usable pause window size, pick the quietest valid point. This avoids
+    blindly choosing a late tail silence when it would leave a tiny final chunk.
     """
     for window_ms in _CHUNK_SILENCE_WINDOW_MS:
         win = max(1, int(window_ms / 1000.0 * sample_rate))
@@ -74,9 +80,21 @@ def _find_silence_split(
         # but cap it so low-energy speech is not treated as silence.
         silence_rms = _adaptive_silence_rms([rms for _, rms in rms_windows])
 
-        for mid, rms in rms_windows:
-            if rms < silence_rms:
-                return mid
+        candidates = [
+            (mid, rms)
+            for mid, rms in rms_windows
+            if rms < silence_rms and (max_split is None or mid <= max_split)
+        ]
+        if not candidates:
+            continue
+
+        return min(
+            candidates,
+            key=lambda candidate: (
+                candidate[1],
+                abs(candidate[0] - preferred_after) if preferred_after is not None else 0,
+            ),
+        )[0]
 
     return None
 
@@ -109,7 +127,14 @@ def _chunk_at_silence(samples: np.ndarray, sample_rate: int) -> list[tuple[int, 
         scan_start = start + max(min_samples, target_samples - target_lookback_samples)
         scan_end = min(n, start + force_samples)
 
-        split = _find_silence_split(samples, scan_start, scan_end, sample_rate)
+        split = _find_silence_split(
+            samples,
+            scan_start,
+            scan_end,
+            sample_rate,
+            preferred_after=start + target_samples,
+            max_split=n - min_samples,
+        )
         if split is not None:
             split = max(start + min_samples, min(split, scan_end))
         elif remaining > force_samples:
@@ -130,6 +155,7 @@ def _trim_silence(
     threshold_rms: float,
     min_keep_seconds: float,
     window_ms: int = 50,
+    pad_ms: int = 100,
 ) -> tuple[np.ndarray, float, float]:
     """Strip leading/trailing 50-ms windows whose RMS is below threshold.
 
@@ -153,7 +179,62 @@ def _trim_silence(
     kept_seconds = (end - start) / float(sample_rate)
     if kept_seconds < min_keep_seconds:
         return samples, 0.0, 0.0
+    pad = max(0, int(pad_ms / 1000.0 * sample_rate))
+    if pad:
+        start = max(0, start - pad)
+        end = min(n, end + pad)
     return samples[start:end], start / float(sample_rate), (n - end) / float(sample_rate)
+
+
+def _compress_internal_silence(
+    samples: np.ndarray,
+    sample_rate: int,
+    threshold_rms: float,
+    max_silence_seconds: float,
+    window_ms: int = 50,
+) -> tuple[np.ndarray, float]:
+    """Cap long low-energy runs and return (samples, seconds_removed)."""
+    if threshold_rms <= 0.0 or max_silence_seconds <= 0.0:
+        return samples, 0.0
+    win = max(1, int(window_ms / 1000.0 * sample_rate))
+    max_silence_samples = max(win, int(max_silence_seconds * sample_rate))
+    n = len(samples)
+    if n <= max_silence_samples:
+        return samples, 0.0
+
+    chunks: list[np.ndarray] = []
+    removed = 0
+    pos = 0
+    while pos < n:
+        end = min(n, pos + win)
+        window = samples[pos:end]
+        rms = float(np.sqrt(np.mean(np.square(window, dtype=np.float64))))
+        if rms >= threshold_rms:
+            chunks.append(window)
+            pos = end
+            continue
+
+        run_start = pos
+        while pos < n:
+            end = min(n, pos + win)
+            window = samples[pos:end]
+            rms = float(np.sqrt(np.mean(np.square(window, dtype=np.float64))))
+            if rms >= threshold_rms:
+                break
+            pos = end
+
+        run = samples[run_start:pos]
+        if len(run) > max_silence_samples:
+            left = max_silence_samples // 2
+            right = max_silence_samples - left
+            chunks.append(np.concatenate([run[:left], run[-right:]]))
+            removed += len(run) - max_silence_samples
+        else:
+            chunks.append(run)
+
+    if removed <= 0:
+        return samples, 0.0
+    return np.concatenate(chunks).astype(np.float32, copy=False), removed / float(sample_rate)
 
 
 def _normalize(samples: np.ndarray, preset: str) -> tuple[np.ndarray, float]:
@@ -216,47 +297,85 @@ class ParakeetTranscriber(TranscriberBase):
             stream.accept_waveform(sr, dummy)
             self._recog.decode_stream(stream)
 
+    def _transcribe_locked(
+        self,
+        samples: np.ndarray,
+        sample_rate: int,
+        *,
+        trim_min_keep_seconds: float,
+        max_internal_silence_seconds: float = 0.0,
+    ) -> str:
+        samples, head_s, tail_s = _trim_silence(
+            samples,
+            int(sample_rate),
+            self.cfg.model.parakeet_trim_silence_rms,
+            trim_min_keep_seconds,
+        )
+        if head_s > 0.0 or tail_s > 0.0:
+            log.info(
+                "parakeet trim-silence: cut %.2fs head + %.2fs tail (kept %.2fs)",
+                head_s, tail_s, len(samples) / float(sample_rate),
+            )
+        if max_internal_silence_seconds > 0.0:
+            samples, silence_removed_s = _compress_internal_silence(
+                samples,
+                int(sample_rate),
+                self.cfg.model.parakeet_trim_silence_rms,
+                max_internal_silence_seconds,
+            )
+            if silence_removed_s > 0.0:
+                log.info(
+                    "parakeet internal-silence compression: cut %.2fs (kept %.2fs)",
+                    silence_removed_s,
+                    len(samples) / float(sample_rate),
+                )
+        chunks = _chunk_at_silence(samples, int(sample_rate))
+        samples, gain = _normalize(samples, self.cfg.model.parakeet_normalize)
+        if gain != 1.0:
+            log.info(
+                "parakeet input boost: %.2fx (preset=%s, peak %.4f -> %.4f)",
+                gain, self.cfg.model.parakeet_normalize,
+                float(np.abs(samples).max()) / gain,
+                float(np.abs(samples).max()),
+            )
+        if len(chunks) > 1:
+            total_s = len(samples) / float(sample_rate)
+            log.info(
+                "parakeet auto-chunk: split %.2fs into %d pieces", total_s, len(chunks)
+            )
+            for i, (cs, ce) in enumerate(chunks):
+                log.debug(
+                    "  chunk %d: %.2fs–%.2fs",
+                    i, cs / float(sample_rate), ce / float(sample_rate),
+                )
+        parts: list[str] = []
+        for cs, ce in chunks:
+            chunk_samples = samples[cs:ce].astype(np.float32, copy=False)
+            stream = self._recog.create_stream()
+            stream.accept_waveform(int(sample_rate), chunk_samples)
+            self._recog.decode_stream(stream)
+            t = (stream.result.text or "").strip()
+            if t:
+                parts.append(t)
+        return " ".join(parts)
+
     def transcribe(self, samples: np.ndarray, sample_rate: int) -> str:
         with self._lock:
             if self._recog is None:
                 self._recog = self._build()
-            samples, head_s, tail_s = _trim_silence(
+            return self._transcribe_locked(
                 samples,
-                int(sample_rate),
-                self.cfg.model.parakeet_trim_silence_rms,
-                self.cfg.model.parakeet_trim_min_keep_seconds,
+                sample_rate,
+                trim_min_keep_seconds=self.cfg.model.parakeet_trim_min_keep_seconds,
             )
-            if head_s > 0.0 or tail_s > 0.0:
-                log.info(
-                    "parakeet trim-silence: cut %.2fs head + %.2fs tail (kept %.2fs)",
-                    head_s, tail_s, len(samples) / float(sample_rate),
-                )
-            chunks = _chunk_at_silence(samples, int(sample_rate))
-            samples, gain = _normalize(samples, self.cfg.model.parakeet_normalize)
-            if gain != 1.0:
-                log.info(
-                    "parakeet input boost: %.2fx (preset=%s, peak %.4f -> %.4f)",
-                    gain, self.cfg.model.parakeet_normalize,
-                    float(np.abs(samples).max()) / gain,
-                    float(np.abs(samples).max()),
-                )
-            if len(chunks) > 1:
-                total_s = len(samples) / float(sample_rate)
-                log.info(
-                    "parakeet auto-chunk: split %.2fs into %d pieces", total_s, len(chunks)
-                )
-                for i, (cs, ce) in enumerate(chunks):
-                    log.debug(
-                        "  chunk %d: %.2fs–%.2fs",
-                        i, cs / float(sample_rate), ce / float(sample_rate),
-                    )
-            parts: list[str] = []
-            for cs, ce in chunks:
-                chunk_samples = samples[cs:ce].astype(np.float32, copy=False)
-                stream = self._recog.create_stream()
-                stream.accept_waveform(int(sample_rate), chunk_samples)
-                self._recog.decode_stream(stream)
-                t = (stream.result.text or "").strip()
-                if t:
-                    parts.append(t)
-        return " ".join(parts)
+
+    def transcribe_preview(self, samples: np.ndarray, sample_rate: int) -> str:
+        with self._lock:
+            if self._recog is None:
+                self._recog = self._build()
+            return self._transcribe_locked(
+                samples,
+                sample_rate,
+                trim_min_keep_seconds=_PREVIEW_TRIM_MIN_KEEP_SECONDS,
+                max_internal_silence_seconds=_PREVIEW_MAX_INTERNAL_SILENCE_SECONDS,
+            )
