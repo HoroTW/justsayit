@@ -788,6 +788,15 @@ class OverlayWindow(Gtk.ApplicationWindow):
     def push_level(self, rms: float) -> None:
         self._level = rms
 
+    def push_partial_text(self, text: str) -> None:
+        """Show accumulated partial transcription while keeping the
+        'recording…' state indicator visible (the LLM only runs at the
+        final segment, so no LLM placeholder yet)."""
+        GLib.idle_add(
+            self._apply_partial_text, text,
+            priority=GLib.PRIORITY_DEFAULT,
+        )
+
     def push_detected_text(self, text: str, llm_pending: bool = False) -> None:
         """Show regex-filtered text in the top field.
 
@@ -1064,6 +1073,29 @@ class OverlayWindow(Gtk.ApplicationWindow):
             if not self.get_visible():
                 self.set_visible(True)
             self.present()
+        return False
+
+    def _apply_partial_text(self, text: str) -> bool:
+        """Show accumulated partial transcription. Keeps the state label
+        visible (still recording) and the LLM area hidden (no LLM has
+        been called yet). Mirror image of _apply_detected_text which
+        swaps in the final result and hides the state label."""
+        self._cancel_safety()
+        self._detected_label.set_can_focus(False)
+        # Keep state label visible — still recording.
+        self._state_label.set_visible(True)
+        self._detected_label.set_text(text)
+        self._sep1.set_visible(True)
+        self._detected_label.set_visible(True)
+        # No LLM running yet on partials.
+        self._stop_llm_waiting_anim()
+        self._sep2.set_visible(False)
+        self._llm_label.set_visible(False)
+        self._sep_bottom.set_visible(True)
+        self._content_scroll.set_visible(True)
+        self._expand_window()
+        if not self.get_visible():
+            self.set_visible(True)
         return False
 
     def _apply_detected_text(self, text: str, llm_pending: bool) -> bool:

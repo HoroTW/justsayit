@@ -133,10 +133,10 @@ class SegmentPipeline:
             if self.overlay is not None:
                 accumulated = " ".join(self._partial_raws).strip()
                 if accumulated:
-                    # llm_pending=False on partials: no LLM is actually running
-                    # yet (only fires on the final segment). Showing the "Wait
-                    # for LLM…" placeholder here would be misleading.
-                    self.overlay.push_detected_text(accumulated, llm_pending=False)
+                    # Partial path: keep the "recording…" indicator visible
+                    # and don't show the LLM placeholder (the LLM only runs
+                    # on the final segment).
+                    self.overlay.push_partial_text(accumulated)
             return
 
         if not is_continue:

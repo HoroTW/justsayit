@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.24.11] - 2026-05-16
+
+- overlay: stream-chunk partial transcriptions now appear on a separate text line WITHOUT hiding the "recording…" state indicator. Previously the partial path called `push_detected_text` which is wired for finished results (hides state label, expands the LLM area); partials get their own `push_partial_text` that keeps the state indicator visible and the LLM area hidden until the final segment.
+
 ## [0.24.10] - 2026-05-16
 
 - pipeline: stream-chunk partial transcriptions no longer trigger the overlay's "Wait for LLM processing…" placeholder — the LLM only runs on the final segment, so showing the placeholder during partials was misleading.

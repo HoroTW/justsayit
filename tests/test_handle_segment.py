@@ -49,6 +49,7 @@ class _StubOverlay:
     def __init__(self) -> None:
         self.hide_calls = 0
         self.detected = []
+        self.partials: list[str] = []
         self.llm = []
         self.linger_calls = 0
         self.clip_armed_calls: list[bool] = []
@@ -59,6 +60,9 @@ class _StubOverlay:
 
     def push_detected_text(self, text: str, llm_pending: bool = False) -> None:
         self.detected.append((text, llm_pending))
+
+    def push_partial_text(self, text: str) -> None:
+        self.partials.append(text)
 
     def push_llm_text(self, text: str, thought: str = "") -> None:
         self.llm.append((text, thought))

@@ -90,6 +90,7 @@ def test_overlay_methods_exist():
         "push_state",
         "push_level",
         "push_detected_text",
+        "push_partial_text",
         "push_llm_text",
         "push_tool_call",
         "push_linger_start",
