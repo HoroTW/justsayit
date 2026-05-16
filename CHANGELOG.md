@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.24.10] - 2026-05-16
+
+- pipeline: stream-chunk partial transcriptions no longer trigger the overlay's "Wait for LLM processing…" placeholder — the LLM only runs on the final segment, so showing the placeholder during partials was misleading.
+- tests: add `chunking_continuous_de.wav` burn fixture (28s German speech with no mid-recording silence) — exercises the chunker's force-split fallback path.
+
 ## [0.24.9] - 2026-05-16
 
 - transcribe: model is primed (touched with a tiny silence buffer) when recording starts so its memory pages stay warm — defends against OS-swap latency on the first transcribe call after long idle periods.

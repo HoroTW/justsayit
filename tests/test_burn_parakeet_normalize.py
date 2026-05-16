@@ -39,6 +39,10 @@ CASES = [
     ("failed_quiet_gpt_attack",   "A",   0.005, "near zero overlap"),
     ("failed_long_silence_tail",  "A",   0.005, "level three attack"),
     ("long_42s_chunking",         "A",   0.005, "telegram"),
+    # ~28s continuous German speech with virtually no mid-recording silence —
+    # exercises the transcribe-level chunker's force-split path (silence
+    # finder won't find a clean trough in the middle, so chunker falls back).
+    ("chunking_continuous_de",    "A",   0.005, "silence"),
 ]
 
 
