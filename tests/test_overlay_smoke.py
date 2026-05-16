@@ -25,11 +25,11 @@ from justsayit.config import Config
 from justsayit.overlay import OverlayWindow
 
 
-def _construct_overlay() -> OverlayWindow | Exception:
+def _construct_overlay(cfg: Config | None = None) -> OverlayWindow | Exception:
     """Run a Gtk.Application activate cycle that constructs an
     OverlayWindow and immediately quits. Returns the constructed window
     on success, or the exception that fired during construction."""
-    cfg = Config()
+    cfg = cfg or Config()
     captured: list[OverlayWindow | Exception] = []
 
     def on_activate(app: Gtk.Application) -> None:
@@ -78,6 +78,19 @@ def test_scrolled_content_area_is_actually_a_scrolled_window():
     # Max content height must come from the config (cap beyond which
     # scroll engages instead of growing the window further).
     assert overlay._content_scroll.get_max_content_height() == 1000
+
+
+def test_overlay_ui_scale_scales_core_dimensions():
+    cfg = Config()
+    cfg.overlay.ui_scale = 1.5
+    overlay = _construct_overlay(cfg)
+    assert isinstance(overlay, OverlayWindow), overlay
+
+    assert overlay._ui_scale == 1.5
+    assert overlay._content_scroll.get_max_content_height() == 1500
+    assert overlay._dot.get_content_width() == 24
+    assert overlay._dot.get_content_height() == 24
+    assert overlay._meter.get_content_height() == 15
 
 
 def test_overlay_methods_exist():

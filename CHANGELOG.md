@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.24.15] - 2026-05-17
+
+- overlay,config: add `overlay.ui_scale` (default `1.0`) to scale the recording pill, fonts, controls, margins, and expanded result area together for high-DPI or distant displays.
+
 ## [0.24.14] - 2026-05-16
 
 - audio,pipeline,overlay: stream-chunk transcriptions are now preview-only. Word-preview chunks emit around every 1.2s, split on 250ms silence when available, drop silence-only preview chunks, use more aggressive preview-only silence cleanup, and render underlined in a darker preview color to show uncertainty. Preview snippets lowercase a leading sentence-style capital while preserving acronyms such as `PDF`, because previews do not know sentence boundaries yet. The current unfinalized ASR chunk is periodically reprocessed as a better rolling preview, and completed ASR-quality chunks become solid finalized text while recording continues. Chunk finalization waits for trailing context so moving silence boundaries do not commit sentence breaks too early. Stop only transcribes the remaining tail and then replaces the preview text before filters, LLM, and paste.

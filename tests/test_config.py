@@ -55,6 +55,7 @@ def test_default_overlay_fields():
     o = OverlayConfig()
     assert o.visualizer_sensitivity == 2.5
     assert o.opacity == 0.7
+    assert o.ui_scale == pytest.approx(1.0)
 
 
 def test_default_short_segment_skip_field():
@@ -195,6 +196,13 @@ def test_load_config_paste_space_settings(tmp_path):
     assert cfg.paste.append_trailing_space is True
 
 
+def test_load_config_overlay_ui_scale(tmp_path):
+    p = tmp_path / "config.toml"
+    p.write_text("[overlay]\nui_scale = 1.35\n", encoding="utf-8")
+    cfg = load_config(p)
+    assert cfg.overlay.ui_scale == pytest.approx(1.35)
+
+
 def test_load_config_short_segment_skip_and_dynamic_context_script(tmp_path):
     p = tmp_path / "config.toml"
     p.write_text(
@@ -229,6 +237,7 @@ def test_render_load_roundtrip_defaults(tmp_path):
     )
     assert restored.paste.auto_space_timeout_ms == original.paste.auto_space_timeout_ms
     assert restored.overlay.opacity == pytest.approx(original.overlay.opacity)
+    assert restored.overlay.ui_scale == pytest.approx(original.overlay.ui_scale)
     assert restored.vad.enabled == original.vad.enabled
 
 

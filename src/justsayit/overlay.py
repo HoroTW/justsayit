@@ -175,6 +175,56 @@ window.justsayit-overlay {
 """
 
 
+def _overlay_ui_scale(cfg: Config) -> float:
+    return max(0.5, min(3.0, float(cfg.overlay.ui_scale)))
+
+
+def _scale_px(value: int | float, scale: float) -> int:
+    return max(1, int(round(float(value) * scale)))
+
+
+def _scale_class(scale: float) -> str:
+    return f"justsayit-scale-{int(round(scale * 100))}"
+
+
+def _scaled_overlay_css(scale: float, scale_class: str) -> str:
+    if scale == 1.0:
+        return ""
+    return f"""
+window.justsayit-overlay.{scale_class} .justsayit-overlay-box {{
+    border-radius: {_scale_px(14, scale)}px;
+    padding: {_scale_px(8, scale)}px {_scale_px(14, scale)}px;
+}}
+window.justsayit-overlay.{scale_class} .justsayit-overlay-label {{
+    font-size: {_scale_px(11, scale)}px;
+}}
+window.justsayit-overlay.{scale_class} .justsayit-profile-label {{
+    font-size: {_scale_px(9, scale)}px;
+}}
+window.justsayit-overlay.{scale_class} .justsayit-detected-label {{
+    font-size: {_scale_px(11, scale)}px;
+}}
+window.justsayit-overlay.{scale_class} .justsayit-llm-label {{
+    font-size: {_scale_px(11, scale)}px;
+}}
+window.justsayit-overlay.{scale_class} .justsayit-overlay-btn,
+window.justsayit-overlay.{scale_class} .justsayit-retry-button,
+window.justsayit-overlay.{scale_class} .justsayit-redo-button {{
+    padding: 0 {_scale_px(4, scale)}px;
+    min-height: {_scale_px(16, scale)}px;
+    min-width: {_scale_px(16, scale)}px;
+    font-size: {_scale_px(12, scale)}px;
+}}
+window.justsayit-overlay.{scale_class} .justsayit-update-badge {{
+    font-size: {_scale_px(10, scale)}px;
+    padding: 0 {_scale_px(4, scale)}px;
+}}
+window.justsayit-overlay.{scale_class} .justsayit-error-label {{
+    font-size: {_scale_px(11, scale)}px;
+}}
+"""
+
+
 @dataclass(frozen=True)
 class _DotColor:
     r: float
@@ -473,6 +523,28 @@ def _install_css_once() -> None:
     _install_css_once._done = True  # type: ignore[attr-defined]
 
 
+def _install_scaled_css_once(scale: float, scale_class: str) -> None:
+    css = _scaled_overlay_css(scale, scale_class)
+    if not css:
+        return
+    display = Gdk.Display.get_default()
+    if display is None:
+        return
+    installed = getattr(_install_scaled_css_once, "_installed", set())
+    if scale_class in installed:
+        return
+    provider = Gtk.CssProvider()
+    try:
+        provider.load_from_string(css)
+    except AttributeError:
+        provider.load_from_data(css.encode("utf-8"))
+    Gtk.StyleContext.add_provider_for_display(
+        display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+    )
+    installed.add(scale_class)
+    _install_scaled_css_once._installed = installed  # type: ignore[attr-defined]
+
+
 class OverlayWindow(Gtk.ApplicationWindow):
     """Bottom-anchored layer-shell window."""
 
@@ -490,6 +562,8 @@ class OverlayWindow(Gtk.ApplicationWindow):
     ) -> None:
         super().__init__(application=application)
         self._cfg = cfg
+        self._ui_scale = _overlay_ui_scale(cfg)
+        self._scale_class = _scale_class(self._ui_scale)
         self._state = State.IDLE
         self._on_abort = on_abort
         self._on_toggle_clipboard_context = on_toggle_clipboard_context
@@ -521,9 +595,16 @@ class OverlayWindow(Gtk.ApplicationWindow):
         self._suppress_next_idle_processing = False
 
         self.add_css_class("justsayit-overlay")
+        self.add_css_class(self._scale_class)
         self.set_decorated(False)
-        self.set_size_request(cfg.overlay.width, cfg.overlay.height)
-        self.set_default_size(cfg.overlay.width, cfg.overlay.height)
+        self.set_size_request(
+            self._scaled_px(cfg.overlay.width),
+            self._scaled_px(cfg.overlay.height),
+        )
+        self.set_default_size(
+            self._scaled_px(cfg.overlay.width),
+            self._scaled_px(cfg.overlay.height),
+        )
 
         Gtk4LayerShell.init_for_window(self)
         Gtk4LayerShell.set_layer(self, Gtk4LayerShell.Layer.OVERLAY)
@@ -538,11 +619,11 @@ class OverlayWindow(Gtk.ApplicationWindow):
             else Gtk4LayerShell.Edge.BOTTOM
         )
         Gtk4LayerShell.set_anchor(self, edge, True)
-        Gtk4LayerShell.set_margin(self, edge, cfg.overlay.margin)
+        Gtk4LayerShell.set_margin(self, edge, self._scaled_px(cfg.overlay.margin))
         Gtk4LayerShell.set_exclusive_zone(self, 0)
 
         # ── Root: vertical stack ─────────────────────────────────────────────
-        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=self._scaled_px(4))
         root.add_css_class("justsayit-overlay-box")
         root.set_hexpand(True)
         root.set_vexpand(True)
@@ -557,9 +638,9 @@ class OverlayWindow(Gtk.ApplicationWindow):
         top_row = Gtk.CenterBox()
         top_row.set_hexpand(True)
 
-        start_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+        start_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=self._scaled_px(1))
         start_box.set_valign(Gtk.Align.CENTER)
-        start_box.set_margin_end(11)
+        start_box.set_margin_end(self._scaled_px(11))
 
         self._profile_label = Gtk.Label(label="")
         self._profile_label.add_css_class("justsayit-profile-label")
@@ -579,7 +660,7 @@ class OverlayWindow(Gtk.ApplicationWindow):
         # Right-anchored cluster: [update badge?] [× button]. The badge
         # is hidden until the GitHub version check finds something newer
         # (see push_update_available); the button is always present.
-        end_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        end_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=self._scaled_px(4))
         end_box.set_valign(Gtk.Align.START)
         end_box.set_halign(Gtk.Align.END)
 
@@ -686,16 +767,21 @@ class OverlayWindow(Gtk.ApplicationWindow):
             Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC
         )
         self._content_scroll.set_propagate_natural_height(True)
-        self._content_scroll.set_max_content_height(cfg.overlay.max_height)
+        self._content_scroll.set_max_content_height(
+            self._scaled_px(cfg.overlay.max_height)
+        )
         self._content_scroll.set_visible(False)
         root.append(self._content_scroll)
 
-        _content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        _content_box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=self._scaled_px(4),
+        )
         self._content_scroll.set_child(_content_box)
 
         # Separator + top field
         self._sep1 = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
-        self._sep1.set_margin_bottom(4)
+        self._sep1.set_margin_bottom(self._scaled_px(4))
         self._sep1.set_visible(False)
         _content_box.append(self._sep1)
 
@@ -720,8 +806,8 @@ class OverlayWindow(Gtk.ApplicationWindow):
 
         # Separator + bottom (LLM) field
         self._sep2 = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
-        self._sep2.set_margin_top(4)
-        self._sep2.set_margin_bottom(4)
+        self._sep2.set_margin_top(self._scaled_px(4))
+        self._sep2.set_margin_bottom(self._scaled_px(4))
         self._sep2.set_visible(False)
         _content_box.append(self._sep2)
 
@@ -740,24 +826,27 @@ class OverlayWindow(Gtk.ApplicationWindow):
 
         # Separator above bottom row (only shown in result mode)
         self._sep_bottom = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
-        self._sep_bottom.set_margin_top(4)
-        self._sep_bottom.set_margin_bottom(4)
+        self._sep_bottom.set_margin_top(self._scaled_px(4))
+        self._sep_bottom.set_margin_bottom(self._scaled_px(4))
         self._sep_bottom.set_visible(False)
         _content_box.append(self._sep_bottom)
 
         # ── Bottom row: dot + meter (always visible) ──────────────────────────
-        bottom_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        bottom_row = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            spacing=self._scaled_px(10),
+        )
         bottom_row.set_hexpand(True)
 
         self._dot = Gtk.DrawingArea()
-        self._dot.set_content_width(16)
-        self._dot.set_content_height(16)
+        self._dot.set_content_width(self._scaled_px(16))
+        self._dot.set_content_height(self._scaled_px(16))
         self._dot.set_valign(Gtk.Align.CENTER)
         self._dot.set_draw_func(self._draw_dot, None)
         bottom_row.append(self._dot)
 
         self._meter = Gtk.DrawingArea()
-        self._meter.set_content_height(10)
+        self._meter.set_content_height(self._scaled_px(10))
         self._meter.set_hexpand(True)
         self._meter.set_valign(Gtk.Align.CENTER)
         self._meter.set_draw_func(self._draw_meter, None)
@@ -776,11 +865,15 @@ class OverlayWindow(Gtk.ApplicationWindow):
 
         self.set_child(root)
         _install_css_once()
+        _install_scaled_css_once(self._ui_scale, self._scale_class)
 
         # Drive the meter + dot pulse off the frame clock of the dot widget.
         # Tick callbacks auto-pause when the widget is unmapped, so the
         # animation loop doesn't run when the overlay is hidden.
         self._dot.add_tick_callback(self._tick, None)
+
+    def _scaled_px(self, value: int | float) -> int:
+        return _scale_px(value, self._ui_scale)
 
     # ── Thread-safe entry points ─────────────────────────────────────────────
 
@@ -1270,7 +1363,9 @@ class OverlayWindow(Gtk.ApplicationWindow):
         # markdown horizontal rules (---) visually span the pill instead
         # of being a stubby fixed-length stripe. Subtract a small padding
         # margin so the rule never overflows on rounding.
-        usable_w = self._cfg.overlay.max_width - 14 * 2 - 16 - 10
+        usable_w = self._scaled_px(self._cfg.overlay.max_width) - (
+            self._scaled_px(14) * 2
+        ) - self._scaled_px(16) - self._scaled_px(10)
         hr_chars = max(20, int(usable_w / _CHAR_WIDTH_PX))
         body_markup = _md_to_pango(text, hr_chars=hr_chars)
         if thought:
@@ -1468,12 +1563,15 @@ class OverlayWindow(Gtk.ApplicationWindow):
             self._retry_cb = None
 
     def _collapse_window(self) -> None:
-        self.set_default_size(self._cfg.overlay.width, self._cfg.overlay.height)
+        self.set_default_size(
+            self._scaled_px(self._cfg.overlay.width),
+            self._scaled_px(self._cfg.overlay.height),
+        )
 
     def _expand_window(self) -> None:
         """Set the window width to max_width; height is content-driven via the
         ScrolledWindow's propagate_natural_height + max_content_height."""
-        self.set_default_size(self._cfg.overlay.max_width, -1)
+        self.set_default_size(self._scaled_px(self._cfg.overlay.max_width), -1)
 
     # ── Timers ───────────────────────────────────────────────────────────────
 

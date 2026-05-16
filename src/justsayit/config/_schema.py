@@ -222,6 +222,9 @@ class OverlayConfig:
     enabled: bool = True
     # "bottom" or "top" edge of the output.
     anchor: str = "bottom"
+    # Global visual scale for the overlay UI. Values above 1.0 make the pill,
+    # fonts, controls, margins, and expanded result area larger.
+    ui_scale: float = 1.0
     margin: int = 24
     width: int = 174
     height: int = 56
