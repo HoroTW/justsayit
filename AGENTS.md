@@ -33,6 +33,12 @@ Every commit should bump the version and add a `CHANGELOG.md` entry, even
 for small fixes. Use `scripts/bump-version.py`; do not manually edit only
 one version file.
 
+When adding, removing, or changing any dependency (Python package, native
+library, build tool, or external CLI), update the relevant Nix package inputs
+in `flake.nix` as well as other installation paths. Include optional package
+variants and the dev shell where applicable; build and exercise the affected
+Nix package variant.
+
 ## Sandbox Notes
 
 In restricted sandboxes, importing `sounddevice` can hang. Because

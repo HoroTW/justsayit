@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.24.16] - 2026-09-29
+
+- nix: include `tomlkit` in the application runtime dependencies so the Nix-installed CLI can load its configuration module.
+
 ## [0.24.15] - 2026-05-17
 
 - overlay,config: add `overlay.ui_scale` (default `1.0`) to scale the recording pill, fonts, controls, margins, and expanded result area together for high-DPI or distant displays.
