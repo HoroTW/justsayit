@@ -54,7 +54,7 @@
 
       mkJustsayit = { withLlm ? false, withVulkan ? false, llamaCppPython ? llama-cpp-python-new }: pkgs.python3Packages.buildPythonApplication {
         pname = "justsayit";
-        version = "0.24.15";
+        version = "0.24.16";
         pyproject = true;
 
         src = pkgs.lib.cleanSource ./.;
@@ -67,6 +67,7 @@
           numpy
           platformdirs
           pygobject3
+          tomlkit
         ] ++ pkgs.lib.optionals withLlm [ llamaCppPython ];
 
         # gobject-introspection scans buildInputs for typelibs at build time;
